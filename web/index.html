@@ -1,0 +1,89 @@
+<!doctype html>
+<!--
+  waui web host — template.
+
+  build.mjs inlines the wasm module (base64), glue.js, and app.js into a
+  single self-contained page, so the generated file works straight from
+  disk: `open demo-counter.html`. No server, no npm, no dependencies.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>waui — __WAUI_NAME__</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #1a1b26;
+        color: #c0caf5;
+        font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+      }
+      #app {
+        padding: 2rem;
+      }
+      .waui {
+        display: flex;
+        gap: 8px;
+      }
+      .waui-column {
+        flex-direction: column;
+        align-items: center;
+      }
+      .waui-row {
+        flex-direction: row;
+        align-items: center;
+      }
+      .waui-text {
+        min-height: 1.5em;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+      }
+      .waui-column > .waui-text,
+      .waui-row > .waui-text {
+        align-self: center;
+      }
+      .waui-button {
+        font: inherit;
+        padding: 6px 16px;
+        background: #24283b;
+        color: inherit;
+        border: 1px solid #414868;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .waui-button:hover {
+        background: #2f3549;
+      }
+      .waui-button:active {
+        background: #414868;
+      }
+      .waui-column > .waui-button {
+        width: 100%;
+      }
+      #badge {
+        position: fixed;
+        top: 10px;
+        left: 12px;
+        font-size: 12px;
+        opacity: 0.5;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="badge"></div>
+    <div id="app"></div>
+    <script>
+      // The component's core wasm module (the pre-lift artifact the
+      // wasmtime hosts lift from), base64 so the page needs no fetch.
+      const WAUI_WASM_B64 = "__WAUI_WASM_B64__";
+      const WAUI_WASM_BYTES = Uint8Array.from(atob(WAUI_WASM_B64), (c) =>
+        c.charCodeAt(0),
+      );
+    </script>
+    <script type="module">
+      __WAUI_JS__
+    </script>
+  </body>
+</html>

@@ -5,9 +5,12 @@ members = [
     "crates/demo-stopwatch",
     "crates/host-cli",
     "crates/host-iced",
+    "crates/host-tui",
 ]
 
 [workspace.dependencies]
 wasmtime = "49"
 wit-bindgen = { version = "0.63", features = ["macros"] }
 iced = "0.14"
+ratatui = "0.30"
+crossterm = "0.29"
