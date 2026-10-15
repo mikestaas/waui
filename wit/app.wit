@@ -1,0 +1,26 @@
+package waui:ui;
+
+/// The world shared between a host (a renderer) and a waui component
+/// (UI + logic).
+///
+/// The component *owns* all state. It exports its current widget tree via
+/// `view` as a flat, depth-first pre-ordered list of nodes; the host
+/// re-queries this after every event, rebuilds the tree, and renders it
+/// with whatever toolkit it happens to be written in. The host may call
+/// `on-tick` periodically and provides a `now` clock the component can poll.
+world app {
+  use widget.{node};
+
+  /// The component's current UI (see `widget` for the flat-list contract).
+  export view: func() -> list<node>;
+
+  /// The widget with the given id was activated (e.g. clicked).
+  export on-click: func(id: u32);
+
+  /// The host calls this periodically (e.g. every 250ms) so time-based UIs
+  /// can advance.
+  export on-tick: func();
+
+  /// The host's clock, in milliseconds (arbitrary, monotonic epoch).
+  import now: func() -> u64;
+}

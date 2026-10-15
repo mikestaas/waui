@@ -1,0 +1,46 @@
+package waui:ui;
+
+/// A minimal, renderer-agnostic widget tree, encoded as a **flat list of
+/// nodes** in depth-first pre-order: every parent precedes its children, and
+/// siblings appear in visual order.
+///
+/// WIT types may not be recursive, so instead of a tree type that refers to
+/// itself, the tree is a `list` whose nodes carry a `parent` id, and the
+/// host rebuilds the tree. This is the same flat-list encoding that real UI
+/// serialization formats use.
+interface widget {
+  /// A piece of text.
+  record text {
+    id: u32,
+    parent: option<u32>,
+    content: string,
+  }
+
+  /// A clickable button.
+  record button {
+    id: u32,
+    parent: option<u32>,
+    label: string,
+  }
+
+  /// A horizontal or vertical container.
+  ///
+  /// (Named `container` rather than `box`: the latter would clash with
+  /// `std::boxed::Box` in generated Rust bindings.)
+  record container {
+    id: u32,
+    parent: option<u32>,
+    direction: direction,
+  }
+
+  enum direction {
+    row,
+    column,
+  }
+
+  variant node {
+    text(text),
+    button(button),
+    container(container),
+  }
+}
