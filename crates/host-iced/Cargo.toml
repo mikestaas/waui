@@ -1,0 +1,10 @@
+[package]
+name = "host-iced"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+wasmtime = { workspace = true }
+# The `smol` executor provides `iced::time::every`, which the host needs to
+# drive periodic `on-tick` calls.
+iced = { workspace = true, features = ["smol"] }
