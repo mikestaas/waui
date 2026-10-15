@@ -1,0 +1,9 @@
+[package]
+name = "host-tui"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+wasmtime = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true }
