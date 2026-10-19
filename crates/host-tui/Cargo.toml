@@ -7,3 +7,4 @@ edition = "2021"
 wasmtime = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+host-shared = { path = "../host-shared" }

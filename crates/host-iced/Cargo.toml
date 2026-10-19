@@ -8,3 +8,4 @@ wasmtime = { workspace = true }
 # The `smol` executor provides `iced::time::every`, which the host needs to
 # drive periodic `on-tick` calls.
 iced = { workspace = true, features = ["smol"] }
+host-shared = { path = "../host-shared" }

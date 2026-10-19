@@ -9,17 +9,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::component::*;
 use wasmtime::{Engine, Store};
 
-wasmtime::component::bindgen!({
-    world: "app",
-    path: "../../wit",
-});
-
-mod tree;
-
-use tree::{build_tree, Tree};
+// The world's bindings and the node-list→tree rebuild live in the shared
+// host core; this crate is only its renderer.
+use host_shared::{build_tree, App, AppImports, Tree, waui};
 
 // The contract's style tokens, aliased to avoid clashing with `iced::Color`.
-use crate::waui::ui::widget::{Color as WColor, Size as WSize};
+use host_shared::waui::ui::widget::{Color as WColor, Size as WSize};
 
 /// The host's implementation of the world's imports.
 struct Host;

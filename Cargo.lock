@@ -1815,6 +1815,7 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 name = "host-cli"
 version = "0.0.1"
 dependencies = [
+ "host-shared",
  "wasmtime",
 ]
 
@@ -1822,7 +1823,15 @@ dependencies = [
 name = "host-iced"
 version = "0.0.1"
 dependencies = [
+ "host-shared",
  "iced",
+ "wasmtime",
+]
+
+[[package]]
+name = "host-shared"
+version = "0.0.1"
+dependencies = [
  "wasmtime",
 ]
 
@@ -1831,6 +1840,7 @@ name = "host-tui"
 version = "0.0.1"
 dependencies = [
  "crossterm",
+ "host-shared",
  "ratatui",
  "wasmtime",
 ]

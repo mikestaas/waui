@@ -1,17 +1,37 @@
-//! Rebuild a widget tree from the flat, depth-first pre-ordered list of
-//! nodes exported by the component (the `waui:ui/widget` contract).
+//! The shared core of the waui wasmtime-based hosts.
 //!
-//! This module duplicates a tiny bit of logic per host on purpose: the WIT
-//! package is the shared artifact, and each host keeps its own rebuild.
+//! Everything in here is *contract-level* code: the bindings for the
+//! `waui:ui/app` world, and the rebuild of the component's flat node list
+//! into a widget tree. The flat-list invariants that the rebuild depends on
+//! (depth-first pre-order, parents precede children) are documented by the
+//! WIT contract itself, so their reference implementation lives in one
+//! place instead of being duplicated per host.
+//!
+//! What stays per-host is the *renderer* — the mapping of this tree onto a
+//! particular toolkit (iced widgets, ratatui widgets, ASCII) — plus whatever
+//! host-local concerns the renderer adds (the TUI's focus ring, for example).
+//! A host that cannot express part of the contract (host-cli, which renders
+//! plain ASCII) simply draws less of it.
+//!
+//! The web host deliberately does *not* use this crate: it is JavaScript,
+//! and it re-implements the same rebuild in `web/app.js`. The WIT package —
+//! not this crate — is the artifact that must work across languages; the
+//! Rust hosts merely share their one reference implementation of it.
 
-use crate::waui::ui::widget::{Direction, Node};
+wasmtime::component::bindgen!({
+    world: "app",
+    path: "../../wit",
+});
+
+use waui::ui::widget::{Direction, Style};
 
 /// A rebuilt widget tree.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Tree {
-    Text(String),
-    /// (widget id, label)
-    Button(u32, String),
+    /// (content, the component's semantic style)
+    Text(String, Style),
+    /// (widget id, label, style)
+    Button(u32, String, Style),
     Row(Vec<Tree>),
     Column(Vec<Tree>),
 }
@@ -34,8 +54,8 @@ fn node_parent(node: &Node) -> Option<u32> {
 
 fn to_tree(node: &Node) -> Tree {
     match node {
-        Node::Text(t) => Tree::Text(t.content.clone()),
-        Node::Button(b) => Tree::Button(b.id, b.label.clone()),
+        Node::Text(t) => Tree::Text(t.content.clone(), t.style),
+        Node::Button(b) => Tree::Button(b.id, b.label.clone(), b.style),
         Node::Container(c) => {
             if c.direction == Direction::Row {
                 Tree::Row(Vec::new())
@@ -46,7 +66,7 @@ fn to_tree(node: &Node) -> Tree {
     }
 }
 
-/// Rebuild the tree from the flat node list.
+/// Rebuild the tree from the flat node list exported by `view()`.
 ///
 /// The list is depth-first pre-ordered: a parent always precedes its
 /// children and siblings appear in visual order, so children of each node
