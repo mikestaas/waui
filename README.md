@@ -50,7 +50,7 @@ the WIT they target.
 | crate / dir            | what it is                                                                     |
 | ---------------------- | ------------------------------------------------------------------------------ |
 | `crates/host-shared`   | the shared core of the wasmtime hosts: the WIT bindings + the list→tree rebuild (contract-level code; hosts add only a renderer) |
-| `crates/host-iced`     | a windowed host: the tree with [iced](https://iced.rs); style → palette colors + point sizes |
+| `crates/host-iced`     | a windowed host: the tree with [iced](https://iced.rs) on the web page's dark theme; style → palette colors + point sizes |
 | `crates/host-tui`      | a terminal host: real layout, framed buttons, host-local focus ring (ratatui); style → ANSI colors + weight |
 | `crates/host-cli`      | a minimal terminal host: the tree as ASCII, clicks via stdin; ignores style (proof hosts can lag the contract) |
 | `web/`                 | a web host: one self-contained HTML page per component, zero dependencies; style → CSS tokens |

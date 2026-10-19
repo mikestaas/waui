@@ -16,6 +16,8 @@ use host_shared::{build_tree, App, AppImports, Tree, waui};
 // The contract's style tokens, aliased to avoid clashing with `iced::Color`.
 use host_shared::waui::ui::widget::{Color as WColor, Size as WSize};
 
+mod theme;
+
 /// The host's implementation of the world's imports.
 struct Host;
 
@@ -46,6 +48,12 @@ enum Message {
 
 fn main() -> iced::Result {
     iced::application(boot, update, view)
+        // Match the static web host: its palette (theme.rs), its centered
+        // content, and a modest default window size.
+        .theme(theme::theme())
+        .style(|_, _| theme::style())
+        .title("waui")
+        .window_size(iced::Size::new(360.0, 340.0))
         .subscription(subscription)
         .run()
 }
@@ -101,7 +109,18 @@ fn update(state: &mut State, message: Message) {
 }
 
 fn view(state: &State) -> iced::Element<'_, Message> {
-    map_tree(&state.tree)
+    use iced::alignment;
+    use iced::widget;
+    use iced::Length;
+    // Like the web page, fill the window and center the tree, with some
+    // room (the page's `#app` padding).
+    widget::container(map_tree(&state.tree))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Center)
+        .padding(24.0)
+        .into()
 }
 
 /// Wake the component every 250ms so time-based UIs can advance.
