@@ -7,8 +7,9 @@
 //!
 //! Controls: up/down (or j/k) move focus, enter/space clicks it, q quits.
 //!
-//! `--dump` renders one frame into an in-memory buffer and prints it, so
-//! the tree-to-UI mapping can be verified without a terminal.
+//! `--dump` renders one frame into an in-memory buffer and prints it with
+//! ANSI color, so the tree-to-UI mapping — including the component's
+//! semantic styling — can be verified without a terminal.
 
 use std::io::{self, stdout};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -22,6 +23,10 @@ wasmtime::component::bindgen!({
 
 mod tree;
 use tree::{build_tree, Tree};
+
+// The contract's style tokens, aliased to avoid clashing with ratatui's
+// `Color` and `Style`.
+use crate::waui::ui::widget::{Color as WColor, Size as WSize, Style as WStyle};
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -60,8 +65,8 @@ impl waui::ui::widget::Host for Host {}
 
 fn width_of(node: &Tree) -> u16 {
     match node {
-        Tree::Text(content) => content.chars().count() as u16,
-        Tree::Button(_, label) => label.chars().count() as u16 + 2, // borders
+        Tree::Text(content, _) => content.chars().count() as u16,
+        Tree::Button(_, label, _) => label.chars().count() as u16 + 2, // borders
         Tree::Row(children) => children.iter().map(width_of).sum(),
         Tree::Column(children) => children.iter().map(width_of).max().unwrap_or(0),
     }
@@ -69,11 +74,39 @@ fn width_of(node: &Tree) -> u16 {
 
 fn height_of(node: &Tree) -> u16 {
     match node {
-        Tree::Text(_) => 1,
+        Tree::Text(..) => 1,
         Tree::Button(..) => 3, // border top, label, border bottom
         Tree::Row(children) => children.iter().map(height_of).max().unwrap_or(0),
         Tree::Column(children) => children.iter().map(height_of).sum(),
     }
+}
+
+// --------------------------------------------------------------------------
+// Styling: the component's semantic tokens, mapped onto terminal primitives.
+// A TUI can't render `#f7768e`, but it can render "negative" — that is the
+// point of tokens instead of pixels.
+
+/// A semantic color as a terminal color.
+fn tint(c: WColor) -> Color {
+    match c {
+        WColor::Neutral => Color::White,
+        WColor::Accent => Color::Cyan,
+        WColor::Positive => Color::Green,
+        WColor::Negative => Color::Red,
+        WColor::Warning => Color::Yellow,
+    }
+}
+
+/// A node's style as a ratatui style: the semantic color, with the
+/// semantic size faked as weight (a monospace terminal has no glyph scale).
+fn node_style(s: &WStyle) -> Style {
+    Style::default()
+        .fg(tint(s.color))
+        .add_modifier(match s.size {
+            WSize::Small => Modifier::DIM,
+            WSize::Medium => Modifier::empty(),
+            WSize::Large => Modifier::BOLD,
+        })
 }
 
 // --------------------------------------------------------------------------
@@ -82,22 +115,24 @@ fn height_of(node: &Tree) -> u16 {
 /// Map a node to a widget and render it into `area`.
 fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>) {
     match node {
-        Tree::Text(content) => {
+        Tree::Text(content, style) => {
             frame.render_widget(
                 Paragraph::new(content.clone())
-                    .style(Style::default().fg(Color::White))
+                    .style(node_style(style))
                     .alignment(Alignment::Center),
                 area,
             );
         }
-        Tree::Button(id, label) => {
+        Tree::Button(id, label, style) => {
             let focused = Some(*id) == focus;
+            // The component's semantic color is the button's base; the
+            // host's focus ring (its own concern) overrides with its accent.
             let style = if focused {
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::DarkGray)
+                node_style(style)
             };
             let block = Block::default()
                 .borders(Borders::ALL)
@@ -133,6 +168,31 @@ fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>) {
     }
 }
 
+/// A terminal color as an ANSI SGR foreground code, for `--dump`. Returns
+/// `None` for colors a plain text dump cannot represent (reset, truecolor,
+/// indexed).
+fn sgr_fg(c: Color) -> Option<&'static str> {
+    Some(match c {
+        Color::Black => "\x1b[30m",
+        Color::Red => "\x1b[31m",
+        Color::Green => "\x1b[32m",
+        Color::Yellow => "\x1b[33m",
+        Color::Blue => "\x1b[34m",
+        Color::Magenta => "\x1b[35m",
+        Color::Cyan => "\x1b[36m",
+        Color::Gray => "\x1b[37m",
+        Color::DarkGray => "\x1b[90m",
+        Color::LightRed => "\x1b[91m",
+        Color::LightGreen => "\x1b[92m",
+        Color::LightYellow => "\x1b[93m",
+        Color::LightBlue => "\x1b[94m",
+        Color::LightMagenta => "\x1b[95m",
+        Color::LightCyan => "\x1b[96m",
+        Color::White => "\x1b[97m",
+        Color::Reset | Color::Rgb(..) | Color::Indexed(_) => return None,
+    })
+}
+
 /// Draw one full frame: a hint bar, then the tree centered below it.
 fn draw(frame: &mut Frame, tree: &Tree, focus: Option<u32>) {
     let area = frame.area();
@@ -163,13 +223,13 @@ fn draw(frame: &mut Frame, tree: &Tree, focus: Option<u32>) {
 
 fn focusable_ids(node: &Tree, out: &mut Vec<u32>) {
     match node {
-        Tree::Button(id, _) => out.push(*id),
+        Tree::Button(id, ..) => out.push(*id),
         Tree::Row(children) | Tree::Column(children) => {
             for child in children {
                 focusable_ids(child, out);
             }
         }
-        Tree::Text(_) => {}
+        Tree::Text(..) => {}
     }
 }
 
@@ -257,14 +317,35 @@ fn main() {
         let completed = terminal.draw(|f| draw(f, &tree, focus)).expect("draw failed");
         let buf = completed.buffer;
         let area = buf.area();
+        // Print the buffer as text, prefixed with ANSI escapes for styled
+        // cells, so the dump shows the component's semantic styling — the
+        // same colors and weight the live terminal would render.
         for y in 0..area.height {
             let mut line = String::new();
+            let mut styled = false;
             for x in 0..area.width {
-                line.push_str(
-                    buf.cell((x, y))
-                        .map(|c| c.symbol())
-                        .unwrap_or(" "),
-                );
+                let (sym, fg, modifier) = match buf.cell((x, y)) {
+                    Some(c) => (c.symbol(), c.fg, c.modifier),
+                    None => (" ", Color::Reset, Modifier::empty()),
+                };
+                if let Some(code) = sgr_fg(fg) {
+                    line.push_str(code);
+                    styled = true;
+                }
+                if modifier.intersects(Modifier::BOLD | Modifier::DIM) {
+                    line.push_str(
+                        if modifier.contains(Modifier::BOLD) {
+                            "\x1b[1m"
+                        } else {
+                            "\x1b[2m"
+                        },
+                    );
+                    styled = true;
+                }
+                line.push_str(sym);
+            }
+            if styled {
+                line.push_str("\x1b[0m");
             }
             // Trim trailing spaces so the dump reads like terminal output.
             println!("{}", line.trim_end());

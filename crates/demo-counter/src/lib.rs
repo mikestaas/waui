@@ -12,7 +12,7 @@ wit_bindgen::generate!({
 use std::sync::atomic::{AtomicI32, Ordering};
 // `Node` itself is emitted by `generate!` at this scope; the records it
 // contains come from the package module.
-use waui::ui::widget::{Button, Container, Direction, Text};
+use waui::ui::widget::{Button, Color, Container, Direction, Size, Style, Text};
 
 static VALUE: AtomicI32 = AtomicI32::new(0);
 
@@ -27,20 +27,31 @@ impl Guest for Counter {
                 parent: None,
                 direction: Direction::Column,
             }),
+            // The number is the star of the show; its color is state.
             Node::Button(Button {
                 id: 2,
                 parent: Some(1),
                 label: "+".to_string(),
+                style: Style { color: Color::Positive, size: Size::Medium },
             }),
             Node::Text(Text {
                 id: 3,
                 parent: Some(1),
                 content: value.to_string(),
+                style: Style {
+                    color: if value < 0 {
+                        Color::Negative
+                    } else {
+                        Color::Neutral
+                    },
+                    size: Size::Large,
+                },
             }),
             Node::Button(Button {
                 id: 4,
                 parent: Some(1),
                 label: "-".to_string(),
+                style: Style { color: Color::Negative, size: Size::Medium },
             }),
         ]
     }

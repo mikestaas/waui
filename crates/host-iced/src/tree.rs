@@ -4,14 +4,15 @@
 //! This module duplicates a tiny bit of logic per host on purpose: the WIT
 //! package is the shared artifact, and each host keeps its own rebuild.
 
-use crate::waui::ui::widget::{Direction, Node};
+use crate::waui::ui::widget::{Direction, Node, Style};
 
 /// A rebuilt widget tree.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Tree {
-    Text(String),
-    /// (widget id, label)
-    Button(u32, String),
+    /// (content, the component's semantic style)
+    Text(String, Style),
+    /// (widget id, label, style)
+    Button(u32, String, Style),
     Row(Vec<Tree>),
     Column(Vec<Tree>),
 }
@@ -34,8 +35,8 @@ fn node_parent(node: &Node) -> Option<u32> {
 
 fn to_tree(node: &Node) -> Tree {
     match node {
-        Node::Text(t) => Tree::Text(t.content.clone()),
-        Node::Button(b) => Tree::Button(b.id, b.label.clone()),
+        Node::Text(t) => Tree::Text(t.content.clone(), t.style),
+        Node::Button(b) => Tree::Button(b.id, b.label.clone(), b.style),
         Node::Container(c) => {
             if c.direction == Direction::Row {
                 Tree::Row(Vec::new())

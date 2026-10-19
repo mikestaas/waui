@@ -12,7 +12,7 @@ wit_bindgen::generate!({
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 // `Node` itself is emitted by `generate!` at this scope; the records it
 // contains come from the package module.
-use waui::ui::widget::{Button, Container, Direction, Text};
+use waui::ui::widget::{Button, Color, Container, Direction, Size, Style, Text};
 
 const NOT_RUNNING: u64 = 0;
 
@@ -43,10 +43,16 @@ impl Guest for Stopwatch {
                 parent: None,
                 direction: Direction::Column,
             }),
+            // While running the readout glows with the host's accent;
+            // the button says what it will do (start = good, pause = careful).
             Node::Text(Text {
                 id: 2,
                 parent: Some(1),
                 content: format!("{elapsed} ms"),
+                style: Style {
+                    color: if running { Color::Accent } else { Color::Neutral },
+                    size: Size::Large,
+                },
             }),
             Node::Button(Button {
                 id: 3,
@@ -55,6 +61,10 @@ impl Guest for Stopwatch {
                     "pause".to_string()
                 } else {
                     "start".to_string()
+                },
+                style: Style {
+                    color: if running { Color::Warning } else { Color::Positive },
+                    size: Size::Medium,
                 },
             }),
         ]

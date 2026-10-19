@@ -9,11 +9,43 @@ package waui:ui;
 /// host rebuilds the tree. This is the same flat-list encoding that real UI
 /// serialization formats use.
 interface widget {
+  /// A *semantic* color. The contract deliberately stops at intent, not
+  /// pixels: a host maps these onto whatever its toolkit has — an ANSI
+  /// color in a terminal, a theme color in iced, a CSS variable on the
+  /// web. A TUI can't render `#FF6B6B`, but it *can* render "negative".
+  enum color {
+    /// Default foreground for the host's palette.
+    neutral,
+    /// The host's highlight/accent tone.
+    accent,
+    /// Good / success / increasing.
+    positive,
+    /// Bad / error / decreasing.
+    negative,
+    /// Caution / in-progress.
+    warning,
+  }
+
+  /// A *semantic* text size, mapped by each host to its own scale.
+  enum size {
+    small,
+    medium,
+    large,
+  }
+
+  /// Per-node styling. Deliberately tiny: color + size. Everything else
+  /// (borders, padding, backgrounds, focus rings) stays a host concern.
+  record style {
+    color: color,
+    size: size,
+  }
+
   /// A piece of text.
   record text {
     id: u32,
     parent: option<u32>,
     content: string,
+    style: style,
   }
 
   /// A clickable button.
@@ -21,12 +53,17 @@ interface widget {
     id: u32,
     parent: option<u32>,
     label: string,
+    style: style,
   }
 
   /// A horizontal or vertical container.
   ///
   /// (Named `container` rather than `box`: the latter would clash with
   /// `std::boxed::Box` in generated Rust bindings.)
+  ///
+  /// Containers carry layout only — no `style` field. How a host
+  /// decorates a container (borders, spacing) is left to the host, the
+  /// same way focus is left to the host.
   record container {
     id: u32,
     parent: option<u32>,
