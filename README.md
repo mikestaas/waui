@@ -17,7 +17,9 @@ The whole contract lives in [`wit/`](wit/) — package `waui:ui`:
   variant. WIT types may not be recursive, so the tree is encoded as a
   **flat list of nodes in depth-first pre-order**, each carrying an `id` and
   a `parent` id — the same flat-list encoding real UI serialization formats
-  use. Each host rebuilds the tree from the list. `text` and `button` nodes
+  use. Each host rebuilds the tree from the list — the Rust hosts share a
+  single reference rebuild (`crates/host-shared`), and the web host
+  re-implements the same logic in JavaScript. `text` and `button` nodes
   also carry a `style`: a **semantic** `color` (`neutral`/`accent`/
   `positive`/`negative`/`warning`) and `size` (`small`/`medium`/`large`).
   The contract stops at intent, not pixels — a TUI can't render `#f7768e` but
@@ -34,16 +36,20 @@ event, and the component never reaches into the host's toolkit. Time-based UIs
 get a tick from the host and poll `now()` when they want a clock.
 
 The contract is versioned by its `waui:ui` package name, and additions are
-built to be **host-compatible**: when `style` was added to `text` and
-`button`, only hosts that *use* it had to change — `host-cli` needed zero
-changes (it simply never reads the new field). Components are the exception:
-a node's layout is part of the ABI, so they must be built against the WIT
-they target.
+built to be **host-compatible**. The contract-level half of a Rust host — the
+WIT bindings and the documented list→tree rebuild — lives in the shared
+`host-shared` core, so a contract addition lands in one place; what each host
+then *chooses* to express is its renderer. When `style` was added,
+`host-cli`'s ASCII renderer simply never draws it, while iced, the TUI, and
+the web page each express it in their own idiom. Components are the
+exception: a node's layout is part of the ABI, so they must be built against
+the WIT they target.
 
 ## Layout
 
 | crate / dir            | what it is                                                                     |
 | ---------------------- | ------------------------------------------------------------------------------ |
+| `crates/host-shared`   | the shared core of the wasmtime hosts: the WIT bindings + the list→tree rebuild (contract-level code; hosts add only a renderer) |
 | `crates/host-iced`     | a windowed host: the tree with [iced](https://iced.rs); style → palette colors + point sizes |
 | `crates/host-tui`      | a terminal host: real layout, framed buttons, host-local focus ring (ratatui); style → ANSI colors + weight |
 | `crates/host-cli`      | a minimal terminal host: the tree as ASCII, clicks via stdin; ignores style (proof hosts can lag the contract) |
@@ -53,10 +59,12 @@ they target.
 
 The wasmtime hosts (iced, tui, cli) load the same lifted component file —
 **one component, many renderers** — that is the claim, demonstrated rather
-than asserted. The web host runs the *pre-lift* core module instead (browsers
-instantiate core wasm, not components) with a hand-rolled JS layer over the
-calling convention the toolchain emits, so it exercises the same WIT contract
-through a different transport.
+than asserted. They share the `host-shared` core (bindings + the node-list
+rebuild) and differ only in their renderer; the web host runs the *pre-lift*
+core module instead (browsers instantiate core wasm, not components) with a
+hand-rolled JS layer over the calling convention the toolchain emits, so it
+exercises the same WIT contract through a different transport — including its
+own JavaScript copy of the rebuild.
 
 ## Quick start
 

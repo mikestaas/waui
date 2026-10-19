@@ -6,6 +6,7 @@ members = [
     "crates/host-cli",
     "crates/host-iced",
     "crates/host-tui",
+    "crates/host-shared",
 ]
 
 [workspace.dependencies]

@@ -10,13 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::component::*;
 use wasmtime::{Engine, Store};
 
-wasmtime::component::bindgen!({
-    world: "app",
-    path: "../../wit",
-});
-
-mod tree;
-use tree::{build_tree, Tree};
+// The world's bindings and the node-list→tree rebuild live in the shared
+// host core; this crate is only its renderer.
+use host_shared::{build_tree, App, AppImports, Tree, waui};
 
 /// The host's implementation of the world's imports.
 struct Host;
@@ -83,14 +79,17 @@ fn main() {
     }
 }
 
-/// Render the tree as indented ASCII.
+/// Render the tree as indented ASCII. The shared tree carries each node's
+/// semantic `style`, but this renderer deliberately ignores it: plain ASCII
+/// has no palette, and a host is allowed to express less of the contract
+/// than it consumes.
 fn render(node: &Tree, depth: usize, out: &mut String) {
     let indent = "  ".repeat(depth);
     match node {
-        Tree::Text(content) => {
+        Tree::Text(content, _) => {
             out.push_str(&format!("{indent}\"{content}\"\n"));
         }
-        Tree::Button(id, label) => {
+        Tree::Button(id, label, _) => {
             out.push_str(&format!("{indent}[{id}: {label}]\n"));
         }
         Tree::Row(children) => {

@@ -16,17 +16,13 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wasmtime::component::*;
 use wasmtime::{Engine, Store};
 
-wasmtime::component::bindgen!({
-    world: "app",
-    path: "../../wit",
-});
-
-mod tree;
-use tree::{build_tree, Tree};
+// The world's bindings and the node-list→tree rebuild live in the shared
+// host core; this crate is only its renderer.
+use host_shared::{build_tree, App, AppImports, Tree, waui};
 
 // The contract's style tokens, aliased to avoid clashing with ratatui's
 // `Color` and `Style`.
-use crate::waui::ui::widget::{Color as WColor, Size as WSize, Style as WStyle};
+use host_shared::waui::ui::widget::{Color as WColor, Size as WSize, Style as WStyle};
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
