@@ -17,7 +17,14 @@ The whole contract lives in [`wit/`](wit/) — package `waui:ui`:
   variant. WIT types may not be recursive, so the tree is encoded as a
   **flat list of nodes in depth-first pre-order**, each carrying an `id` and
   a `parent` id — the same flat-list encoding real UI serialization formats
-  use. Each host rebuilds the tree from the list.
+  use. Each host rebuilds the tree from the list. `text` and `button` nodes
+  also carry a `style`: a **semantic** `color` (`neutral`/`accent`/
+  `positive`/`negative`/`warning`) and `size` (`small`/`medium`/`large`).
+  The contract stops at intent, not pixels — a TUI can't render `#f7768e` but
+  it *can* render "negative", so each host maps the tokens onto its own
+  palette and hosts that can't express a token degrade gracefully. (WIT
+  enums with ≤256 variants lay out as single bytes, so the two tokens cost
+  two bytes per node.)
 - **`app` world** — the component `export`s `view` (its current flat node
   list), `on-click(id)` and `on-tick()`; it `import`s `now` (a host clock, in
   ms).
@@ -26,16 +33,23 @@ The interaction model is *pull*: the host re-queries `view()` after every
 event, and the component never reaches into the host's toolkit. Time-based UIs
 get a tick from the host and poll `now()` when they want a clock.
 
+The contract is versioned by its `waui:ui` package name, and additions are
+built to be **host-compatible**: when `style` was added to `text` and
+`button`, only hosts that *use* it had to change — `host-cli` needed zero
+changes (it simply never reads the new field). Components are the exception:
+a node's layout is part of the ABI, so they must be built against the WIT
+they target.
+
 ## Layout
 
 | crate / dir            | what it is                                                                     |
 | ---------------------- | ------------------------------------------------------------------------------ |
-| `crates/host-iced`     | a windowed host: renders the component's tree with [iced](https://iced.rs)     |
-| `crates/host-tui`      | a terminal host: real layout, framed buttons, and a host-local focus ring (ratatui) |
-| `crates/host-cli`      | a minimal terminal host: the tree as ASCII, clicks via stdin                    |
-| `web/`                 | a web host: one self-contained HTML page per component, zero dependencies       |
-| `crates/demo-counter`  | a counter — UI *and* logic live entirely in the component                       |
-| `crates/demo-stopwatch`| a stopwatch — exercises the import side (`now`) plus host-driven `on-tick`      |
+| `crates/host-iced`     | a windowed host: the tree with [iced](https://iced.rs); style → palette colors + point sizes |
+| `crates/host-tui`      | a terminal host: real layout, framed buttons, host-local focus ring (ratatui); style → ANSI colors + weight |
+| `crates/host-cli`      | a minimal terminal host: the tree as ASCII, clicks via stdin; ignores style (proof hosts can lag the contract) |
+| `web/`                 | a web host: one self-contained HTML page per component, zero dependencies; style → CSS tokens |
+| `crates/demo-counter`  | a counter — UI *and* logic live entirely in the component (the number asks for "negative" below zero) |
+| `crates/demo-stopwatch`| a stopwatch — exercises the import side (`now`) plus host-driven `on-tick` (glows "accent" while running) |
 
 The wasmtime hosts (iced, tui, cli) load the same lifted component file —
 **one component, many renderers** — that is the claim, demonstrated rather
@@ -72,16 +86,19 @@ assembles the page.)
 
 The round-trip test (`crates/host-cli/tests/roundtrip.rs`) builds the counter
 component, drives `on-click` through the same wasmtime host code the real
-hosts use, and asserts on the returned widget tree — the WIT world is testable
-in CI without a window. `make web-test` does the same for the browser path
-from Node.
+hosts use, and asserts on the returned widget tree — its content *and* its
+semantic style — so the WIT world is testable in CI without a window.
+`make web-test` does the same for the browser path from Node.
 
 ## Status
 
 The loop — **component-owned state → WIT widget tree → host-rendered UI** —
-now works in a window, in a terminal, and in a browser, from one component.
-Focus is a host concern: the TUI keeps a local ring over the component's
-buttons while the component stays unaware of it. Deliberately not solved yet,
-in order of importance: diffing (we re-export the whole tree per event),
-styling, component-directed focus and text input, images (a `resource`), and
+now works in a window, in a terminal, and in a browser, from one component,
+including styling: the counter's number asks for "negative" when it goes
+below zero, and each host honors it in its own idiom — iced paints a palette
+color, the TUI paints bold ANSI red, the web page a CSS token. Focus is a
+host concern: the TUI keeps a local ring over the component's buttons while
+the component stays unaware of it. Deliberately not solved yet, in order of
+importance: diffing (we re-export the whole tree per event),
+component-directed focus and text input, images (a `resource`), and
 multi-window/multi-component hosts.

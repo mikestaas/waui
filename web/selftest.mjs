@@ -14,8 +14,9 @@ const rel = (p) => fileURLToPath(new URL(`../${p}`, import.meta.url));
 
 function node(n) {
   if (n.kind === 'container') return `container{id:${n.id},parent:${n.parent},dir:${n.direction}}`;
-  if (n.kind === 'button') return `button{id:${n.id},parent:${n.parent},label:"${n.label}"}`;
-  return `text{id:${n.id},parent:${n.parent},content:"${n.content}"}`;
+  const style = `style:${n.style.color}:${n.style.size}`;
+  if (n.kind === 'button') return `button{id:${n.id},parent:${n.parent},label:"${n.label}",${style}}`;
+  return `text{id:${n.id},parent:${n.parent},content:"${n.content}",${style}}`;
 }
 
 // ---------------------------------------------------------------- counter
@@ -32,28 +33,29 @@ function node(n) {
 
   expect([
     'container{id:1,parent:null,dir:column}',
-    'button{id:2,parent:1,label:"+"}',
-    'text{id:3,parent:1,content:"0"}',
-    'button{id:4,parent:1,label:"-"}',
+    'button{id:2,parent:1,label:"+",style:positive:medium}',
+    'text{id:3,parent:1,content:"0",style:neutral:large}',
+    'button{id:4,parent:1,label:"-",style:negative:medium}',
   ]);
 
   app.click(2);
   expect([
     'container{id:1,parent:null,dir:column}',
-    'button{id:2,parent:1,label:"+"}',
-    'text{id:3,parent:1,content:"1"}',
-    'button{id:4,parent:1,label:"-"}',
+    'button{id:2,parent:1,label:"+",style:positive:medium}',
+    'text{id:3,parent:1,content:"1",style:neutral:large}',
+    'button{id:4,parent:1,label:"-",style:negative:medium}',
   ]);
 
   // Two decrements: exercises the negative-number branch (a second
-  // character in the string buffer).
+  // character in the string buffer) — and the number's color flips
+  // with its sign.
   app.click(4);
   app.click(4);
   expect([
     'container{id:1,parent:null,dir:column}',
-    'button{id:2,parent:1,label:"+"}',
-    'text{id:3,parent:1,content:"-1"}',
-    'button{id:4,parent:1,label:"-"}',
+    'button{id:2,parent:1,label:"+",style:positive:medium}',
+    'text{id:3,parent:1,content:"-1",style:negative:large}',
+    'button{id:4,parent:1,label:"-",style:negative:medium}',
   ]);
 
   // Ignore an unknown widget id (the component's own no-op branch).
@@ -78,14 +80,19 @@ function node(n) {
 
   assert.deepEqual(view(), [
     'container{id:1,parent:null,dir:column}',
-    'text{id:2,parent:1,content:"0 ms"}',
-    'button{id:3,parent:1,label:"start"}',
+    'text{id:2,parent:1,content:"0 ms",style:neutral:large}',
+    'button{id:3,parent:1,label:"start",style:positive:medium}',
   ]);
 
   // Start, let real time pass, tick, and confirm the elapsed time is
   // honest (the component's now() import, driven by the host clock).
   app.click(3);
-  assert.equal(view()[2], 'button{id:3,parent:1,label:"pause"}');
+  assert.equal(
+    view()[2],
+    'button{id:3,parent:1,label:"pause",style:warning:medium}',
+  );
+  // While running, the readout asks for the host's accent color.
+  assert.match(view()[1], /style:accent:large/);
   await new Promise((r) => setTimeout(r, 400));
   app.tick();
   const [, text] = view(); // node order: container, text, button

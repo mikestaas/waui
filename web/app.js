@@ -29,12 +29,14 @@ function rebuild(nodes) {
       el.className = 'waui waui-' + n.direction;
     } else if (n.kind === 'button') {
       el = document.createElement('button');
-      el.className = 'waui waui-button';
+      // The component's semantic style, as token classes (see index.html).
+      el.className =
+        `waui waui-button waui-${n.style.color} waui-${n.style.size}`;
       el.dataset.id = n.id;
       el.textContent = n.label;
     } else {
       el = document.createElement('div');
-      el.className = 'waui waui-text';
+      el.className = `waui waui-text waui-${n.style.color} waui-${n.style.size}`;
       el.textContent = n.content;
     }
     for (const child of childrenOf.get(n.id) ?? []) {

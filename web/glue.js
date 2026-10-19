@@ -7,7 +7,7 @@
 //
 //   view() -> list<node> : `view() -> i32`, a pointer to a 16-byte
 //                           little-endian {ptr, len} descriptor; the items
-//                           are a contiguous run of 24-byte records. The
+//                           are a contiguous run of 28-byte records. The
 //                           result is guest-allocated and must be returned
 //                           to the guest with `cabi_post_view(desc)`.
 //   on-click(id: u32)    : `on-click(i32)` — narrow values pass directly.
@@ -16,15 +16,25 @@
 //                           (JS BigInt). Provided unconditionally; the
 //                           counter never calls it.
 //
-// The 24-byte node record (all little-endian):
+// The 28-byte node record (all little-endian):
 //   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container
 //                   (the WIT case order in waui:ui/widget)
 //   bytes [4..8]    id: u32
 //   bytes [8]       parent option flag: 0 = none
 //   bytes [12..16]  parent id: u32 (valid only when the flag is set)
 //   bytes [16..20]  text/button: string pointer; container: direction
-//                   (u32, 0 = row, 1 = column)
+//                   (u8, 0 = row, 1 = column)
 //   bytes [20..24]  text/button: string length (UTF-8 bytes)
+//   bytes [24]      text/button: style.color (u8, WIT case order in
+//                   waui:ui/widget: 0 = neutral, 1 = accent, 2 = positive,
+//                   3 = negative, 4 = warning)
+//   bytes [25]      text/button: style.size (u8: 0 = small, 1 = medium,
+//                   2 = large)
+//   bytes [26..28]  padding (record is 4-byte aligned)
+//
+// Note: a WIT enum lowers to a single byte in the canonical ABI when it has
+// 256 or fewer variants (wasmtime's generated bindings assert SIZE32 = 1),
+// so the two style tokens pack into two adjacent bytes.
 //
 // This module is written to run in both a browser and Node so the same code
 // can be exercised headlessly (see selftest.mjs).
@@ -51,9 +61,14 @@ export async function createApp(wasmBytes) {
       const ptr = i32[desc >> 2];
       const len = i32[(desc + 4) >> 2];
 
+      // The semantic tokens each host maps onto its own palette, in the
+      // WIT case order of waui:ui/widget (unknown values degrade safely).
+      const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning'];
+      const SIZES = ['small', 'medium', 'large'];
+
       const nodes = new Array(len);
       for (let k = 0; k < len; k++) {
-        const o = ptr + k * 24;
+        const o = ptr + k * 28;
         const id = i32[(o + 4) >> 2];
         const parent = u8[o + 8] !== 0 ? i32[(o + 12) >> 2] : null;
         const tag = u8[o];
@@ -62,16 +77,20 @@ export async function createApp(wasmBytes) {
             kind: 'container',
             id,
             parent,
-            direction: i32[(o + 16) >> 2] === 1 ? 'column' : 'row',
+            direction: u8[o + 16] === 1 ? 'column' : 'row',
           };
         } else {
           const sp = i32[(o + 16) >> 2];
           const sl = i32[(o + 20) >> 2];
           const s = new TextDecoder().decode(u8.subarray(sp, sp + sl));
+          const style = {
+            color: COLORS[u8[o + 24]] ?? 'neutral',
+            size: SIZES[u8[o + 25]] ?? 'medium',
+          };
           nodes[k] =
             tag === 1
-              ? { kind: 'button', id, parent, label: s }
-              : { kind: 'text', id, parent, content: s };
+              ? { kind: 'button', id, parent, label: s, style }
+              : { kind: 'text', id, parent, content: s, style };
         }
       }
 

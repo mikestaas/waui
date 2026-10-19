@@ -18,6 +18,9 @@ mod tree;
 
 use tree::{build_tree, Tree};
 
+// The contract's style tokens, aliased to avoid clashing with `iced::Color`.
+use crate::waui::ui::widget::{Color as WColor, Size as WSize};
+
 /// The host's implementation of the world's imports.
 struct Host;
 
@@ -111,15 +114,53 @@ fn subscription(_state: &State) -> iced::Subscription<Message> {
     iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick)
 }
 
+/// A semantic color in this host's palette — the same Tokyo Night palette
+/// the web host uses, so the component's intent renders the same across
+/// renderers. `neutral` maps to nothing: iced's own theme color is the
+/// right "default foreground".
+fn iced_color(c: WColor) -> Option<iced::Color> {
+    Some(match c {
+        WColor::Neutral => return None,
+        WColor::Accent => iced::Color::from_rgb8(0x7a, 0xa2, 0xf7),
+        WColor::Positive => iced::Color::from_rgb8(0x9e, 0xce, 0x6a),
+        WColor::Negative => iced::Color::from_rgb8(0xf7, 0x76, 0x8e),
+        WColor::Warning => iced::Color::from_rgb8(0xe0, 0xaf, 0x68),
+    })
+}
+
+/// A semantic size on iced's point scale.
+fn size_pt(s: WSize) -> f32 {
+    match s {
+        WSize::Small => 13.0,
+        WSize::Medium => 17.0,
+        WSize::Large => 30.0,
+    }
+}
+
 /// The one place in this host where the toolkit shows up: map the
 /// renderer-agnostic tree onto iced widgets.
 fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
     use iced::widget;
     match node {
-        Tree::Text(content) => widget::text(content.as_str()).into(),
-        Tree::Button(id, label) => widget::button(label.as_str())
-            .on_press(Message::Click(*id))
-            .into(),
+        Tree::Text(content, style) => {
+            let mut text = widget::text(content.as_str()).size(size_pt(style.size));
+            if let Some(color) = iced_color(style.color) {
+                text = text.color(color);
+            }
+            text.into()
+        }
+        Tree::Button(id, label, style) => {
+            // The label carries the component's semantic style; the button
+            // chrome (background, border) stays with iced's theme — a host
+            // concern, like the TUI's focus ring.
+            let mut label = widget::text(label.as_str()).size(size_pt(style.size));
+            if let Some(color) = iced_color(style.color) {
+                label = label.color(color);
+            }
+            widget::button(label)
+                .on_press(Message::Click(*id))
+                .into()
+        }
         Tree::Row(children) => {
             widget::row(children.iter().map(map_tree)).spacing(8).into()
         }

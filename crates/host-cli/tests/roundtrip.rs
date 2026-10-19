@@ -99,8 +99,26 @@ fn text_with_id(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&str> {
         })
 }
 
+/// Find a node by id and return its semantic style (text and button nodes
+/// carry one; containers do not).
+fn style_of(
+    nodes: &[waui::ui::widget::Node],
+    id: u32,
+) -> Option<&waui::ui::widget::Style> {
+    nodes
+        .iter()
+        .find(|n| node_id(n) == id)
+        .and_then(|n| match n {
+            waui::ui::widget::Node::Text(t) => Some(&t.style),
+            waui::ui::widget::Node::Button(b) => Some(&b.style),
+            _ => None,
+        })
+}
+
 #[test]
 fn counter_roundtrip() {
+    use waui::ui::widget::{Color, Size};
+
     build_component();
 
     let engine = Engine::default();
@@ -115,9 +133,16 @@ fn counter_roundtrip() {
     let app = App::instantiate(&mut store, &component, &linker)
         .expect("failed to instantiate component");
 
-    // Fresh counter starts at zero.
+    // Fresh counter starts at zero: the number is the host's default
+    // color at its "large" size, and the buttons ask for their own
+    // semantics.
     let nodes = app.call_view(&mut store).expect("view failed");
     assert_eq!(text_with_id(&nodes, 3), Some("0"));
+    let style = style_of(&nodes, 3).expect("text node carries a style");
+    assert_eq!(style.color, Color::Neutral);
+    assert_eq!(style.size, Size::Large);
+    assert_eq!(style_of(&nodes, 2).unwrap().color, Color::Positive);
+    assert_eq!(style_of(&nodes, 4).unwrap().color, Color::Negative);
 
     // + + -
     app.call_on_click(&mut store, 2).expect("on-click failed");
@@ -126,4 +151,15 @@ fn counter_roundtrip() {
 
     let nodes = app.call_view(&mut store).expect("view failed");
     assert_eq!(text_with_id(&nodes, 3), Some("1"));
+    // Still non-negative: still the neutral color.
+    assert_eq!(style_of(&nodes, 3).unwrap().color, Color::Neutral);
+
+    // - - drives the value to -1: the component asks for the host's
+    // "negative" tone, however the host chooses to render it.
+    app.call_on_click(&mut store, 4).expect("on-click failed");
+    app.call_on_click(&mut store, 4).expect("on-click failed");
+
+    let nodes = app.call_view(&mut store).expect("view failed");
+    assert_eq!(text_with_id(&nodes, 3), Some("-1"));
+    assert_eq!(style_of(&nodes, 3).unwrap().color, Color::Negative);
 }

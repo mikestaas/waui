@@ -62,6 +62,34 @@
       .waui-column > .waui-button {
         width: 100%;
       }
+      /* The component's semantic style tokens (waui:ui/widget), mapped onto
+         this page's palette. The component says *what* it is, not *what
+         color* it is: "negative" renders red here, ANSI red in the TUI,
+         theme red in iced. */
+      .waui-neutral {
+        color: inherit;
+      }
+      .waui-accent {
+        color: #7aa2f7;
+      }
+      .waui-positive {
+        color: #9ece6a;
+      }
+      .waui-negative {
+        color: #f7768e;
+      }
+      .waui-warning {
+        color: #e0af68;
+      }
+      .waui-small {
+        font-size: 0.85em;
+      }
+      .waui-medium {
+        font-size: 1em;
+      }
+      .waui-large {
+        font-size: 1.8em;
+      }
       #badge {
         position: fixed;
         top: 10px;
