@@ -1,6 +1,7 @@
 // Headless verification of the web host's ABI layer (Node, same code the
-// browser page uses). Exercises the counter's round-trip and the
-// stopwatch's import side (now + tick) against the raw wasm modules.
+// browser page uses). Exercises the counter's round-trip, the diff channel
+// (changes), and the stopwatch's import side (now + tick) against the raw
+// wasm modules.
 //
 //   node web/selftest.mjs
 
@@ -17,6 +18,12 @@ function node(n) {
   const style = `style:${n.style.color}:${n.style.size}`;
   if (n.kind === 'button') return `button{id:${n.id},parent:${n.parent},label:"${n.label}",${style}}`;
   return `text{id:${n.id},parent:${n.parent},content:"${n.content}",${style}}`;
+}
+
+function mutation(m) {
+  return m.kind === 'removed'
+    ? `removed{id:${m.id}}`
+    : `changed ${node(m.node)}`;
 }
 
 // ---------------------------------------------------------------- counter
@@ -38,19 +45,30 @@ function node(n) {
     'button{id:4,parent:1,label:"-",style:negative:medium}',
   ]);
 
+  // The diff channel: a click dirties exactly the readout — never the
+  // whole tree.
   app.click(2);
-  expect([
-    'container{id:1,parent:null,dir:column}',
-    'button{id:2,parent:1,label:"+",style:positive:medium}',
-    'text{id:3,parent:1,content:"1",style:neutral:large}',
-    'button{id:4,parent:1,label:"-",style:negative:medium}',
-  ]);
+  assert.deepEqual(
+    app.changes().map(mutation),
+    ['changed text{id:3,parent:1,content:"1",style:neutral:large}'],
+    'one click should report exactly the changed readout',
+  );
 
-  // Two decrements: exercises the negative-number branch (a second
-  // character in the string buffer) — and the number's color flips
-  // with its sign.
+  // Re-querying with nothing new reports an empty diff.
+  assert.deepEqual(app.changes(), []);
+
+  // An unknown widget id is the component's own no-op branch: no diff.
+  app.click(99);
+  assert.deepEqual(app.changes(), []);
+
+  // Two decrements: the number's content *and* color change (one
+  // mutation), and view() is still the full truth.
   app.click(4);
   app.click(4);
+  assert.deepEqual(
+    app.changes().map(mutation),
+    ['changed text{id:3,parent:1,content:"-1",style:negative:large}'],
+  );
   expect([
     'container{id:1,parent:null,dir:column}',
     'button{id:2,parent:1,label:"+",style:positive:medium}',
@@ -58,18 +76,27 @@ function node(n) {
     'button{id:4,parent:1,label:"-",style:negative:medium}',
   ]);
 
-  // Ignore an unknown widget id (the component's own no-op branch).
-  app.click(99);
-  app.view();
+  // Bootstrap rule: a host that calls changes() first, without ever
+  // calling view(), still gets the whole tree (as changed nodes).
+  const app2 = await createApp(readFileSync(rel('target/wasm32-unknown-unknown/release/demo_counter.wasm')));
+  assert.equal(
+    app2.changes().length,
+    4,
+    'first-ever changes() should export the whole tree',
+  );
 
-  // No unbounded growth: 60 more view() calls must not grow memory.
+  // No unbounded growth: 60 more view() and 60 changes() calls must not
+  // grow memory (both return guest-allocated buffers the host posts back).
   const before = app.memoryPages();
-  for (let i = 0; i < 60; i++) app.view();
+  for (let i = 0; i < 60; i++) {
+    app.view();
+    app.changes();
+  }
   assert.ok(
     app.memoryPages() - before < 4,
-    `view() leaked memory: ${before} -> ${app.memoryPages()} pages`,
+    `view()/changes() leaked memory: ${before} -> ${app.memoryPages()} pages`,
   );
-  console.log('counter: ok (round-trip + leak check)');
+  console.log('counter: ok (round-trip + diff + leak check)');
 }
 
 // -------------------------------------------------------------- stopwatch
@@ -84,29 +111,56 @@ function node(n) {
     'button{id:3,parent:1,label:"start",style:positive:medium}',
   ]);
 
-  // Start, let real time pass, tick, and confirm the elapsed time is
-  // honest (the component's now() import, driven by the host clock).
+  // Start: both the readout (its color) and the button (label + color)
+  // change — two mutations.
   app.click(3);
+  let muts = app.changes().map(mutation);
+  assert.equal(muts.length, 2);
+  assert.match(muts[0], /^changed text\{.*content:"\d+ ms",style:accent:large\}$/);
   assert.equal(
-    view()[2],
-    'button{id:3,parent:1,label:"pause",style:warning:medium}',
+    muts[1],
+    'changed button{id:3,parent:1,label:"pause",style:warning:medium}',
   );
-  // While running, the readout asks for the host's accent color.
-  assert.match(view()[1], /style:accent:large/);
+
+  // Let real time pass, tick: while running, only the readout changes.
   await new Promise((r) => setTimeout(r, 400));
   app.tick();
-  const [, text] = view(); // node order: container, text, button
-  const ms = Number(text.match(/content:"(-?\d+) ms"/)[1]);
+  muts = app.changes().map(mutation);
+  assert.equal(muts.length, 1);
+  const ms = Number(muts[0].match(/content:"(-?\d+) ms"/)[1]);
   assert.ok(ms >= 200 && ms < 2000, `unexpected elapsed time: ${ms} ms`);
+  assert.match(muts[0], /style:accent:large/);
 
-  // Pause: a further tick must not change the reading.
+  // Pause: the readout and the button change again...
   app.click(3);
-  const frozen = view()[1];
+  muts = app.changes().map(mutation);
+  assert.equal(muts.length, 2);
+  assert.match(muts[0], /^changed text\{.*content:"\d+ ms",style:neutral:large\}$/);
+  assert.equal(
+    muts[1],
+    'changed button{id:3,parent:1,label:"start",style:positive:medium}',
+  );
+
+  // ...and a further tick while paused reports an *empty* diff: the
+  // paused stopwatch generates zero diff traffic.
   await new Promise((r) => setTimeout(r, 300));
   app.tick();
-  assert.equal(view()[1], frozen, 'paused stopwatch kept advancing');
+  assert.deepEqual(app.changes(), [], 'paused stopwatch must report no changes');
 
-  console.log(`stopwatch: ok (ran ${ms} ms of real time)`);
+  // view() is still the full truth, and the reading is frozen.
+  const [, text] = view();
+  assert.match(text, /style:neutral:large/);
+  const frozenMs = Number(text.match(/content:"(-?\d+) ms"/)[1]);
+  await new Promise((r) => setTimeout(r, 300));
+  app.tick();
+  assert.deepEqual(app.changes(), []);
+  assert.equal(
+    Number(view()[1].match(/content:"(-?\d+) ms"/)[1]),
+    frozenMs,
+    'paused stopwatch kept advancing',
+  );
+
+  console.log(`stopwatch: ok (ran ${ms} ms of real time, ${frozenMs} ms frozen)`);
 }
 
 console.log('web selftest: all checks passed');

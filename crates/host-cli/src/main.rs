@@ -4,6 +4,12 @@
 //! widget clicks read from standard input. This is a second, trivially
 //! different renderer for the same component — the point being that the
 //! component doesn't know or care which host it runs in.
+//!
+//! This host deliberately ignores the world's diff channel (`changes`) and
+//! re-queries `view()` after every event: `view()` is always the full
+//! truth, so a full-snapshot host stays correct. The diff is an
+//! optimization, opt-in per host (host-tui, host-iced, and the web host
+//! all use it).
 
 use std::io::{self, BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -26,7 +32,7 @@ impl AppImports for Host {
     }
 }
 
-// The `widget` interface is pulled into the world (via `use widget.{node}`),
+// The `widget` interface is pulled into the world (via `use widget.{...}`),
 // so the generated bindings require this empty marker impl.
 impl waui::ui::widget::Host for Host {}
 

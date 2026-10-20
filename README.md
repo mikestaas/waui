@@ -28,32 +28,46 @@ The whole contract lives in [`wit/`](wit/) — package `waui:ui`:
   enums with ≤256 variants lay out as single bytes, so the two tokens cost
   two bytes per node.)
 - **`app` world** — the component `export`s `view` (its current flat node
-  list), `on-click(id)` and `on-tick()`; it `import`s `now` (a host clock, in
-  ms).
+  list), `changes` (the diff of that list, per `mutation`), `on-click(id)` and
+  `on-tick()`; it `import`s `now` (a host clock, in ms).
 
-The interaction model is *pull*: the host re-queries `view()` after every
-event, and the component never reaches into the host's toolkit. Time-based UIs
+The interaction model is *pull with diff*: the host bootstraps from `view()`
+(a full snapshot) and, after each event it drives the component with, applies
+the component's `changes()` to its retained tree — only the nodes the
+component changed since the last export, never the whole tree. A `mutation`
+is either `changed(node)` (keyed by the node's `id`; the host replaces its
+retained copy in place) or `removed(id)` (the host prunes the node and, for a
+container, its subtree). The component is in a position no host is: it *knows*
+which of its nodes its state touches, so the diff is computed where it's
+cheapest. The component never reaches into the host's toolkit; time-based UIs
 get a tick from the host and poll `now()` when they want a clock.
+
+Two rules keep the protocol safe. First, **`view()` is always the full
+truth** — a host that ignores `changes` and simply re-queries `view()` after
+every event stays correct, so diffing is an optimization, opt-in per host
+(host-cli opts out; iced, the TUI, and the web host use it). Second, a
+component that has *never* exported its tree reports every node as `changed`,
+so a host may bootstrap from `changes` alone.
 
 The contract is versioned by its `waui:ui` package name, and additions are
 built to be **host-compatible**. The contract-level half of a Rust host — the
-WIT bindings and the documented list→tree rebuild — lives in the shared
-`host-shared` core, so a contract addition lands in one place; what each host
-then *chooses* to express is its renderer. When `style` was added,
-`host-cli`'s ASCII renderer simply never draws it, while iced, the TUI, and
-the web page each express it in their own idiom. Components are the
-exception: a node's layout is part of the ABI, so they must be built against
-the WIT they target.
+WIT bindings, the documented list→tree rebuild, and the retained tree the diff
+applies against — lives in the shared `host-shared` core, so a contract
+addition lands in one place; what each host then *chooses* to express is its
+renderer. When `style` was added, `host-cli`'s ASCII renderer simply never
+draws it, while iced, the TUI, and the web page each express it in their own
+idiom. Components are the exception: a node's layout is part of the ABI, so
+they must be built against the WIT they target.
 
 ## Layout
 
 | crate / dir            | what it is                                                                     |
 | ---------------------- | ------------------------------------------------------------------------------ |
-| `crates/host-shared`   | the shared core of the wasmtime hosts: the WIT bindings + the list→tree rebuild (contract-level code; hosts add only a renderer) |
-| `crates/host-iced`     | a windowed host: the tree with [iced](https://iced.rs) on the web page's dark theme; style → palette colors + point sizes |
-| `crates/host-tui`      | a terminal host: real layout, framed buttons, host-local focus ring (ratatui); style → ANSI colors + weight |
-| `crates/host-cli`      | a minimal terminal host: the tree as ASCII, clicks via stdin; ignores style (proof hosts can lag the contract) |
-| `web/`                 | a web host: one self-contained HTML page per component, zero dependencies; style → CSS tokens |
+| `crates/host-shared`   | the shared core of the wasmtime hosts: the WIT bindings + the list→tree rebuild + the retained tree `changes` diffs apply against (contract-level code; hosts add only a renderer) |
+| `crates/host-iced`     | a windowed host: the tree with [iced](https://iced.rs) on the web page's dark theme; style → palette colors + point sizes; applies diffs, skipping the rebuild on no-op ticks |
+| `crates/host-tui`      | a terminal host: real layout, framed buttons, host-local focus ring (ratatui); style → ANSI colors + weight; applies diffs — at rest it makes zero calls into the component |
+| `crates/host-cli`      | a minimal terminal host: the tree as ASCII, clicks via stdin; ignores *both* style and the diff channel (proof hosts can lag the contract) |
+| `web/`                 | a web host: one self-contained HTML page per component, zero dependencies; style → CSS tokens; applies content diffs *in place* (no DOM rebuild) |
 | `crates/demo-counter`  | a counter — UI *and* logic live entirely in the component (the number asks for "negative" below zero) |
 | `crates/demo-stopwatch`| a stopwatch — exercises the import side (`now`) plus host-driven `on-tick` (glows "accent" while running) |
 
@@ -95,7 +109,9 @@ assembles the page.)
 The round-trip test (`crates/host-cli/tests/roundtrip.rs`) builds the counter
 component, drives `on-click` through the same wasmtime host code the real
 hosts use, and asserts on the returned widget tree — its content *and* its
-semantic style — so the WIT world is testable in CI without a window.
+semantic style — plus on the diff channel: one click reports exactly one
+changed node, no-op events report none, and a fresh instance that never calls
+`view()` still yields its whole tree from the first `changes()`.
 `make web-test` does the same for the browser path from Node.
 
 ## Status
@@ -104,9 +120,12 @@ The loop — **component-owned state → WIT widget tree → host-rendered UI** 
 now works in a window, in a terminal, and in a browser, from one component,
 including styling: the counter's number asks for "negative" when it goes
 below zero, and each host honors it in its own idiom — iced paints a palette
-color, the TUI paints bold ANSI red, the web page a CSS token. Focus is a
-host concern: the TUI keeps a local ring over the component's buttons while
-the component stays unaware of it. Deliberately not solved yet, in order of
-importance: diffing (we re-export the whole tree per event),
+color, the TUI paints bold ANSI red, the web page a CSS token. And it works
+*incrementally*: the demos report only what changed (a counter click is one
+mutation; a paused stopwatch is zero), so an idle UI costs the hosts nothing
+— the TUI makes no component calls at rest, and the web page updates its
+readout in place without rebuilding the DOM. Focus is a host concern: the TUI
+keeps a local ring over the component's buttons while the component stays
+unaware of it. Deliberately not solved yet, in order of importance:
 component-directed focus and text input, images (a `resource`), and
 multi-window/multi-component hosts.

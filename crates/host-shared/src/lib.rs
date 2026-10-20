@@ -1,11 +1,12 @@
 //! The shared core of the waui wasmtime-based hosts.
 //!
 //! Everything in here is *contract-level* code: the bindings for the
-//! `waui:ui/app` world, and the rebuild of the component's flat node list
-//! into a widget tree. The flat-list invariants that the rebuild depends on
-//! (depth-first pre-order, parents precede children) are documented by the
-//! WIT contract itself, so their reference implementation lives in one
-//! place instead of being duplicated per host.
+//! `waui:ui/app` world, the rebuild of the component's flat node list
+//! into a widget tree, and the retained tree the diff protocol applies
+//! against. The flat-list invariants all of these depend on (depth-first
+//! pre-order, parents precede children) are documented by the WIT contract
+//! itself, so their reference implementation lives in one place instead of
+//! being duplicated per host.
 //!
 //! What stays per-host is the *renderer* — the mapping of this tree onto a
 //! particular toolkit (iced widgets, ratatui widgets, ASCII) — plus whatever
@@ -23,6 +24,8 @@ wasmtime::component::bindgen!({
     path: "../../wit",
 });
 
+// `Node` and `Mutation` resolve to the aliases the macro emits at this
+// crate's root.
 use waui::ui::widget::{Direction, Style};
 
 /// A rebuilt widget tree.
@@ -129,5 +132,240 @@ pub fn build_tree(nodes: &[Node]) -> Tree {
         0 => Tree::Column(Vec::new()),
         1 => roots.pop().unwrap(),
         _ => Tree::Column(roots),
+    }
+}
+
+/// The host's retained copy of the component's tree, as the diff protocol
+/// maintains it: a full snapshot from `view` at startup, then `changes`
+/// diffs applied by node id.
+#[derive(Debug, Clone)]
+pub struct Retained {
+    /// The full tree, in canonical pre-order.
+    nodes: Vec<Node>,
+}
+
+impl Retained {
+    /// Retain a full snapshot (the result of `view`).
+    pub fn from_view(nodes: Vec<Node>) -> Self {
+        Self { nodes }
+    }
+
+    /// The retained tree, in canonical pre-order (for `build_tree`).
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
+    /// Apply a `changes` diff. Returns whether anything was retained.
+    pub fn apply(&mut self, mutations: &[Mutation]) -> bool {
+        if mutations.is_empty() {
+            return false;
+        }
+        for mutation in mutations {
+            match mutation {
+                Mutation::Changed(node) => {
+                    match self
+                        .nodes
+                        .iter()
+                        .position(|n| node_id(n) == node_id(node))
+                    {
+                        Some(i) => {
+                            if node_parent(&self.nodes[i]) == node_parent(node) {
+                                // Same parent: the node keeps its position.
+                                self.nodes[i] = node.clone();
+                            } else {
+                                // Re-parented: move it just after the new
+                                // parent so the list stays pre-ordered.
+                                self.nodes.remove(i);
+                                self.insert(node.clone());
+                            }
+                        }
+                        // A node the host has never seen (added after
+                        // bootstrap): insert in its canonical position.
+                        None => self.insert(node.clone()),
+                    }
+                }
+                Mutation::Removed(id) => self.remove_subtree(*id),
+            }
+        }
+        true
+    }
+
+    /// Insert a node the host does not have: just after its parent (past
+    /// any of the node's own descendants still in the list, so a re-added
+    /// container lands after its children), or at the end if it is a new
+    /// root.
+    fn insert(&mut self, node: Node) {
+        let id = node_id(&node);
+        let parent = node_parent(&node);
+        match parent.and_then(|p| self.nodes.iter().position(|n| node_id(n) == p)) {
+            None => self.nodes.push(node),
+            Some(p) => {
+                let mut i = p + 1;
+                while i < self.nodes.len() && self.descendant_of(&self.nodes[i], id) {
+                    i += 1;
+                }
+                self.nodes.insert(i, node);
+            }
+        }
+    }
+
+    /// Remove a node and, if it is a container, its whole subtree.
+    fn remove_subtree(&mut self, id: u32) {
+        let Some(p) = self.nodes.iter().position(|n| node_id(n) == id) else {
+            return;
+        };
+        let mut end = p + 1;
+        while end < self.nodes.len() && self.descendant_of(&self.nodes[end], id) {
+            end += 1;
+        }
+        self.nodes.drain(p..end);
+    }
+
+    /// Whether `node` is in the subtree rooted at `ancestor`.
+    fn descendant_of(&self, node: &Node, ancestor: u32) -> bool {
+        let mut current = node_parent(node);
+        while let Some(parent) = current {
+            if parent == ancestor {
+                return true;
+            }
+            current = self
+                .nodes
+                .iter()
+                .find(|n| node_id(n) == parent)
+                .and_then(node_parent);
+        }
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! The diff machinery is pure data structure work — testable without
+    //! a component in sight.
+
+    use super::*;
+    use waui::ui::widget::{Button, Color, Container, Direction, Size, Style, Text};
+
+    fn style(color: Color, size: Size) -> Style {
+        Style { color, size }
+    }
+
+    fn cont(id: u32, parent: Option<u32>) -> Node {
+        Node::Container(Container {
+            id,
+            parent,
+            direction: Direction::Column,
+        })
+    }
+
+    fn text(id: u32, parent: Option<u32>, content: &str) -> Node {
+        Node::Text(Text {
+            id,
+            parent,
+            content: content.to_string(),
+            style: style(Color::Neutral, Size::Large),
+        })
+    }
+
+    fn button(id: u32, parent: Option<u32>, label: &str) -> Node {
+        Node::Button(Button {
+            id,
+            parent,
+            label: label.to_string(),
+            style: style(Color::Positive, Size::Medium),
+        })
+    }
+
+    /// The ids of the retained list, in order — the layout contract.
+    fn ids(r: &Retained) -> Vec<u32> {
+        r.nodes.iter().map(node_id).collect()
+    }
+
+    #[test]
+    fn apply_empty_is_a_noop() {
+        let mut r = Retained::from_view(vec![cont(1, None), text(3, Some(1), "0")]);
+        assert!(!r.apply(&[]));
+        assert_eq!(ids(&r), vec![1, 3]);
+    }
+
+    #[test]
+    fn apply_replaces_in_place() {
+        let mut r = Retained::from_view(vec![
+            cont(1, None),
+            text(3, Some(1), "0"),
+            button(4, Some(1), "-"),
+        ]);
+        assert!(r.apply(&[Mutation::Changed(text(3, Some(1), "-1"))]));
+        assert_eq!(ids(&r), vec![1, 3, 4]); // position kept
+        match &r.nodes[1] {
+            Node::Text(t) => assert_eq!(t.content, "-1"),
+            _ => panic!("node 3 should still be the text readout"),
+        }
+    }
+
+    #[test]
+    fn apply_prunes_the_whole_subtree() {
+        let mut r = Retained::from_view(vec![
+            cont(1, None),
+            cont(2, Some(1)),
+            text(3, Some(2), "a"),
+            text(4, Some(2), "b"),
+            button(5, Some(1), "x"),
+        ]);
+        assert!(r.apply(&[Mutation::Removed(2)]));
+        assert_eq!(ids(&r), vec![1, 5]);
+    }
+
+    #[test]
+    fn apply_reparents_to_the_canonical_position() {
+        // Two roots; the readout moves from under the first to under the
+        // second.
+        let mut r = Retained::from_view(vec![
+            cont(1, None),
+            text(3, Some(1), "a"),
+            cont(2, None),
+            text(4, Some(2), "b"),
+        ]);
+        assert!(r.apply(&[Mutation::Changed(text(3, Some(2), "a"))]));
+        // Just after its new parent, before its new siblings: still
+        // pre-ordered.
+        assert_eq!(ids(&r), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn apply_inserts_a_new_node_after_its_parents_subtree() {
+        let mut r = Retained::from_view(vec![
+            cont(1, None),
+            text(3, Some(1), "a"),
+            cont(2, Some(1)),
+            text(4, Some(2), "b"),
+        ]);
+        assert!(r.apply(&[Mutation::Changed(text(7, Some(1), "c"))]));
+        // A leaf lands just after its parent, before the existing
+        // children.
+        assert_eq!(ids(&r), vec![1, 7, 3, 2, 4]);
+    }
+
+    #[test]
+    fn a_mutated_tree_still_builds() {
+        // End-to-end over the machinery: mutate, then rebuild — the
+        // rebuilt tree must reflect the diff.
+        let mut r = Retained::from_view(vec![
+            cont(1, None),
+            text(3, Some(1), "0"),
+            button(2, Some(1), "+"),
+            button(4, Some(1), "-"),
+        ]);
+        assert!(r.apply(&[Mutation::Changed(text(3, Some(1), "-1"))]));
+        let tree = build_tree(r.nodes());
+        if let Tree::Column(children) = &tree {
+            // List order: the readout first, then the two buttons.
+            assert_eq!(children.len(), 3);
+            assert!(
+                matches!(&children[0], Tree::Text(c, _) if c.as_str() == "-1")
+            );
+        } else {
+            panic!("expected a column of three children");
+        }
     }
 }

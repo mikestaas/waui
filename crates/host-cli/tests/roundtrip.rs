@@ -162,4 +162,95 @@ fn counter_roundtrip() {
     let nodes = app.call_view(&mut store).expect("view failed");
     assert_eq!(text_with_id(&nodes, 3), Some("-1"));
     assert_eq!(style_of(&nodes, 3).unwrap().color, Color::Negative);
+
+    // The diff channel: the component reports only what it changed. A
+    // `view()` call above reset its dirty state, so the next click is the
+    // only pending change.
+    app.call_on_click(&mut store, 4).expect("on-click failed"); // 0 -> ...-2
+    let mutations = app.call_changes(&mut store).expect("changes failed");
+    assert_eq!(mutations.len(), 1, "one click should dirty exactly one node");
+    match &mutations[0] {
+        waui::ui::widget::Mutation::Changed(node) => {
+            assert_eq!(node_id(node), 3);
+            if let waui::ui::widget::Node::Text(t) = node {
+                assert_eq!(t.content, "-2");
+                assert_eq!(t.style.color, Color::Negative);
+                assert_eq!(t.style.size, Size::Large);
+            } else {
+                panic!("expected the text readout, got another node kind");
+            }
+        }
+        waui::ui::widget::Mutation::Removed(_) => {
+            panic!("the counter never removes nodes")
+        }
+    }
+
+    // No-op events (an unknown click, a tick) produce an empty diff.
+    app.call_on_click(&mut store, 99).expect("on-click failed");
+    assert!(
+        app.call_changes(&mut store).expect("changes failed").is_empty(),
+        "an unknown click must produce no changes"
+    );
+    app.call_on_tick(&mut store).expect("on-tick failed");
+    assert!(
+        app.call_changes(&mut store).expect("changes failed").is_empty(),
+        "a no-op tick must produce no changes"
+    );
+
+    // And climbing back over zero: the color flips with the content, and
+    // it is still one mutation — the readout.
+    app.call_on_click(&mut store, 2).expect("on-click failed"); // -2 -> -1
+    app.call_on_click(&mut store, 2).expect("on-click failed"); // -1 -> 0
+    let mutations = app.call_changes(&mut store).expect("changes failed");
+    assert_eq!(mutations.len(), 1);
+    match &mutations[0] {
+        waui::ui::widget::Mutation::Changed(node) => {
+            if let waui::ui::widget::Node::Text(t) = node {
+                assert_eq!(t.content, "0");
+                assert_eq!(t.style.color, Color::Neutral);
+            } else {
+                panic!("expected the text readout, got another node kind");
+            }
+        }
+        _ => panic!("expected a changed node"),
+    }
+}
+
+#[test]
+fn changes_bootstraps_without_view() {
+    // A host that never calls view() still gets the whole tree from the
+    // first changes() call: before anything has been exported, every node
+    // is new to the host.
+    build_component();
+
+    let engine = Engine::default();
+    let component =
+        Component::from_file(&engine, component_path()).expect("failed to load component");
+
+    let mut linker = Linker::new(&engine);
+    App::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
+        .expect("failed to link world imports");
+
+    let mut store = Store::new(&engine, Host);
+    let app = App::instantiate(&mut store, &component, &linker)
+        .expect("failed to instantiate component");
+
+    let mutations = app.call_changes(&mut store).expect("changes failed");
+    assert_eq!(
+        mutations.len(),
+        4,
+        "first-ever changes() should export the whole tree"
+    );
+    assert!(
+        mutations
+            .iter()
+            .all(|m| matches!(m, waui::ui::widget::Mutation::Changed(_))),
+        "bootstrap mutations should all be `changed`"
+    );
+
+    // A second call, with nothing changed, is empty.
+    assert!(
+        app.call_changes(&mut store).expect("changes failed").is_empty(),
+        "second changes() with no events should be empty"
+    );
 }

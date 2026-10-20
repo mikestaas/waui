@@ -1,8 +1,11 @@
 //! A windowed host for waui components, rendered with [iced](https://iced.rs).
 //!
-//! The host owns a wasmtime store and a component instance. On every event it
-//! forwards the event to the component, re-queries `view()`, rebuilds the
-//! widget tree from the flat node list, and maps it onto iced widgets.
+//! The host owns a wasmtime store and a component instance. It bootstraps
+//! from `view()` (a full snapshot), then — on every event it forwards to
+//! the component — applies the component's `changes()` diff to its retained
+//! tree and rebuilds only when the diff is non-empty. A no-op tick (say,
+//! from a paused stopwatch) produces an empty diff and skips the rebuild
+//! entirely.
 
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -11,7 +14,7 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, App, AppImports, Tree, waui};
+use host_shared::{build_tree, App, AppImports, Retained, Tree, waui};
 
 // The contract's style tokens, aliased to avoid clashing with `iced::Color`.
 use host_shared::waui::ui::widget::{Color as WColor, Size as WSize};
@@ -37,6 +40,8 @@ impl waui::ui::widget::Host for Host {}
 struct State {
     app: App,
     store: Store<Host>,
+    /// The retained node list, as the diff protocol maintains it.
+    retained: Retained,
     tree: Tree,
 }
 
@@ -79,14 +84,17 @@ fn boot() -> State {
     let app = App::instantiate(&mut store, &component, &linker)
         .expect("failed to instantiate component");
 
-    let tree = app
-        .call_view(&mut store)
-        .expect("failed to get initial view");
+    let retained = Retained::from_view(
+        app.call_view(&mut store)
+            .expect("failed to get initial view"),
+    );
+    let tree = build_tree(retained.nodes());
 
     State {
         app,
         store,
-        tree: build_tree(&tree),
+        retained,
+        tree,
     }
 }
 
@@ -101,11 +109,15 @@ fn update(state: &mut State, message: Message) {
             .call_on_tick(&mut state.store)
             .expect("on-tick() failed"),
     }
-    let nodes = state
+    // The diff channel: rebuild only when the component says something
+    // changed (a no-op tick reports an empty diff).
+    let mutations = state
         .app
-        .call_view(&mut state.store)
-        .expect("view() failed");
-    state.tree = build_tree(&nodes);
+        .call_changes(&mut state.store)
+        .expect("changes() failed");
+    if state.retained.apply(&mutations) {
+        state.tree = build_tree(state.retained.nodes());
+    }
 }
 
 fn view(state: &State) -> iced::Element<'_, Message> {
