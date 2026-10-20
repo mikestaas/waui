@@ -80,4 +80,21 @@ interface widget {
     button(button),
     container(container),
   }
+
+  /// One entry of a `changes` diff (see the `app` world): what is new for
+  /// the host since it last saw the tree.
+  ///
+  /// A `changed` node is keyed by its `id`: with the same parent as the
+  /// retained copy, the host replaces it in place; if the component
+  /// re-parents it (same id, new parent), the host moves it just after the
+  /// new parent (past any of its own descendants still in the list). A
+  /// `removed` id deletes a node — and, if it is a container, the whole
+  /// subtree under it. Deeper restructuring is composed from these: a
+  /// component that moves a container (with its children) should remove
+  /// the subtree and re-add it, since the flat pre-order list gives each
+  /// retained node a stable home.
+  variant mutation {
+    changed(node),
+    removed(u32),
+  }
 }

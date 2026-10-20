@@ -10,6 +10,13 @@
 //! `--dump` renders one frame into an in-memory buffer and prints it with
 //! ANSI color, so the tree-to-UI mapping — including the component's
 //! semantic styling — can be verified without a terminal.
+//!
+//! The interactive loop follows the diff protocol: it bootstraps from
+//! `view`, then after each click or tick it applies the component's
+//! `changes` to the retained tree and rebuilds only when there is
+//! something to apply. At rest — no ticks landing, no clicks — the loop
+//! makes zero calls into the component; it just redraws the retained
+//! tree (which ratatui's frame buffer diffs for free).
 
 use std::io::{self, stdout};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -18,7 +25,7 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, App, AppImports, Tree, waui};
+use host_shared::{build_tree, App, AppImports, Retained, Tree, waui};
 
 // The contract's style tokens, aliased to avoid clashing with ratatui's
 // `Color` and `Style`.
@@ -360,8 +367,16 @@ fn main() {
     let tick = Duration::from_millis(250);
     let poll = Duration::from_millis(50);
     let mut last_tick = SystemTime::now();
+    // The retained tree, as the diff protocol maintains it: a full
+    // snapshot at startup, then `changes` applied after each event.
+    let nodes = app.call_view(&mut store).expect("view() failed");
+    let mut retained = Retained::from_view(nodes);
+    let mut tree = build_tree(retained.nodes());
     let mut focus_idx = 0usize;
     let mut click_pending = false;
+    // Whether the component was driven (click or tick) since the last
+    // `changes` call.
+    let mut pending = false;
     let mut quit = false;
 
     while !quit {
@@ -403,10 +418,22 @@ fn main() {
         {
             last_tick = SystemTime::now();
             app.call_on_tick(&mut store).expect("on-tick() failed");
+            pending = true;
         }
 
-        let nodes = app.call_view(&mut store).expect("view() failed");
-        let tree = build_tree(&nodes);
+        // Ask the component what changed; apply the diff to the retained
+        // tree and rebuild only when it reported something. At rest this
+        // whole block is skipped, so the loop makes no component calls.
+        if pending {
+            pending = false;
+            let mutations = app
+                .call_changes(&mut store)
+                .expect("changes() failed");
+            if retained.apply(&mutations) {
+                tree = build_tree(retained.nodes());
+            }
+        }
+
         let mut focus_ids = Vec::new();
         focusable_ids(&tree, &mut focus_ids);
         if focus_ids.is_empty() {
@@ -421,6 +448,7 @@ fn main() {
                 click_pending = false;
                 app.call_on_click(&mut store, focus_ids[focus_idx])
                     .expect("on-click() failed");
+                pending = true;
             }
         }
 

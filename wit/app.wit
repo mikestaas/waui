@@ -4,15 +4,27 @@ package waui:ui;
 /// (UI + logic).
 ///
 /// The component *owns* all state. It exports its current widget tree via
-/// `view` as a flat, depth-first pre-ordered list of nodes; the host
-/// re-queries this after every event, rebuilds the tree, and renders it
-/// with whatever toolkit it happens to be written in. The host may call
-/// `on-tick` periodically and provides a `now` clock the component can poll.
+/// `view` as a flat, depth-first pre-ordered list of nodes, and — after
+/// each event the host drives it with — the *diff* of that tree via
+/// `changes`. The host bootstraps from `view` (a full snapshot) and
+/// applies successive `changes` to its retained copy. A host that ignores
+/// the diff channel and simply re-queries `view` after every event is
+/// still correct, because `view` is always the full truth: the diff is an
+/// optimization, opt-in per host.
+///
+/// The host may call `on-tick` periodically and provides a `now` clock the
+/// component can poll.
 world app {
-  use widget.{node};
+  use widget.{node, mutation};
 
   /// The component's current UI (see `widget` for the flat-list contract).
   export view: func() -> list<node>;
+
+  /// The nodes that changed since the host last saw the tree (via `view`
+  /// or `changes`) — empty when nothing did. A component that has never
+  /// exported its tree reports every node as `changed`, so a host may
+  /// bootstrap from `changes` alone.
+  export changes: func() -> list<mutation>;
 
   /// The widget with the given id was activated (e.g. clicked).
   export on-click: func(id: u32);
