@@ -15,10 +15,10 @@ The whole contract lives in [`wit/`](wit/) — package `waui:ui`:
 - **`widget` interface** — a deliberately tiny, renderer-agnostic widget tree:
   `text`, `button`, and `container` (row/column) records, and a `node`
   variant. WIT types may not be recursive, so the tree is encoded as a
-  **flat list of nodes in depth-first pre-order**, each carrying an `id` and
-  a `parent` id — the same flat-list encoding real UI serialization formats
-  use. Each host rebuilds the tree from the list — the Rust hosts share a
-  single reference rebuild (`crates/host-shared`), and the web host
+  **flat list of nodes in depth-first pre-order**, each carrying a `parent`
+  id and an optional `id` — the same flat-list encoding real UI serialization
+  formats use. Each host rebuilds the tree from the list — the Rust hosts
+  share a single reference rebuild (`crates/host-shared`), and the web host
   re-implements the same logic in JavaScript. `text` and `button` nodes
   also carry a `style`: a **semantic** `color` (`neutral`/`accent`/
   `positive`/`negative`/`warning`) and `size` (`small`/`medium`/`large`).
@@ -26,7 +26,10 @@ The whole contract lives in [`wit/`](wit/) — package `waui:ui`:
   it *can* render "negative", so each host maps the tokens onto its own
   palette and hosts that can't express a token degrade gracefully. (WIT
   enums with ≤256 variants lay out as single bytes, so the two tokens cost
-  two bytes per node.)
+  two bytes per node.) The `id` is a node's *identity*: what `on-click`
+  targets and what `changes` diffs key on. A node that is never clicked,
+  diffed, or removed may omit it — but a container *must* keep one (its
+  children name it), and an id-less node is unaddressable.
 - **`app` world** — the component `export`s `view` (its current flat node
   list), `changes` (the diff of that list, per `mutation`), `on-click(id)` and
   `on-tick()`; it `import`s `now` (a host clock, in ms).
@@ -59,6 +62,20 @@ draws it, while iced, the TUI, and the web page each express it in their own
 idiom. Components are the exception: a node's layout is part of the ABI, so
 they must be built against the WIT they target.
 
+Authoring a UI *as the flat list* — hand-assigning parent ids, hand-ordering
+the pre-order walk — is not a pleasant way to write a component, so the
+component side has its own mirror of `host-shared`: the
+[`component-ui`](crates/component-ui/) crate supplies a **nested** `Tree`
+(authors write `Tree::column([...])` with the nesting carrying parentage) and
+a `lower` that projects it into the contract's flat list — the component-side
+counterpart of the hosts' list→tree rebuild. It is deliberately
+dependency-free: its token types are plain Rust mirrors of the WIT's, and the
+projection is generic over the output type, because each `wit-bindgen
+generate!` is crate-local and a component must project onto *its own*
+generated `Node` (the demos each write that one small projection). A
+declarative macro over this tree is the natural next layer, held back for a
+deliberate syntax decision.
+
 ## Layout
 
 | crate / dir            | what it is                                                                     |
@@ -68,6 +85,7 @@ they must be built against the WIT they target.
 | `crates/host-tui`      | a terminal host: real layout, framed buttons, host-local focus ring (ratatui); style → ANSI colors + weight; applies diffs — at rest it makes zero calls into the component |
 | `crates/host-cli`      | a minimal terminal host: the tree as ASCII, clicks via stdin; ignores *both* style and the diff channel (proof hosts can lag the contract) |
 | `web/`                 | a web host: one self-contained HTML page per component, zero dependencies; style → CSS tokens; applies content diffs *in place* (no DOM rebuild) |
+| `crates/component-ui`  | the component-side mirror of `host-shared`: a nested `Tree` + `lower` into the flat list (dependency-free; hosts add only a renderer, components add only a projection) |
 | `crates/demo-counter`  | a counter — UI *and* logic live entirely in the component (the number asks for "negative" below zero) |
 | `crates/demo-stopwatch`| a stopwatch — exercises the import side (`now`) plus host-driven `on-tick` (glows "accent" while running) |
 
@@ -112,7 +130,10 @@ hosts use, and asserts on the returned widget tree — its content *and* its
 semantic style — plus on the diff channel: one click reports exactly one
 changed node, no-op events report none, and a fresh instance that never calls
 `view()` still yields its whole tree from the first `changes()`.
-`make web-test` does the same for the browser path from Node.
+`make web-test` does the same for the browser path from Node. `make test`
+also runs the `component-ui` unit tests (the lowering's pre-order and
+parent-link invariants, over the crate's own flat mirror) and the `host-shared`
+tests (the diff machinery), all headless.
 
 ## Status
 
@@ -124,8 +145,11 @@ color, the TUI paints bold ANSI red, the web page a CSS token. And it works
 *incrementally*: the demos report only what changed (a counter click is one
 mutation; a paused stopwatch is zero), so an idle UI costs the hosts nothing
 — the TUI makes no component calls at rest, and the web page updates its
-readout in place without rebuilding the DOM. Focus is a host concern: the TUI
-keeps a local ring over the component's buttons while the component stays
-unaware of it. Deliberately not solved yet, in order of importance:
-component-directed focus and text input, images (a `resource`), and
-multi-window/multi-component hosts.
+readout in place without rebuilding the DOM. And it is *pleasurable to
+write*: the demos author their views as nested `component-ui` trees and
+project to the flat list at the ABI boundary, instead of hand-maintaining
+the pre-order encoding. Focus is a host concern: the TUI keeps a local ring
+over the component's buttons while the component stays unaware of it.
+Deliberately not solved yet, in order of importance: a declarative macro
+over the nested tree (a syntax decision first), component-directed focus and
+text input, images (a `resource`), and multi-window/multi-component hosts.

@@ -33,13 +33,16 @@ use waui::ui::widget::{Direction, Style};
 pub enum Tree {
     /// (content, the component's semantic style)
     Text(String, Style),
-    /// (widget id, label, style)
-    Button(u32, String, Style),
+    /// (widget id — `None` for a display-only button a component did not
+    /// give an id, label, style)
+    Button(Option<u32>, String, Style),
     Row(Vec<Tree>),
     Column(Vec<Tree>),
 }
 
-fn node_id(node: &Node) -> u32 {
+/// The node's id, if it has one (see the WIT identity note: a node the
+/// component never addresses or diffs may omit it).
+fn node_id(node: &Node) -> Option<u32> {
     match node {
         Node::Text(t) => t.id,
         Node::Button(b) => b.id,
@@ -92,8 +95,12 @@ pub fn build_tree(nodes: &[Node]) -> Tree {
     // fully linked in place, so they can be moved into it wholesale.
     for i in (0..trees.len()).rev() {
         let node = &nodes[i];
-        let kids =
-            children_of.get(&node_id(node)).cloned().unwrap_or_default();
+        // Children name their parent by id; an id-less node (a leaf, or a
+        // malformed list) has none to look up.
+        let kids = node_id(node)
+            .and_then(|id| children_of.get(&id))
+            .cloned()
+            .unwrap_or_default();
         if kids.is_empty() {
             continue;
         }
@@ -163,6 +170,11 @@ impl Retained {
         for mutation in mutations {
             match mutation {
                 Mutation::Changed(node) => {
+                    // A node without an id is unaddressable (see the WIT
+                    // identity note): the diff cannot name it, so skip it.
+                    if node_id(node).is_none() {
+                        continue;
+                    }
                     match self
                         .nodes
                         .iter()
@@ -197,7 +209,7 @@ impl Retained {
     fn insert(&mut self, node: Node) {
         let id = node_id(&node);
         let parent = node_parent(&node);
-        match parent.and_then(|p| self.nodes.iter().position(|n| node_id(n) == p)) {
+        match parent.and_then(|p| self.nodes.iter().position(|n| node_id(n) == Some(p))) {
             None => self.nodes.push(node),
             Some(p) => {
                 let mut i = p + 1;
@@ -211,18 +223,26 @@ impl Retained {
 
     /// Remove a node and, if it is a container, its whole subtree.
     fn remove_subtree(&mut self, id: u32) {
-        let Some(p) = self.nodes.iter().position(|n| node_id(n) == id) else {
+        let Some(p) = self
+            .nodes
+            .iter()
+            .position(|n| node_id(n) == Some(id))
+        else {
             return;
         };
         let mut end = p + 1;
-        while end < self.nodes.len() && self.descendant_of(&self.nodes[end], id) {
+        while end < self.nodes.len() && self.descendant_of(&self.nodes[end], Some(id)) {
             end += 1;
         }
         self.nodes.drain(p..end);
     }
 
     /// Whether `node` is in the subtree rooted at `ancestor`.
-    fn descendant_of(&self, node: &Node, ancestor: u32) -> bool {
+    fn descendant_of(&self, node: &Node, ancestor: Option<u32>) -> bool {
+        let Some(ancestor) = ancestor else {
+            // Nothing can be a descendant of an id-less node.
+            return false;
+        };
         let mut current = node_parent(node);
         while let Some(parent) = current {
             if parent == ancestor {
@@ -231,7 +251,7 @@ impl Retained {
             current = self
                 .nodes
                 .iter()
-                .find(|n| node_id(n) == parent)
+                .find(|n| node_id(n) == Some(parent))
                 .and_then(node_parent);
         }
         false
@@ -252,7 +272,7 @@ mod tests {
 
     fn cont(id: u32, parent: Option<u32>) -> Node {
         Node::Container(Container {
-            id,
+            id: Some(id),
             parent,
             direction: Direction::Column,
         })
@@ -260,7 +280,7 @@ mod tests {
 
     fn text(id: u32, parent: Option<u32>, content: &str) -> Node {
         Node::Text(Text {
-            id,
+            id: Some(id),
             parent,
             content: content.to_string(),
             style: style(Color::Neutral, Size::Large),
@@ -269,16 +289,17 @@ mod tests {
 
     fn button(id: u32, parent: Option<u32>, label: &str) -> Node {
         Node::Button(Button {
-            id,
+            id: Some(id),
             parent,
             label: label.to_string(),
             style: style(Color::Positive, Size::Medium),
         })
     }
 
-    /// The ids of the retained list, in order — the layout contract.
+    /// The retained list's ids, in order — the layout contract (id-less
+    /// nodes, of which these tests have none, are skipped).
     fn ids(r: &Retained) -> Vec<u32> {
-        r.nodes.iter().map(node_id).collect()
+        r.nodes.iter().filter_map(node_id).collect()
     }
 
     #[test]
@@ -286,6 +307,24 @@ mod tests {
         let mut r = Retained::from_view(vec![cont(1, None), text(3, Some(1), "0")]);
         assert!(!r.apply(&[]));
         assert_eq!(ids(&r), vec![1, 3]);
+    }
+
+    #[test]
+    fn apply_skips_an_unaddressable_change() {
+        // A `changed` node without an id cannot be named (see the WIT
+        // identity note): the host ignores it rather than guess.
+        let mut r = Retained::from_view(vec![cont(1, None), text(3, Some(1), "0")]);
+        assert!(r.apply(&[Mutation::Changed(Node::Text(Text {
+            id: None,
+            parent: Some(1),
+            content: "intruder".to_string(),
+            style: style(Color::Neutral, Size::Large),
+        }))]));
+        assert_eq!(ids(&r), vec![1, 3]);
+        match &r.nodes[1] {
+            Node::Text(t) => assert_eq!(t.content, "0"),
+            _ => panic!("expected the original text node"),
+        }
     }
 
     #[test]

@@ -31,6 +31,9 @@ function apply(mutations) {
   for (const m of mutations) {
     if (m.kind === 'removed') {
       removeSubtree(m.id);
+    } else if (m.node.id === null) {
+      // An id-less node is unaddressable (see the WIT identity note):
+      // the diff cannot name it, so ignore it rather than guess.
     } else {
       const n = m.node;
       const i = retained.findIndex((x) => x.id === n.id);
@@ -108,15 +111,17 @@ function rebuild() {
       el.className =
         `waui waui-button waui-${n.style.color} waui-${n.style.size}`;
       el.textContent = n.label;
-      elements.set(n.id, el);
+      if (n.id !== null) elements.set(n.id, el);
     } else {
       el = document.createElement('div');
       el.className = `waui waui-text waui-${n.style.color} waui-${n.style.size}`;
       el.textContent = n.content;
-      elements.set(n.id, el);
+      if (n.id !== null) elements.set(n.id, el);
     }
-    // Every node carries its id: it keys in-place updates.
-    el.dataset.id = n.id;
+    // Nodes with an id carry it in the DOM: it keys in-place updates (and
+    // the click delegation). Id-less nodes are unaddressable — see the
+    // WIT identity note.
+    if (n.id !== null) el.dataset.id = n.id;
     for (const child of childrenOf.get(n.id) ?? []) {
       el.appendChild(elFor(child));
     }
@@ -140,6 +145,7 @@ function rebuild() {
 // Restyle an element in place from its node. Returns whether the element
 // was found.
 function restyle(n) {
+  if (n.id === null) return false; // unaddressable
   const el = elements.get(n.id);
   if (!el) return false;
   if (n.kind === 'button') {
@@ -157,10 +163,11 @@ function refresh() {
   const mutations = app.changes();
   if (mutations.length === 0) return; // nothing changed: do nothing
 
-  // Content-only? A changed text or button whose position in the tree is
-  // unchanged can be restyled in place. Anything else forces a rebuild.
+  // Content-only? A changed text or button with an id, whose position in
+  // the tree is unchanged, can be restyled in place. Anything else (that
+  // includes id-less nodes) forces a rebuild.
   const inPlace = mutations.every((m) => {
-    if (m.kind !== 'changed') return false;
+    if (m.kind !== 'changed' || m.node.id === null) return false;
     const prev = retained.find((n) => n.id === m.node.id);
     return prev !== undefined && prev.parent === m.node.parent;
   });

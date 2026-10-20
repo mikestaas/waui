@@ -4,6 +4,10 @@
 //! forwards clicks via `on-click`. Nothing about this counter (its state,
 //! its layout, its buttons) exists in the host.
 //!
+//! The view is written as a *nested* widget tree (the `component-ui` crate)
+//! and projected into the contract's flat node list at the ABI boundary —
+//! the mirror of the hosts' own list→tree rebuild, on the authoring side.
+//!
 //! The counter also exercises the diff channel: only the readout depends
 //! on its state, so after an event it reports exactly one changed node —
 //! never the whole tree.
@@ -15,8 +19,10 @@ wit_bindgen::generate!({
 
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
-// records they contain come from the package module.
-use waui::ui::widget::{Button, Color, Container, Direction, Size, Style, Text};
+// ergonomic tree and its token mirrors come from the shared component-side
+// crate, and the generated records/variants live in the package module.
+use component_ui::{Color, Direction, Size, Style, Tree};
+use waui::ui::widget as wit;
 
 static VALUE: AtomicI32 = AtomicI32::new(0);
 /// Set when the state changed since it was last exported.
@@ -31,41 +37,73 @@ fn mark_exported() {
     EXPORTED.store(true, Ordering::Relaxed);
 }
 
-/// The readout is the only node that depends on `VALUE`.
-fn readout(value: i32) -> Node {
-    Node::Text(Text {
-        id: 3,
-        parent: Some(1),
-        content: value.to_string(),
-        // The number is the star of the show; its color is state.
-        style: Style {
-            color: if value < 0 { Color::Negative } else { Color::Neutral },
-            size: Size::Large,
-        },
-    })
+/// The readout is the only node that depends on `VALUE`; its color is
+/// state (negative below zero).
+fn readout(value: i32) -> Tree {
+    Tree::text(
+        value.to_string(),
+        Style::new(
+            if value < 0 {
+                Color::Negative
+            } else {
+                Color::Neutral
+            },
+            Size::Large,
+        ),
+    )
+    .id(3)
 }
 
-fn full_view(value: i32) -> Vec<Node> {
-    vec![
-        Node::Container(Container {
-            id: 1,
-            parent: None,
-            direction: Direction::Column,
-        }),
-        Node::Button(Button {
-            id: 2,
-            parent: Some(1),
-            label: "+".to_string(),
-            style: Style { color: Color::Positive, size: Size::Medium },
-        }),
+/// The counter's whole UI, nested.
+fn tree(value: i32) -> Tree {
+    Tree::column(vec![
+        Tree::button("+", Style::new(Color::Positive, Size::Medium)).id(2),
         readout(value),
-        Node::Button(Button {
-            id: 4,
-            parent: Some(1),
-            label: "-".to_string(),
-            style: Style { color: Color::Negative, size: Size::Medium },
+        Tree::button("-", Style::new(Color::Negative, Size::Medium)).id(4),
+    ])
+    .id(1)
+}
+
+/// The one seam between the ergonomic tree and the generated bindings:
+/// each `generate!` is crate-local, so the tree's token mirrors and the
+/// ABI's generated types are different, even if identical in shape.
+fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
+    let style = |s: Style| wit::Style {
+        color: match s.color {
+            Color::Neutral => wit::Color::Neutral,
+            Color::Accent => wit::Color::Accent,
+            Color::Positive => wit::Color::Positive,
+            Color::Negative => wit::Color::Negative,
+            Color::Warning => wit::Color::Warning,
+        },
+        size: match s.size {
+            Size::Small => wit::Size::Small,
+            Size::Medium => wit::Size::Medium,
+            Size::Large => wit::Size::Large,
+        },
+    };
+    match tree {
+        Tree::Text(t) => Node::Text(wit::Text {
+            id: t.id,
+            parent,
+            content: t.content.clone(),
+            style: style(t.style),
         }),
-    ]
+        Tree::Button(b) => Node::Button(wit::Button {
+            id: b.id,
+            parent,
+            label: b.label.clone(),
+            style: style(b.style),
+        }),
+        Tree::Container(c) => Node::Container(wit::Container {
+            id: c.id,
+            parent,
+            direction: match c.direction {
+                Direction::Row => wit::Direction::Row,
+                Direction::Column => wit::Direction::Column,
+            },
+        }),
+    }
 }
 
 struct Counter;
@@ -75,7 +113,7 @@ impl Guest for Counter {
         let value = VALUE.load(Ordering::Relaxed);
         // A full snapshot means everything is accounted for.
         mark_exported();
-        full_view(value)
+        component_ui::lower(&tree(value), to_node)
     }
 
     fn changes() -> Vec<Mutation> {
@@ -85,7 +123,7 @@ impl Guest for Counter {
             // `changes` alone.)
             let value = VALUE.load(Ordering::Relaxed);
             mark_exported();
-            return full_view(value)
+            return component_ui::lower(&tree(value), to_node)
                 .into_iter()
                 .map(Mutation::Changed)
                 .collect();
@@ -97,9 +135,10 @@ impl Guest for Counter {
         }
         DIRTY.store(false, Ordering::Relaxed);
         // The buttons and the box are static; only the readout changed.
-        vec![Mutation::Changed(readout(
-            VALUE.load(Ordering::Relaxed),
-        ))]
+        // Projected standing alone, so its parent is stated explicitly
+        // (the lowering walk states it for us inside `view`).
+        let value = VALUE.load(Ordering::Relaxed);
+        vec![Mutation::Changed(to_node(&readout(value), Some(1)))]
     }
 
     fn on_click(id: u32) {

@@ -6,7 +6,9 @@
 //!
 //! Its diff is state-dependent, like its rendering: while running, every
 //! tick reports the readout; while paused, it reports *nothing* — the
-//! component simply has no changed nodes.
+//! component simply has no changed nodes. Like the counter, its view is
+//! written as a nested `component-ui` tree and projected into the
+//! contract's flat list at the ABI boundary.
 
 wit_bindgen::generate!({
     world: "app",
@@ -15,8 +17,10 @@ wit_bindgen::generate!({
 
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
-// records they contain come from the package module.
-use waui::ui::widget::{Button, Color, Container, Direction, Size, Style, Text};
+// ergonomic tree and its token mirrors come from the shared component-side
+// crate, and the generated records/variants live in the package module.
+use component_ui::{Color, Direction, Size, Style, Tree};
+use waui::ui::widget as wit;
 
 const NOT_RUNNING: u64 = 0;
 
@@ -56,44 +60,85 @@ fn elapsed() -> u64 {
 
 /// While running the readout glows with the host's accent; the button
 /// says what it will do (start = good, pause = careful).
-fn readout(elapsed: u64, running: bool) -> Node {
-    Node::Text(Text {
-        id: 2,
-        parent: Some(1),
-        content: format!("{elapsed} ms"),
-        style: Style {
-            color: if running { Color::Accent } else { Color::Neutral },
-            size: Size::Large,
-        },
-    })
+fn readout(elapsed: u64, running: bool) -> Tree {
+    Tree::text(
+        format!("{elapsed} ms"),
+        Style::new(
+            if running {
+                Color::Accent
+            } else {
+                Color::Neutral
+            },
+            Size::Large,
+        ),
+    )
+    .id(2)
 }
 
-fn button(running: bool) -> Node {
-    Node::Button(Button {
-        id: 3,
-        parent: Some(1),
-        label: if running {
-            "pause".to_string()
+fn button(running: bool) -> Tree {
+    Tree::button(
+        if running {
+            "pause"
         } else {
-            "start".to_string()
+            "start"
         },
-        style: Style {
-            color: if running { Color::Warning } else { Color::Positive },
-            size: Size::Medium,
-        },
-    })
+        Style::new(
+            if running {
+                Color::Warning
+            } else {
+                Color::Positive
+            },
+            Size::Medium,
+        ),
+    )
+    .id(3)
 }
 
-fn full_view(elapsed: u64, running: bool) -> Vec<Node> {
-    vec![
-        Node::Container(Container {
-            id: 1,
-            parent: None,
-            direction: Direction::Column,
+/// The stopwatch's whole UI, nested.
+fn tree(elapsed: u64, running: bool) -> Tree {
+    Tree::column(vec![readout(elapsed, running), button(running)]).id(1)
+}
+
+/// The one seam between the ergonomic tree and the generated bindings:
+/// each `generate!` is crate-local, so the tree's token mirrors and the
+/// ABI's generated types are different, even if identical in shape.
+fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
+    let style = |s: Style| wit::Style {
+        color: match s.color {
+            Color::Neutral => wit::Color::Neutral,
+            Color::Accent => wit::Color::Accent,
+            Color::Positive => wit::Color::Positive,
+            Color::Negative => wit::Color::Negative,
+            Color::Warning => wit::Color::Warning,
+        },
+        size: match s.size {
+            Size::Small => wit::Size::Small,
+            Size::Medium => wit::Size::Medium,
+            Size::Large => wit::Size::Large,
+        },
+    };
+    match tree {
+        Tree::Text(t) => Node::Text(wit::Text {
+            id: t.id,
+            parent,
+            content: t.content.clone(),
+            style: style(t.style),
         }),
-        readout(elapsed, running),
-        button(running),
-    ]
+        Tree::Button(b) => Node::Button(wit::Button {
+            id: b.id,
+            parent,
+            label: b.label.clone(),
+            style: style(b.style),
+        }),
+        Tree::Container(c) => Node::Container(wit::Container {
+            id: c.id,
+            parent,
+            direction: match c.direction {
+                Direction::Row => wit::Direction::Row,
+                Direction::Column => wit::Direction::Column,
+            },
+        }),
+    }
 }
 
 struct Stopwatch;
@@ -104,7 +149,7 @@ impl Guest for Stopwatch {
         let elapsed = elapsed();
         // A full snapshot means everything is accounted for.
         mark_exported();
-        full_view(elapsed, running)
+        component_ui::lower(&tree(elapsed, running), to_node)
     }
 
     fn changes() -> Vec<Mutation> {
@@ -113,7 +158,7 @@ impl Guest for Stopwatch {
             let running = RUNNING.load(Ordering::Relaxed);
             let elapsed = elapsed();
             mark_exported();
-            return full_view(elapsed, running)
+            return component_ui::lower(&tree(elapsed, running), to_node)
                 .into_iter()
                 .map(Mutation::Changed)
                 .collect();
@@ -125,12 +170,15 @@ impl Guest for Stopwatch {
             return Vec::new();
         }
         let running = RUNNING.load(Ordering::Relaxed);
+        let elapsed = elapsed();
+        // Projected standing alone, so each node's parent is stated
+        // explicitly (the lowering walk states it for us inside `view`).
         let mut out = Vec::new();
         if dirty & READOUT != 0 {
-            out.push(Mutation::Changed(readout(elapsed(), running)));
+            out.push(Mutation::Changed(to_node(&readout(elapsed, running), Some(1))));
         }
         if dirty & BUTTON != 0 {
-            out.push(Mutation::Changed(button(running)));
+            out.push(Mutation::Changed(to_node(&button(running), Some(1))));
         }
         out
     }

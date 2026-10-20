@@ -622,6 +622,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "component-ui"
+version = "0.0.1"
+
+[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1077,6 +1081,7 @@ checksum = "5729f5117e208430e437df2f4843f5e5952997175992d1414f94c57d61e270b4"
 name = "demo-counter"
 version = "0.0.1"
 dependencies = [
+ "component-ui",
  "wit-bindgen 0.63.0",
 ]
 
@@ -1084,6 +1089,7 @@ dependencies = [
 name = "demo-stopwatch"
 version = "0.0.1"
 dependencies = [
+ "component-ui",
  "wit-bindgen 0.63.0",
 ]
 

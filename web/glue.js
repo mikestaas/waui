@@ -7,11 +7,11 @@
 //
 //   view() -> list<node>     : `view() -> i32`, a pointer to a 16-byte
 //                              little-endian {ptr, len} descriptor; the
-//                              items are a contiguous run of 28-byte nodes.
-//                              The result is guest-allocated and must be
-//                              returned to the guest with
+//                              items are a contiguous run of 32-byte
+//                              nodes. The result is guest-allocated and
+//                              must be returned to the guest with
 //                              `cabi_post_view(desc)`.
-//   changes() -> list<mut.>  : same shape; the items are 32-byte
+//   changes() -> list<mut.>  : same shape; the items are 36-byte
 //                              mutations and the buffer is returned with
 //                              `cabi_post_changes(desc)`.
 //   on-click(id: u32)        : `on-click(i32)` — narrow values pass directly.
@@ -20,25 +20,29 @@
 //                              (JS BigInt). Provided unconditionally; the
 //                              counter never calls it.
 //
-// The 28-byte node (all little-endian):
+// The 32-byte node (all little-endian):
 //   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container
 //                   (the WIT case order in waui:ui/widget)
-//   bytes [4..8]    id: u32
-//   bytes [8]       parent option flag: 0 = none
-//   bytes [12..16]  parent id: u32 (valid only when the flag is set)
-//   bytes [16..20]  text/button: string pointer; container: direction
-//                   (u8, 0 = row, 1 = column)
-//   bytes [20..24]  text/button: string length (UTF-8 bytes)
-//   bytes [24]      text/button: style.color (u8, WIT case order in
+//   bytes [1..4]    padding
+//   bytes [4]       id option flag: 0 = none (an unaddressable node)
+//   bytes [5..8]    padding
+//   bytes [8..12]   id: u32 (valid only when the flag is set)
+//   bytes [12]      parent option flag: 0 = none
+//   bytes [13..16]  padding
+//   bytes [16..20]  parent id: u32 (valid only when the flag is set)
+//   bytes [20]      container: direction (u8, 0 = row, 1 = column)
+//   bytes [20..24]  text/button: string pointer
+//   bytes [24..28]  text/button: string length (UTF-8 bytes)
+//   bytes [28]      text/button: style.color (u8, WIT case order in
 //                   waui:ui/widget: 0 = neutral, 1 = accent, 2 = positive,
 //                   3 = negative, 4 = warning)
-//   bytes [25]      text/button: style.size (u8: 0 = small, 1 = medium,
+//   bytes [29]      text/button: style.size (u8: 0 = small, 1 = medium,
 //                   2 = large)
-//   bytes [26..28]  padding (record is 4-byte aligned)
+//   bytes [30..32]  padding
 //
-// The 32-byte mutation (a variant with a node- or u32-sized payload):
-//   bytes [0]       tag: 0 = changed, 1 = removed
-//   changed   : the 28-byte node above, starting at byte 4
+// The 36-byte mutation (a variant with a node- or u32-sized payload):
+//   bytes [0..4]    tag word: 0 = changed, 1 = removed
+//   changed   : the 32-byte node above, starting at byte 4
 //   removed   : the node id, u32 at byte 4
 //
 // Note: a WIT enum lowers to a single byte in the canonical ABI when it has
@@ -66,25 +70,25 @@ export async function createApp(wasmBytes) {
   const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning'];
   const SIZES = ['small', 'medium', 'large'];
 
-  // Decode one 28-byte node record at byte offset `o`.
+  // Decode one 32-byte node record at byte offset `o`.
   const decodeNode = (i32, u8, o) => {
-    const id = i32[(o + 4) >> 2];
-    const parent = u8[o + 8] !== 0 ? i32[(o + 12) >> 2] : null;
+    const id = u8[o + 4] !== 0 ? i32[(o + 8) >> 2] : null;
+    const parent = u8[o + 12] !== 0 ? i32[(o + 16) >> 2] : null;
     const tag = u8[o];
     if (tag === 2) {
       return {
         kind: 'container',
         id,
         parent,
-        direction: u8[o + 16] === 1 ? 'column' : 'row',
+        direction: u8[o + 20] === 1 ? 'column' : 'row',
       };
     }
-    const sp = i32[(o + 16) >> 2];
-    const sl = i32[(o + 20) >> 2];
+    const sp = i32[(o + 20) >> 2];
+    const sl = i32[(o + 24) >> 2];
     const s = new TextDecoder().decode(u8.subarray(sp, sp + sl));
     const style = {
-      color: COLORS[u8[o + 24]] ?? 'neutral',
-      size: SIZES[u8[o + 25]] ?? 'medium',
+      color: COLORS[u8[o + 28]] ?? 'neutral',
+      size: SIZES[u8[o + 29]] ?? 'medium',
     };
     return tag === 1
       ? { kind: 'button', id, parent, label: s, style }
@@ -109,13 +113,13 @@ export async function createApp(wasmBytes) {
 
   return {
     /// Decode `view()`'s result into a flat list of node objects.
-    view: () => readList(ex.view, ex.cabi_post_view, 28, decodeNode),
+    view: () => readList(ex.view, ex.cabi_post_view, 32, decodeNode),
 
     /// Decode `changes()`'s result into a list of mutation objects:
     /// { kind: 'changed', node } or { kind: 'removed', id }.
     changes: () =>
-      readList(ex.changes, ex.cabi_post_changes, 32, (i32, u8, o) => {
-        return u8[o] === 1
+      readList(ex.changes, ex.cabi_post_changes, 36, (i32, u8, o) => {
+        return i32[o >> 2] === 1
           ? { kind: 'removed', id: i32[(o + 4) >> 2] }
           : { kind: 'changed', node: decodeNode(i32, u8, o + 4) };
       }),
