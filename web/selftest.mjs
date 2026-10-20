@@ -3,15 +3,27 @@
 // (changes), and the stopwatch's import side (now + tick) against the raw
 // wasm modules.
 //
-//   node web/selftest.mjs
+//   node web/selftest.mjs [counter.wasm] [stopwatch.wasm]
+//
+// The paths default to the Rust components; passing other core modules
+// (e.g. the AssemblyScript builds, `make web-test-as`) runs the exact same
+// checks against them — the same glue.js, the same assertions. That is the
+// language-agnosticism check: the host's ABI layer must not care who
+// produced the module.
 
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './glue.js';
 
-// Resolve paths relative to the repository root (this file lives in web/).
-const rel = (p) => fileURLToPath(new URL(`../${p}`, import.meta.url));
+// Resolve paths relative to the repository root (this file lives in web/);
+// absolute paths (a non-default target) pass through.
+const rel = (p) =>
+  p.startsWith('/') ? p : fileURLToPath(new URL(`../${p}`, import.meta.url));
+const [counterPath, stopwatchPath] = [
+  process.argv[2] ?? 'target/wasm32-unknown-unknown/release/demo_counter.wasm',
+  process.argv[3] ?? 'target/wasm32-unknown-unknown/release/demo_stopwatch.wasm',
+];
 
 function node(n) {
   if (n.kind === 'container') return `container{id:${n.id},parent:${n.parent},dir:${n.direction}}`;
@@ -29,7 +41,7 @@ function mutation(m) {
 // ---------------------------------------------------------------- counter
 
 {
-  const app = await createApp(readFileSync(rel('target/wasm32-unknown-unknown/release/demo_counter.wasm')));
+  const app = await createApp(readFileSync(rel(counterPath)));
   const expect = (want) => {
     assert.deepEqual(
       app.view().map(node),
@@ -78,7 +90,7 @@ function mutation(m) {
 
   // Bootstrap rule: a host that calls changes() first, without ever
   // calling view(), still gets the whole tree (as changed nodes).
-  const app2 = await createApp(readFileSync(rel('target/wasm32-unknown-unknown/release/demo_counter.wasm')));
+  const app2 = await createApp(readFileSync(rel(counterPath)));
   assert.equal(
     app2.changes().length,
     4,
@@ -102,7 +114,7 @@ function mutation(m) {
 // -------------------------------------------------------------- stopwatch
 
 {
-  const app = await createApp(readFileSync(rel('target/wasm32-unknown-unknown/release/demo_stopwatch.wasm')));
+  const app = await createApp(readFileSync(rel(stopwatchPath)));
   const view = () => app.view().map(node);
 
   assert.deepEqual(view(), [

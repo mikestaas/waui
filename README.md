@@ -76,6 +76,20 @@ generated `Node` (the demos each write that one small projection). A
 declarative macro over this tree is the natural next layer, held back for a
 deliberate syntax decision.
 
+And the contract is **language-agnostic**, the same way it is renderer-agnostic.
+The two demos also exist in [AssemblyScript](assembly/), and all four hosts run
+the AssemblyScript components with zero changes: iced, the TUI, the CLI, and
+the web page (which runs the pre-lift module through the same unmodified
+`glue.js`). No `wit-bindgen` exists for that language, so instead of generated
+bindings the canonical ABI is hand-rolled against the WIT (in `assembly/abi/`),
+and the lift is typed by an explicit `wasm-tools component embed wit/` step —
+the WIT file, not the toolchain, is the shared spec. One wrinkle is worth
+naming: the world's `on-click`/`on-tick` names contain hyphens that
+AssemblyScript identifiers cannot hold, so the build renames those two exports
+after compilation — a 60-line script, part of the pipeline rather than a hole
+in the claim. `make components-as` builds them, and the round-trip and web
+selftests run the same assertions against both producer languages.
+
 ## Layout
 
 | crate / dir            | what it is                                                                     |
@@ -88,6 +102,7 @@ deliberate syntax decision.
 | `crates/component-ui`  | the component-side mirror of `host-shared`: a nested `Tree` + `lower` into the flat list (dependency-free; hosts add only a renderer, components add only a projection) |
 | `crates/demo-counter`  | a counter — UI *and* logic live entirely in the component (the number asks for "negative" below zero) |
 | `crates/demo-stopwatch`| a stopwatch — exercises the import side (`now`) plus host-driven `on-tick` (glows "accent" while running) |
+| `assembly/`            | the same two demos in **AssemblyScript** — a hand-rolled canonical ABI (`abi/`), no bindings, lifted against the same WIT via `component embed`; proof the contract is language-agnostic |
 
 The wasmtime hosts (iced, tui, cli) load the same lifted component file —
 **one component, many renderers** — that is the claim, demonstrated rather
@@ -104,7 +119,7 @@ Prerequisites: a recent stable Rust toolchain, the `wasm32-unknown-unknown`
 target (`rustup target add wasm32-unknown-unknown`),
 [`wasm-tools`](https://github.com/bytecodealliance/wasm-tools) on your
 `PATH` (used to lift core wasm modules into components), and Node.js (for the
-web host).
+web host and the AssemblyScript demos — `npm install` for the latter).
 
 ```sh
 make components      # build the demos, lift them into target/components/
@@ -116,6 +131,12 @@ make run-stop-iced   # stopwatch, in a window
 make web             # self-contained HTML pages in target/web/ — open directly, no server
 make web-test        # headless (Node) check of the web host's ABI layer
 make test            # headless round-trip contract test
+
+# The same demos in AssemblyScript — the same hosts, a different compiler.
+make components-as   # build the AS demos, lift them (needs `npm install` first)
+make run-tui-as      # the counter, in the TUI, from the AssemblyScript component
+make web-as          # self-contained HTML pages for the AS components
+make web-test-as     # the web selftest against the AS modules (same assertions)
 ```
 
 `make web` produces a single HTML file per component with the wasm module
@@ -130,7 +151,10 @@ hosts use, and asserts on the returned widget tree — its content *and* its
 semantic style — plus on the diff channel: one click reports exactly one
 changed node, no-op events report none, and a fresh instance that never calls
 `view()` still yields its whole tree from the first `changes()`.
-`make web-test` does the same for the browser path from Node. `make test`
+The same two scenarios run against the AssemblyScript counter as `*_as` tests,
+which skip gracefully when the npm toolchain isn't installed — the Rust
+coverage is the part CI must always run. `make web-test` does the same for
+the browser path from Node (`make web-test-as` for the AS modules). `make test`
 also runs the `component-ui` unit tests (the lowering's pre-order and
 parent-link invariants, over the crate's own flat mirror) and the `host-shared`
 tests (the diff machinery), all headless.
@@ -142,6 +166,9 @@ now works in a window, in a terminal, and in a browser, from one component,
 including styling: the counter's number asks for "negative" when it goes
 below zero, and each host honors it in its own idiom — iced paints a palette
 color, the TUI paints bold ANSI red, the web page a CSS token. And it works
+*across languages*: the two demos also exist in AssemblyScript, hand-rolled
+against the same WIT, and all four hosts run them unchanged — the contract is
+renderer-agnostic *and* producer-agnostic. And it works
 *incrementally*: the demos report only what changed (a counter click is one
 mutation; a paused stopwatch is zero), so an idle UI costs the hosts nothing
 — the TUI makes no component calls at rest, and the web page updates its
