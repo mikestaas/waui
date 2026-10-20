@@ -96,7 +96,10 @@ fn render(node: &Tree, depth: usize, out: &mut String) {
             out.push_str(&format!("{indent}\"{content}\"\n"));
         }
         Tree::Button(id, label, _) => {
-            out.push_str(&format!("{indent}[{id}: {label}]\n"));
+            // A button the component gave no id is display-only; print its
+            // label with nothing to address it by.
+            let id = id.map_or_else(String::new, |i| format!("{i}: "));
+            out.push_str(&format!("{indent}[{id}{label}]\n"));
         }
         Tree::Row(children) => {
             out.push_str(&format!("{indent}row:\n"));

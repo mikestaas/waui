@@ -183,9 +183,14 @@ fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
             if let Some(color) = iced_color(style.color) {
                 label = label.color(color);
             }
-            widget::button(label)
-                .on_press(Message::Click(*id))
-                .into()
+            // A button the component gave no id is display-only: nothing
+            // to press.
+            match id {
+                Some(id) => widget::button(label)
+                    .on_press(Message::Click(*id))
+                    .into(),
+                None => widget::button(label).into(),
+            }
         }
         Tree::Row(children) => {
             widget::row(children.iter().map(map_tree)).spacing(8).into()

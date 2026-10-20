@@ -79,7 +79,7 @@ fn build_component() {
     );
 }
 
-fn node_id(node: &waui::ui::widget::Node) -> u32 {
+fn node_id(node: &waui::ui::widget::Node) -> Option<u32> {
     match node {
         waui::ui::widget::Node::Text(t) => t.id,
         waui::ui::widget::Node::Button(b) => b.id,
@@ -92,7 +92,7 @@ fn node_id(node: &waui::ui::widget::Node) -> u32 {
 fn text_with_id(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&str> {
     nodes
         .iter()
-        .find(|n| node_id(n) == id)
+        .find(|n| node_id(n) == Some(id))
         .and_then(|n| match n {
             waui::ui::widget::Node::Text(t) => Some(t.content.as_str()),
             _ => None,
@@ -107,7 +107,7 @@ fn style_of(
 ) -> Option<&waui::ui::widget::Style> {
     nodes
         .iter()
-        .find(|n| node_id(n) == id)
+        .find(|n| node_id(n) == Some(id))
         .and_then(|n| match n {
             waui::ui::widget::Node::Text(t) => Some(&t.style),
             waui::ui::widget::Node::Button(b) => Some(&b.style),
@@ -171,7 +171,7 @@ fn counter_roundtrip() {
     assert_eq!(mutations.len(), 1, "one click should dirty exactly one node");
     match &mutations[0] {
         waui::ui::widget::Mutation::Changed(node) => {
-            assert_eq!(node_id(node), 3);
+            assert_eq!(node_id(node), Some(3));
             if let waui::ui::widget::Node::Text(t) = node {
                 assert_eq!(t.content, "-2");
                 assert_eq!(t.style.color, Color::Negative);

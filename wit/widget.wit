@@ -8,6 +8,14 @@ package waui:ui;
 /// itself, the tree is a `list` whose nodes carry a `parent` id, and the
 /// host rebuilds the tree. This is the same flat-list encoding that real UI
 /// serialization formats use.
+///
+/// **Identity.** A node's `id` is its handle: what `on-click` targets and
+/// what the `changes` diff channel keys on. A node that is never clicked,
+/// diffed, or removed may omit its `id`. But a node must *have* an id if it
+/// has children (they name it in their `parent` field) or if its own fate
+/// matters — a `removed(id)` needs an id to delete by, and an id-less node
+/// is *unaddressable*: a component must not report it in a `changes` diff,
+/// and a host may ignore such a mutation.
 interface widget {
   /// A *semantic* color. The contract deliberately stops at intent, not
   /// pixels: a host maps these onto whatever its toolkit has — an ANSI
@@ -42,7 +50,7 @@ interface widget {
 
   /// A piece of text.
   record text {
-    id: u32,
+    id: option<u32>,
     parent: option<u32>,
     content: string,
     style: style,
@@ -50,7 +58,7 @@ interface widget {
 
   /// A clickable button.
   record button {
-    id: u32,
+    id: option<u32>,
     parent: option<u32>,
     label: string,
     style: style,
@@ -64,8 +72,13 @@ interface widget {
   /// Containers carry layout only — no `style` field. How a host
   /// decorates a container (borders, spacing) is left to the host, the
   /// same way focus is left to the host.
+  ///
+  /// A container's `id` is *required in practice*: its children name it in
+  /// their `parent` field, and the host rebuilds the tree from that. A
+  /// host that sees a child with a parent it does not have will treat the
+  /// child as a root.
   record container {
-    id: u32,
+    id: option<u32>,
     parent: option<u32>,
     direction: direction,
   }
@@ -92,7 +105,8 @@ interface widget {
   /// subtree under it. Deeper restructuring is composed from these: a
   /// component that moves a container (with its children) should remove
   /// the subtree and re-add it, since the flat pre-order list gives each
-  /// retained node a stable home.
+  /// retained node a stable home. A `changed` mutation for an id-less node
+  /// is unaddressable (see `widget`'s identity note): hosts may ignore it.
   variant mutation {
     changed(node),
     removed(u32),

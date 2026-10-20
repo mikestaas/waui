@@ -127,7 +127,8 @@ fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>) {
             );
         }
         Tree::Button(id, label, style) => {
-            let focused = Some(*id) == focus;
+            // A display-only button (no id) can never be focused.
+            let focused = *id == focus;
             // The component's semantic color is the button's base; the
             // host's focus ring (its own concern) overrides with its accent.
             let style = if focused {
@@ -226,7 +227,13 @@ fn draw(frame: &mut Frame, tree: &Tree, focus: Option<u32>) {
 
 fn focusable_ids(node: &Tree, out: &mut Vec<u32>) {
     match node {
-        Tree::Button(id, ..) => out.push(*id),
+        // A button the component gave no id cannot be clicked, so it is
+        // not focusable.
+        Tree::Button(id, ..) => {
+            if let Some(i) = id {
+                out.push(*i);
+            }
+        }
         Tree::Row(children) | Tree::Column(children) => {
             for child in children {
                 focusable_ids(child, out);
