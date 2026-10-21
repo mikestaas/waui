@@ -83,7 +83,12 @@ the web page (which runs the pre-lift module through the same unmodified
 `glue.js`). No `wit-bindgen` exists for that language, so instead of generated
 bindings the canonical ABI is hand-rolled against the WIT (in `assembly/abi/`),
 and the lift is typed by an explicit `wasm-tools component embed wit/` step —
-the WIT file, not the toolchain, is the shared spec. One wrinkle is worth
+the WIT file, not the toolchain, is the shared spec. The ergonomics are
+per-language in a small way worth noting: the AS demos author through
+`assembly/ui/`, a scope-built tree of fixed slots that projects through those
+same emitters — the *form* of the tree differs because `--runtime stub` has no
+heap to nest values with, the *role* is identical, and the output is
+byte-identical. One wrinkle is worth
 naming: the world's `on-click`/`on-tick` names contain hyphens that
 AssemblyScript identifiers cannot hold, so the build renames those two exports
 after compilation — a 60-line script, part of the pipeline rather than a hole
@@ -102,7 +107,7 @@ selftests run the same assertions against both producer languages.
 | `crates/component-ui`  | the component-side mirror of `host-shared`: a nested `Tree` + `lower` into the flat list (dependency-free; hosts add only a renderer, components add only a projection) |
 | `crates/demo-counter`  | a counter — UI *and* logic live entirely in the component (the number asks for "negative" below zero) |
 | `crates/demo-stopwatch`| a stopwatch — exercises the import side (`now`) plus host-driven `on-tick` (glows "accent" while running) |
-| `assembly/`            | the same two demos in **AssemblyScript** — a hand-rolled canonical ABI (`abi/`), no bindings, lifted against the same WIT via `component embed`; proof the contract is language-agnostic |
+| `assembly/`            | the same two demos in **AssemblyScript** — a hand-rolled canonical ABI (`abi/`), the demos' scope-built tree layer (`ui/`), no bindings, lifted against the same WIT via `component embed`; proof the contract is language-agnostic |
 
 The wasmtime hosts (iced, tui, cli) load the same lifted component file —
 **one component, many renderers** — that is the claim, demonstrated rather
@@ -173,7 +178,8 @@ renderer-agnostic *and* producer-agnostic. And it works
 mutation; a paused stopwatch is zero), so an idle UI costs the hosts nothing
 — the TUI makes no component calls at rest, and the web page updates its
 readout in place without rebuilding the DOM. And it is *pleasurable to
-write*: the demos author their views as nested `component-ui` trees and
+write*: the demos author their views as nested `component-ui` trees — or,
+in AssemblyScript, the scope-built slot tree of `assembly/ui/` — and
 project to the flat list at the ABI boundary, instead of hand-maintaining
 the pre-order encoding. Focus is a host concern: the TUI keeps a local ring
 over the component's buttons while the component stays unaware of it.
