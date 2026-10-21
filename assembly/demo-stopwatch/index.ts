@@ -6,14 +6,19 @@
 // host's periodic `on-tick` calls.
 //
 // Its diff is state-dependent, like its rendering: while running, every
-// tick reports the readout; while paused, it reports *nothing* — the
+// tick marks the readout stale; while paused, it marks *nothing* — the
 // component simply has no changed nodes.
+//
+// The UI is a tree in `../ui/tree` (the AssemblyScript twin of the Rust
+// demos' `component-ui` crate); this file is state, event handling, and a
+// refresh that re-derives the two state-dependent nodes. The readout
+// "123 ms" is composed per refresh (an integer plus a literal) — the
+// append API keeps the whole label in the tree's reserved buffer.
 //
 // `onclick`/`ontick` are renamed to the world's hyphenated names after
 // compilation (see `../rename-exports.mjs`).
 
 import {
-  arenaAlloc,
   cabi_post_changes,
   cabi_post_view,
 } from '../abi/arena';
@@ -22,19 +27,29 @@ import {
   COLOR_NEUTRAL,
   COLOR_POSITIVE,
   COLOR_WARNING,
-  DIRECTION_COLUMN,
   SIZE_LARGE,
   SIZE_MEDIUM,
-  emitButton,
-  emitChangedButton,
-  emitChangedContainer,
-  emitChangedText,
-  emitContainer,
-  emitText,
-  makeList,
 } from '../abi/node';
-import { writeInt64, writeUtf8 } from '../abi/utf8';
 import { now } from '../abi/root';
+import {
+  appendInt64,
+  appendText,
+  beginButton,
+  beginColumn,
+  beginText,
+  changes as lowerChanges,
+  end,
+  id,
+  label,
+  labelReset,
+  mark,
+  reserve,
+  setColor,
+  setText,
+  size,
+  style,
+  view as lowerView,
+} from '../ui/tree';
 
 // The world requires both post functions on the module itself.
 export { cabi_post_changes, cabi_post_view };
@@ -50,18 +65,34 @@ var start: i64 = 0;
 /// Elapsed milliseconds at the last pause.
 var frozen: i64 = 0;
 var running: i32 = 0;
-/// Which nodes are stale since the last export: bit 0 = the readout,
-/// bit 1 = the button.
-var dirty: i32 = 0;
-/// Cleared once the initial tree was exported, via `view` or `changes`.
-var exported: i32 = 0;
+var built: i32 = 0;
+/// Slot handles in the tree (a `begin*` return value).
+var readoutSlot: i32 = -1;
+var buttonSlot: i32 = -1;
 
-const D_READOUT = 0b01;
-const D_BUTTON = 0b10;
+// The stopwatch's whole UI. Built once (lazily, before the first export)
+// and updated in place from then on. The readout is built with an empty
+// buffer of the size a full u64 reading needs ("18446744073709551615 ms"
+// is 23 bytes); the first refresh fills it.
+function buildTree(): void {
+  beginColumn();
+  id(BOX);
+  readoutSlot = beginText();
+  id(READOUT);
+  reserve(24);
+  size(SIZE_LARGE); // the size is state-independent; only the color moves
+  buttonSlot = beginButton();
+  id(BUTTON);
+  label('start'); // the initial state's label; refresh rewrites it
+  style(COLOR_POSITIVE, SIZE_MEDIUM);
+  end();
+}
 
-function markExported(): void {
-  dirty = 0;
-  exported = 1;
+function ensureBuilt(): void {
+  if (built == 0) {
+    built = 1;
+    buildTree();
+  }
 }
 
 /// The elapsed milliseconds, as the component currently sees it.
@@ -74,92 +105,29 @@ function elapsed(): i64 {
   return frozen;
 }
 
-// While running the readout glows with the host's accent; the button says
-// what it will do (start = good, pause = careful). The elapsed reading is
-// sampled once per export (in `view`/`changes`) and passed in, like the
-// Rust original: one consistent clock reading per list.
-function emitReadout(rec: i32, parent: i32, e: i64): void {
-  const str = arenaAlloc(24); // "18446744073709551615 ms" is 23 bytes
-  let p = writeInt64(str, e);
-  p = writeUtf8(p, ' ms');
-  const len = p - str;
-  emitText(rec, READOUT, parent, str, len, running != 0 ? COLOR_ACCENT : COLOR_NEUTRAL, SIZE_LARGE);
-}
-
-function emitStartPause(rec: i32, parent: i32): void {
-  const isRunning = running != 0;
-  const str = arenaAlloc(8);
-  const len = writeUtf8(str, isRunning ? 'pause' : 'start') - str;
-  emitButton(rec, BUTTON, parent, str, len, isRunning ? COLOR_WARNING : COLOR_POSITIVE, SIZE_MEDIUM);
+// Both the readout (content and color) and the button (label and color)
+// depend on state. The elapsed reading is sampled *once* per refresh, so
+// one exported list never mixes two clock readings.
+function refresh(): void {
+  const e = elapsed();
+  labelReset(readoutSlot);
+  appendInt64(readoutSlot, e);
+  appendText(readoutSlot, ' ms');
+  setColor(readoutSlot, running != 0 ? COLOR_ACCENT : COLOR_NEUTRAL);
+  setText(buttonSlot, running != 0 ? 'pause' : 'start');
+  setColor(buttonSlot, running != 0 ? COLOR_WARNING : COLOR_POSITIVE);
 }
 
 export function view(): i32 {
-  // A full snapshot means everything is accounted for.
-  markExported();
-  const e = elapsed();
-  const nodes = arenaAlloc(3 * 32);
-  emitContainer(nodes + 0 * 32, BOX, 0, DIRECTION_COLUMN);
-  emitReadout(nodes + 1 * 32, BOX, e);
-  emitStartPause(nodes + 2 * 32, BOX);
-  const desc = makeList(nodes, 3);
-  return desc;
+  ensureBuilt();
+  refresh();
+  return lowerView();
 }
 
 export function changes(): i32 {
-  if (exported == 0) {
-    // First contact with this host: everything is new to it.
-    markExported();
-    const e = elapsed();
-    const buf = arenaAlloc(3 * 36);
-    emitChangedContainer(buf + 0 * 36, BOX, 0, DIRECTION_COLUMN);
-    emitChangedReadout(buf + 1 * 36, BOX, e);
-    emitChangedStartPause(buf + 2 * 36, BOX);
-    const desc = makeList(buf, 3);
-    return desc;
-  }
-  const d = dirty;
-  dirty = 0;
-  if (d == 0) {
-    // Nothing changed (a tick while paused, an unknown click): the host
-    // can skip its whole refresh.
-    const desc = makeList(0, 0);
-    return desc;
-  }
-  const e = elapsed();
-  // NB: parens are load-bearing. AssemblyScript (like JavaScript) binds
-  // `!=` tighter than `&`, so an unparenthesized `d & BIT != 0` tests the
-  // *constant* side of the comparison, not the bit. Rust binds `&` tighter,
-  // which is how this exact expression looks in the original.
-  const count = ((d & D_READOUT) != 0 ? 1 : 0) + ((d & D_BUTTON) != 0 ? 1 : 0);
-  const buf = arenaAlloc(count * 36);
-  let k = 0;
-  if ((d & D_READOUT) != 0) {
-    emitChangedReadout(buf + k * 36, BOX, e);
-    k++;
-  }
-  if ((d & D_BUTTON) != 0) {
-    emitChangedStartPause(buf + k * 36, BOX);
-    k++;
-  }
-  const desc = makeList(buf, count);
-  return desc;
-}
-
-// The readout projected standing alone, as a `changed` mutation.
-function emitChangedReadout(rec: i32, parent: i32, e: i64): void {
-  const str = arenaAlloc(24);
-  let p = writeInt64(str, e);
-  p = writeUtf8(p, ' ms');
-  const len = p - str;
-  emitChangedText(rec, READOUT, parent, str, len, running != 0 ? COLOR_ACCENT : COLOR_NEUTRAL, SIZE_LARGE);
-}
-
-// The button projected standing alone, as a `changed` mutation.
-function emitChangedStartPause(rec: i32, parent: i32): void {
-  const isRunning = running != 0;
-  const str = arenaAlloc(8);
-  const len = writeUtf8(str, isRunning ? 'pause' : 'start') - str;
-  emitChangedButton(rec, BUTTON, parent, str, len, isRunning ? COLOR_WARNING : COLOR_POSITIVE, SIZE_MEDIUM);
+  ensureBuilt();
+  refresh();
+  return lowerChanges();
 }
 
 export function onclick(id: i32): void { // → `on-click` after the export rename
@@ -177,10 +145,11 @@ export function onclick(id: i32): void { // → `on-click` after the export rena
   }
   // Starting and stopping both change the readout (its color) and the
   // button (its label and color).
-  dirty = D_READOUT | D_BUTTON;
+  mark(readoutSlot);
+  mark(buttonSlot);
 }
 
 export function ontick(): void { // → `on-tick`
   // The readout advances only while running.
-  if (running != 0) dirty |= D_READOUT;
+  if (running != 0) mark(readoutSlot);
 }

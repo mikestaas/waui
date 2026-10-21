@@ -1,18 +1,19 @@
 // The counter, in AssemblyScript — the same component as
 // `crates/demo-counter`, speaking the same `waui:ui/app` world.
 //
-// No `wit-bindgen` exists for AssemblyScript, so instead of generated
-// bindings this file writes the canonical ABI by hand through the shared
-// layer in `../abi`: a flat, pre-ordered node list with parent ids (the
-// `waui:ui/widget` contract), a diff channel, and no imports at all — the
-// counter never calls a clock.
+// The UI is written as a *tree* in `../ui/tree` — the AssemblyScript twin
+// of the `component-ui` crate the Rust demos use — rather than as a
+// hand-ordered flat list with hand-assigned parent ids. This file is
+// state, event handling, and a two-line refresh; the projection of the
+// tree into the contract's flat node list (and its diff channel) is the
+// tree layer's job, on top of the `abi/` emitters.
 //
 // Behavior mirrors the Rust original exactly:
 //   view:    a column (id 1) with the "+" button (id 2, positive), the
 //            readout (id 3; its color is state — negative below zero), and
 //            the "−" button (id 4, negative).
-//   on-click: 2 increments, 4 decrements; each dirties the readout only.
-//   changes:  the one changed readout — never the whole tree.
+//   on-click: 2 increments, 4 decrements; each marks the readout stale.
+//   changes:  the one stale readout — never the whole tree.
 //   on-tick:  nothing (a counter has no clock).
 //
 // The two exports whose world names contain hyphens (`on-click`, `on-tick`)
@@ -21,7 +22,6 @@
 // (see `../rename-exports.mjs`).
 
 import {
-  arenaAlloc,
   cabi_post_changes,
   cabi_post_view,
 } from '../abi/arena';
@@ -29,18 +29,25 @@ import {
   COLOR_NEGATIVE,
   COLOR_NEUTRAL,
   COLOR_POSITIVE,
-  DIRECTION_COLUMN,
   SIZE_LARGE,
   SIZE_MEDIUM,
-  emitButton,
-  emitChangedButton,
-  emitChangedContainer,
-  emitChangedText,
-  emitContainer,
-  emitText,
-  makeList,
 } from '../abi/node';
-import { writeInt32, writeUtf8 } from '../abi/utf8';
+import {
+  beginButton,
+  beginColumn,
+  beginText,
+  changes as lowerChanges,
+  end,
+  id,
+  label,
+  mark,
+  reserve,
+  setColor,
+  setInt32,
+  size,
+  style,
+  view as lowerView,
+} from '../ui/tree';
 
 // The world requires both post functions on the module itself.
 export { cabi_post_changes, cabi_post_view };
@@ -52,91 +59,66 @@ const READOUT = 3;
 const DEC = 4;
 
 var value: i32 = 0;
-/// Set when the state changed since it was last exported.
-var dirty: i32 = 0;
-/// Cleared once the initial tree was exported, via `view` or `changes`.
-var exported: i32 = 0;
+var built: i32 = 0;
+/// The readout's slot handle in the tree (a `begin*` return value).
+var readoutSlot: i32 = -1;
 
-function markExported(): void {
-  dirty = 0;
-  exported = 1;
+// The counter's whole UI. Built once (lazily, before the first export —
+// a lifted component may have no start hook to build in) and updated in
+// place from then on. The scope is the tree: children indent under their
+// container, and each names it by the id set above it.
+function buildTree(): void {
+  beginColumn();
+  id(BOX);
+  beginButton();
+  id(INC);
+  label('+');
+  style(COLOR_POSITIVE, SIZE_MEDIUM);
+  readoutSlot = beginText();
+  id(READOUT);
+  reserve(16); // "-2147483648" is 11 bytes
+  size(SIZE_LARGE);
+  beginButton();
+  id(DEC);
+  label('-');
+  style(COLOR_NEGATIVE, SIZE_MEDIUM);
+  end();
 }
 
-// The readout is the only node that depends on `value`; its color is state
-// (negative below zero).
-function emitReadout(rec: i32, parent: i32): void {
-  const v = value;
-  const str = arenaAlloc(16); // "-2147483648" is 11 bytes
-  const len = writeInt32(str, v) - str;
-  emitText(rec, READOUT, parent, str, len, v < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL, SIZE_LARGE);
+function ensureBuilt(): void {
+  if (built == 0) {
+    built = 1;
+    buildTree();
+  }
 }
 
-function emitPlus(rec: i32, parent: i32): void {
-  const str = arenaAlloc(8);
-  const len = writeUtf8(str, '+') - str;
-  emitButton(rec, INC, parent, str, len, COLOR_POSITIVE, SIZE_MEDIUM);
-}
-
-function emitMinus(rec: i32, parent: i32): void {
-  const str = arenaAlloc(8);
-  const len = writeUtf8(str, '-') - str;
-  emitButton(rec, DEC, parent, str, len, COLOR_NEGATIVE, SIZE_MEDIUM);
+// The readout is the only node that depends on `value`; its color is
+// state (negative below zero). The buttons and the box are static and so
+// need no refresh.
+function refresh(): void {
+  setInt32(readoutSlot, value);
+  setColor(readoutSlot, value < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL);
 }
 
 export function view(): i32 {
-  // A full snapshot means everything is accounted for.
-  markExported();
-  const nodes = arenaAlloc(4 * 32);
-  emitContainer(nodes + 0 * 32, BOX, 0, DIRECTION_COLUMN);
-  emitPlus(nodes + 1 * 32, BOX);
-  emitReadout(nodes + 2 * 32, BOX);
-  emitMinus(nodes + 3 * 32, BOX);
-  return makeList(nodes, 4);
+  ensureBuilt();
+  refresh();
+  return lowerView();
 }
 
 export function changes(): i32 {
-  if (exported == 0) {
-    // First contact with this host: it has seen nothing, so everything is
-    // new to it. (A host may bootstrap from `changes` alone.)
-    markExported();
-    const buf = arenaAlloc(4 * 36);
-    emitChangedContainer(buf + 0 * 36, BOX, 0, DIRECTION_COLUMN);
-    const s1 = arenaAlloc(8);
-    const l1 = writeUtf8(s1, '+') - s1;
-    emitChangedButton(buf + 1 * 36, INC, BOX, s1, l1, COLOR_POSITIVE, SIZE_MEDIUM);
-    emitChangedReadout(buf + 2 * 36, BOX);
-    const s2 = arenaAlloc(8);
-    const l2 = writeUtf8(s2, '-') - s2;
-    emitChangedButton(buf + 3 * 36, DEC, BOX, s2, l2, COLOR_NEGATIVE, SIZE_MEDIUM);
-    return makeList(buf, 4);
-  }
-  if (dirty == 0) {
-    // A no-op event (a tick, a click on an unknown id): there is nothing
-    // for the host to do.
-    return makeList(0, 0);
-  }
-  dirty = 0;
-  // The buttons and the box are static; only the readout changed.
-  const buf = arenaAlloc(36);
-  emitChangedReadout(buf, BOX);
-  return makeList(buf, 1);
-}
-
-// The readout projected standing alone, as a `changed` mutation.
-function emitChangedReadout(rec: i32, parent: i32): void {
-  const v = value;
-  const str = arenaAlloc(16);
-  const len = writeInt32(str, v) - str;
-  emitChangedText(rec, READOUT, parent, str, len, v < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL, SIZE_LARGE);
+  ensureBuilt();
+  refresh();
+  return lowerChanges();
 }
 
 export function onclick(id: i32): void { // → `on-click` after the export rename
   if (id == INC) {
     value++;
-    dirty = 1;
+    mark(readoutSlot);
   } else if (id == DEC) {
     value--;
-    dirty = 1;
+    mark(readoutSlot);
   }
 }
 

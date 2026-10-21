@@ -1,9 +1,18 @@
 // The bump arena for ABI buffers, and the world's "post" functions.
 //
-// Page 0 of linear memory is a monotonically growing arena; all *static*
-// data (string literals, the app's state globals) lives from page 1 up,
-// because these components are compiled with `--memoryBase 65536`, so the
-// two regions can never collide.
+// Page 0 of linear memory holds all *dynamic* memory, split in two:
+//
+//   [0 ......... RESULT_END)   this arena — the monotonically growing
+//                              result buffers (node lists, mutation
+//                              lists, the itoa scratch)
+//   [RESULT_END . 64 KiB)      the `../ui/tree` state region — the widget
+//                              tree's slots and label pool, built once and
+//                              never freed
+//
+// All *static* data (string literals, the app's state globals) lives from
+// page 1 up, because these components are compiled with
+// `--memoryBase 65536`, so the regions can never collide with the data
+// segment.
 //
 // `cabi_post_view` / `cabi_post_changes` are the canonical-ABI "post"
 // functions: the host calls one after consuming a list result, and the
@@ -13,12 +22,22 @@
 // view()/changes() calls, and it needs no AS runtime (the module compiles
 // with `--runtime stub`), which keeps the component import-free.
 
+/// Where the result arena ends and the tree's state region begins.
+export const RESULT_END = 32 * 1024;
+
 var arena: i32 = 0;
 
 /// Bump-allocate `n` bytes, 8-byte aligned, from the arena.
+///
+/// The bump is capped at `RESULT_END` so a pathological result can never
+/// walk into the state region. Callers are expected to size their buffers
+/// to fit (the `ui/tree` layer does, by construction); the cap is the
+/// backstop, not the interface.
 export function arenaAlloc(n: i32): i32 {
   const p = arena;
-  arena = p + ((n + 7) & ~7);
+  let e = p + ((n + 7) & ~7);
+  if (e > RESULT_END) e = RESULT_END;
+  arena = e;
   return p;
 }
 
