@@ -5,9 +5,10 @@
 //   [0 ......... RESULT_END)   this arena — the monotonically growing
 //                              result buffers (node lists, mutation
 //                              lists, the itoa scratch)
-//   [RESULT_END . 64 KiB)      the `../ui/tree` state region — the widget
-//                              tree's slots and label pool, built once and
-//                              never freed
+//   [RESULT_END . 64 KiB)      the `../ui/tree` label pool — one partition
+//                              per stable node id, allocated at first
+//                              export, never freed (the tree's *structure*
+//                              is on the runtime heap, page 1 and up)
 //
 // All *static* data (string literals, the app's state globals) lives from
 // page 1 up, because these components are compiled with
@@ -19,10 +20,11 @@
 // guest must free everything that result allocated. Because every byte of
 // a result comes from the arena, a single reset of the bump pointer *is*
 // the whole free — deterministic, zero net growth across repeated
-// view()/changes() calls, and it needs no AS runtime (the module compiles
-// with `--runtime stub`), which keeps the component import-free.
+// view()/changes() calls. (Tree objects are rebuilt per call and are the
+// GC's to reclaim; the label pool is static and never part of a result's
+// allocation, so the post functions have exactly one job.)
 
-/// Where the result arena ends and the tree's state region begins.
+/// Where the result arena ends and the label pool begins.
 export const RESULT_END = 32 * 1024;
 
 var arena: i32 = 0;
@@ -30,7 +32,7 @@ var arena: i32 = 0;
 /// Bump-allocate `n` bytes, 8-byte aligned, from the arena.
 ///
 /// The bump is capped at `RESULT_END` so a pathological result can never
-/// walk into the state region. Callers are expected to size their buffers
+/// walk into the label pool. Callers are expected to size their buffers
 /// to fit (the `ui/tree` layer does, by construction); the cap is the
 /// backstop, not the interface.
 export function arenaAlloc(n: i32): i32 {
