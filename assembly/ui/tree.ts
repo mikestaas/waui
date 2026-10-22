@@ -9,12 +9,11 @@
 // There is no slot table, so there is no slot cap — a tree's size is limited
 // only by the heap — and the demos author it the way the Rust demos do:
 //
-//   const box = column([
-//     button('+', COLOR_POSITIVE, SIZE_MEDIUM),   // id 2
-//     readout(value),                             // id 3
-//     button('-', COLOR_NEGATIVE, SIZE_MEDIUM),   // id 4
-//   ]);
-//   box.id = 1;
+//   column([
+//     button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(2),
+//     readout(value),
+//     button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(4),
+//   ]).id(1);
 //
 // One price of the real heap: the module is no longer import-free. The
 // incremental runtime pulls in a single `env.abort` import (its OOM path),
@@ -97,9 +96,11 @@ function poolAlloc(n: i32): i32 {
 /// One node of a widget tree: a real object on the runtime heap, nested via
 /// `children` — the AS twin of the Rust crate's `Tree`.
 export class Widget {
-  /// The contract's node id (0 = none). A *stable* id across rebuilds is
-  /// what makes the label buffer stable.
-  id: i32 = 0;
+  /// The contract's node id (0 = none) — the storage behind the `id()`
+  /// builder. Rust lets a field and a method share a name; AssemblyScript
+  /// does not, so the builder's storage wears an underscore and is
+  /// addressed through `id()`.
+  _id: i32 = 0;
   /// One of the `abi/node` TAG_* values.
   kind: i32;
   /// The style (text/buttons only).
@@ -121,6 +122,15 @@ export class Widget {
     this.kind = kind;
     this.children = children;
     this.label(label);
+  }
+
+  /// Assign the contract's node id (0 = none) and return `this` for
+  /// chaining — the twin of the Rust crate's `.id(n)` builder, so a tree
+  /// can be written in one nested expression. A *stable* id across
+  /// rebuilds is what makes the label buffer stable.
+  id(n: i32): this {
+    this._id = n;
+    return this;
   }
 
   /// Replace the label (UTF-16 in; UTF-8 in the pool at projection).
@@ -211,8 +221,8 @@ function materializeLabel(w: Widget): void {
   // `has` confirmed is safe.
   let off: i32;
   let cap: i32;
-  if (w.id > 0 && pool.has(w.id)) {
-    const existing = pool.get(w.id);
+  if (w._id > 0 && pool.has(w._id)) {
+    const existing = pool.get(w._id);
     off = existing.off;
     cap = existing.cap;
   } else {
@@ -223,11 +233,11 @@ function materializeLabel(w: Widget): void {
       return;
     }
     cap = (want + 3) & ~3; // the pool allocated exactly this much
-    if (w.id > 0) {
+    if (w._id > 0) {
       const buf = new PoolBuf();
       buf.off = off;
       buf.cap = cap;
-      pool.set(w.id, buf);
+      pool.set(w._id, buf);
     }
     // id-less: fresh partition per build (documented in the header)
   }
@@ -261,7 +271,7 @@ function lower(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32
   const rec = buf + off * stride;
   if (rec + stride > RESULT_END) return off;
   materializeLabel(w);
-  const id = w.id;
+  const id = w._id;
   if (isMutation != 0) store<i32>(rec, MUT_CHANGED);
   // A `changed` mutation carries the node one word in (after the tag word);
   // a plain node record *is* the record base. The emitters self-zero their

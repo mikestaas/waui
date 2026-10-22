@@ -98,20 +98,23 @@ demos author it the way the Rust demos do:
 ```ts
 /// The counter's whole UI, nested — the same expression the Rust demo writes.
 function tree(v: i32): Widget {
-  const inc = button('+', COLOR_POSITIVE, SIZE_MEDIUM);
-  inc.id = INC;
-  const dec = button('-', COLOR_NEGATIVE, SIZE_MEDIUM);
-  dec.id = DEC;
-  const box = column([inc, readout(v), dec]);
-  box.id = BOX;
-  return box;
+  return column([
+    button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(INC),
+    readout(v),
+    button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(DEC),
+  ]).id(BOX);
 }
 ```
 
 The API: constructors `text(content, color, size)` / `button(label, color,
-size)` / `row(children)` / `column(children)`; fluent `label()` / `reserve()`
-/ `style()` for the state-dependent bits; plain fields `id` / `children`.
-(No lambdas, no overloads: the layer stays a handful of functions.)
+size)` / `row(children)` / `column(children)`; chainable `id()` / `label()`
+/ `reserve()` / `style()` for the state-dependent bits; a plain field
+`children`. The id is set with the `.id(n)` builder — the twin of the Rust
+crate's, which returns `this` so a whole tree can be one nested expression.
+(AssemblyScript cannot name a field and a method alike the way Rust can, so
+the builder's storage field wears an underscore; address the id through
+`id()`. And as before: no lambdas, no overloads — the layer stays a handful
+of functions.)
 
 One behavior of the Rust model carries over exactly: **the tree is rebuilt
 from state on every export** — `view()` and `changes()` each call `tree(value)`,
