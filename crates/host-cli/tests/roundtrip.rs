@@ -1,12 +1,10 @@
-//! Headless contract test: drive the counter component through the same
-//! wasmtime host code the real hosts use, and assert on the flat node list
-//! its `view()` returns. This is what makes the WIT world testable in CI
-//! without a window.
+//! Headless contract test: drive the counter through the same wasmtime
+//! host code the real hosts use, and assert on the flat node list `view()`
+//! returns, its style, and the diff channel.
 //!
-//! Each scenario runs against *both* producer languages: the Rust component
-//! (built with cargo + wit-bindgen) and its AssemblyScript clone (built with
-//! asc + a hand-rolled canonical ABI). The assertions are shared — the
-//! contract, not the compiler, is what is under test.
+//! Each scenario runs against both producer languages: the Rust component
+//! (cargo + wit-bindgen) and its AssemblyScript one (asc + the hand-rolled
+//! ABI). The assertions are shared.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -88,9 +86,8 @@ fn build_component() {
     );
 }
 
-// The AssemblyScript build needs node + the local npm toolchain (asc).
-// Without it the AS tests skip rather than fail: the *Rust* coverage of
-// the contract is the one CI must always run.
+// The AssemblyScript build needs node + the local npm toolchain (asc);
+// without it the AS tests skip rather than fail.
 fn as_toolchain_available() -> bool {
     waui_root()
         .join("node_modules/.bin/asc")

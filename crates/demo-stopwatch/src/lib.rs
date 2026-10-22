@@ -1,14 +1,10 @@
-//! A stopwatch that uses the host's clock.
+//! A stopwatch that uses the host's clock: the component polls `now()` and
+//! renders elapsed time, driven by the host's periodic `on-tick` calls.
 //!
-//! Demonstrates the *import* side of the world: the component polls `now()`
-//! (a host-provided service) and renders elapsed time, driven by the host's
-//! periodic `on-tick` calls.
-//!
-//! Its diff is state-dependent, like its rendering: while running, every
-//! tick reports the readout; while paused, it reports *nothing* — the
-//! component simply has no changed nodes. Like the counter, its view is
-//! written as a nested `component-ui` tree and projected into the
-//! contract's flat list at the ABI boundary.
+//! Its diff is state-dependent: while running, every tick reports the
+//! readout; while paused, it reports nothing. The view is a nested
+//! `component-ui` tree projected into the contract's flat list at the ABI
+//! boundary.
 
 wit_bindgen::generate!({
     world: "app",
@@ -58,8 +54,8 @@ fn elapsed() -> u64 {
     }
 }
 
-/// While running the readout glows with the host's accent; the button
-/// says what it will do (start = good, pause = careful).
+/// The readout takes the host's accent color while running; the button's
+/// label and color say what it will do.
 fn readout(elapsed: u64, running: bool) -> Tree {
     Tree::text(
         format!("{elapsed} ms"),
@@ -99,9 +95,9 @@ fn tree(elapsed: u64, running: bool) -> Tree {
     Tree::column(vec![readout(elapsed, running), button(running)]).id(1)
 }
 
-/// The one seam between the ergonomic tree and the generated bindings:
-/// each `generate!` is crate-local, so the tree's token mirrors and the
-/// ABI's generated types are different, even if identical in shape.
+/// Project the ergonomic tree's tokens onto this crate's generated types:
+/// each `generate!` is crate-local, so the two type families are distinct
+/// even where identical in shape.
 fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
     let style = |s: Style| wit::Style {
         color: match s.color {
@@ -171,8 +167,8 @@ impl Guest for Stopwatch {
         }
         let running = RUNNING.load(Ordering::Relaxed);
         let elapsed = elapsed();
-        // Projected standing alone, so each node's parent is stated
-        // explicitly (the lowering walk states it for us inside `view`).
+        // Projected standing alone, each states its parent explicitly
+        // (inside `view`, the lowering walk states it).
         let mut out = Vec::new();
         if dirty & READOUT != 0 {
             out.push(Mutation::Changed(to_node(&readout(elapsed, running), Some(1))));

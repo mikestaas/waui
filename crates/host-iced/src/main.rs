@@ -1,11 +1,9 @@
 //! A windowed host for waui components, rendered with [iced](https://iced.rs).
 //!
-//! The host owns a wasmtime store and a component instance. It bootstraps
-//! from `view()` (a full snapshot), then — on every event it forwards to
-//! the component — applies the component's `changes()` diff to its retained
-//! tree and rebuilds only when the diff is non-empty. A no-op tick (say,
-//! from a paused stopwatch) produces an empty diff and skips the rebuild
-//! entirely.
+//! The host bootstraps from `view()` (a full snapshot), then — on every
+//! event it forwards to the component — applies the component's `changes()`
+//! diff to its retained tree and rebuilds only when the diff is non-empty;
+//! a tick that changes nothing skips the rebuild.
 
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -109,8 +107,8 @@ fn update(state: &mut State, message: Message) {
             .call_on_tick(&mut state.store)
             .expect("on-tick() failed"),
     }
-    // The diff channel: rebuild only when the component says something
-    // changed (a no-op tick reports an empty diff).
+    // The diff channel: rebuild only when the component reports something
+    // changed (an empty diff skips the rebuild).
     let mutations = state
         .app
         .call_changes(&mut state.store)
@@ -140,10 +138,9 @@ fn subscription(_state: &State) -> iced::Subscription<Message> {
     iced::time::every(Duration::from_millis(250)).map(|_| Message::Tick)
 }
 
-/// A semantic color in this host's palette — the same Tokyo Night palette
-/// the web host uses, so the component's intent renders the same across
-/// renderers. `neutral` maps to nothing: iced's own theme color is the
-/// right "default foreground".
+/// A semantic color in this host's palette (the web page's Tokyo Night
+/// values, from `theme.rs`). `neutral` maps to nothing: iced's own theme
+/// color is the default foreground.
 fn iced_color(c: WColor) -> Option<iced::Color> {
     Some(match c {
         WColor::Neutral => return None,
@@ -163,8 +160,7 @@ fn size_pt(s: WSize) -> f32 {
     }
 }
 
-/// The one place in this host where the toolkit shows up: map the
-/// renderer-agnostic tree onto iced widgets.
+/// Map the tree onto iced widgets.
 fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
     use iced::widget;
     match node {
@@ -176,15 +172,14 @@ fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
             text.into()
         }
         Tree::Button(id, label, style) => {
-            // The label carries the component's semantic style; the button
-            // chrome (background, border) stays with iced's theme — a host
-            // concern, like the TUI's focus ring.
+            // The label carries the component's style; the button chrome
+            // stays with iced's theme (a host concern, like the TUI's
+            // focus ring).
             let mut label = widget::text(label.as_str()).size(size_pt(style.size));
             if let Some(color) = iced_color(style.color) {
                 label = label.color(color);
             }
-            // A button the component gave no id is display-only: nothing
-            // to press.
+            // A button with no id is display-only.
             match id {
                 Some(id) => widget::button(label)
                     .on_press(Message::Click(*id))

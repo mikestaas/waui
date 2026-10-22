@@ -6,8 +6,7 @@ package waui:ui;
 ///
 /// WIT types may not be recursive, so instead of a tree type that refers to
 /// itself, the tree is a `list` whose nodes carry a `parent` id, and the
-/// host rebuilds the tree. This is the same flat-list encoding that real UI
-/// serialization formats use.
+/// host rebuilds the tree.
 ///
 /// **Identity.** A node's `id` is its handle: what `on-click` targets and
 /// what the `changes` diff channel keys on. A node that is never clicked,
@@ -17,10 +16,9 @@ package waui:ui;
 /// is *unaddressable*: a component must not report it in a `changes` diff,
 /// and a host may ignore such a mutation.
 interface widget {
-  /// A *semantic* color. The contract deliberately stops at intent, not
-  /// pixels: a host maps these onto whatever its toolkit has — an ANSI
-  /// color in a terminal, a theme color in iced, a CSS variable on the
-  /// web. A TUI can't render `#FF6B6B`, but it *can* render "negative".
+  /// A semantic color. Each host maps these onto its own palette (ANSI
+  /// colors, theme colors, CSS variables); a host that cannot express a
+  /// token renders without it.
   enum color {
     /// Default foreground for the host's palette.
     neutral,
@@ -34,15 +32,15 @@ interface widget {
     warning,
   }
 
-  /// A *semantic* text size, mapped by each host to its own scale.
+  /// A semantic text size, mapped by each host to its own scale.
   enum size {
     small,
     medium,
     large,
   }
 
-  /// Per-node styling. Deliberately tiny: color + size. Everything else
-  /// (borders, padding, backgrounds, focus rings) stays a host concern.
+  /// Per-node style: color + size. Everything else (borders, padding,
+  /// backgrounds, focus) is a host concern.
   record style {
     color: color,
     size: size,
@@ -69,9 +67,8 @@ interface widget {
   /// (Named `container` rather than `box`: the latter would clash with
   /// `std::boxed::Box` in generated Rust bindings.)
   ///
-  /// Containers carry layout only — no `style` field. How a host
-  /// decorates a container (borders, spacing) is left to the host, the
-  /// same way focus is left to the host.
+  /// Containers carry layout only — no `style` field; how a host decorates
+  /// one is a host concern, like focus.
   ///
   /// A container's `id` is *required in practice*: its children name it in
   /// their `parent` field, and the host rebuilds the tree from that. A
@@ -103,10 +100,10 @@ interface widget {
   /// new parent (past any of its own descendants still in the list). A
   /// `removed` id deletes a node — and, if it is a container, the whole
   /// subtree under it. Deeper restructuring is composed from these: a
-  /// component that moves a container (with its children) should remove
-  /// the subtree and re-add it, since the flat pre-order list gives each
-  /// retained node a stable home. A `changed` mutation for an id-less node
-  /// is unaddressable (see `widget`'s identity note): hosts may ignore it.
+  /// component that moves a container should remove the subtree and re-add
+  /// it, since the flat pre-order list gives each retained node a stable
+  /// home. A `changed` mutation for an id-less node is unaddressable (see
+  /// the identity note above): hosts may ignore it.
   variant mutation {
     changed(node),
     removed(u32),

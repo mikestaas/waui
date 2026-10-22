@@ -1,22 +1,15 @@
-//! A TUI host for waui components.
+//! A TUI host for waui components: real terminal layout (ratatui) — rows
+//! and columns, framed buttons — plus a host-local focus ring. The
+//! component has no focus concept; which button is highlighted is a host
+//! concern.
 //!
-//! A third renderer for the same component: a real terminal UI (ratatui)
-//! that lays the tree out with actual geometry — rows and columns, framed
-//! buttons — and keeps a *host-local* focus ring. The component does not
-//! know or care which button is highlighted; focus is a host concern.
+//! Controls: up/down (or j/k) move focus, enter/space clicks, q quits.
+//! `--dump` renders one frame with ANSI color and prints it, for headless
+//! verification of the tree-to-UI mapping; `--click <id>` injects clicks
+//! before the interactive loop.
 //!
-//! Controls: up/down (or j/k) move focus, enter/space clicks it, q quits.
-//!
-//! `--dump` renders one frame into an in-memory buffer and prints it with
-//! ANSI color, so the tree-to-UI mapping — including the component's
-//! semantic styling — can be verified without a terminal.
-//!
-//! The interactive loop follows the diff protocol: it bootstraps from
-//! `view`, then after each click or tick it applies the component's
-//! `changes` to the retained tree and rebuilds only when there is
-//! something to apply. At rest — no ticks landing, no clicks — the loop
-//! makes zero calls into the component; it just redraws the retained
-//! tree (which ratatui's frame buffer diffs for free).
+//! The loop calls `on-tick` + `changes` every 250ms and rebuilds the
+//! retained tree only when the diff is non-empty; otherwise it redraws.
 
 use std::io::{self, stdout};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -86,8 +79,6 @@ fn height_of(node: &Tree) -> u16 {
 
 // --------------------------------------------------------------------------
 // Styling: the component's semantic tokens, mapped onto terminal primitives.
-// A TUI can't render `#f7768e`, but it can render "negative" — that is the
-// point of tokens instead of pixels.
 
 /// A semantic color as a terminal color.
 fn tint(c: WColor) -> Color {
@@ -428,9 +419,8 @@ fn main() {
             pending = true;
         }
 
-        // Ask the component what changed; apply the diff to the retained
-        // tree and rebuild only when it reported something. At rest this
-        // whole block is skipped, so the loop makes no component calls.
+        // Apply the diff to the retained tree; rebuild only when it
+        // reported something (an empty diff skips the rebuild).
         if pending {
             pending = false;
             let mutations = app

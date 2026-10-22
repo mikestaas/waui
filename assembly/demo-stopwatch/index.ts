@@ -1,21 +1,16 @@
 // A stopwatch, in AssemblyScript — the same component as
-// `crates/demo-stopwatch`, speaking the same `waui:ui/app` world.
+// `crates/demo-stopwatch`, same `waui:ui/app` world.
 //
-// It demonstrates the *import* side of the world: the component polls
-// `now()` (a host-provided clock) and renders elapsed time, driven by the
-// host's periodic `on-tick` calls.
+// Exercises the world's import side: the component polls `now()` (a host
+// clock) and renders elapsed time, driven by the host's `on-tick`.
 //
-// Its diff is state-dependent, like its rendering: while running, every
-// tick dirties the readout; while paused, it dirties *nothing* — the
-// component simply has no changed nodes. Like the Rust original, the dirty
-// state is a bit mask over the two state-dependent nodes, and `changes`
-// re-projects exactly the dirty subtrees from state.
+// The diff is state-dependent, as in the Rust original: while running, every
+// tick dirties the readout; while paused, nothing. The dirty state is a bit
+// mask over the two state-dependent nodes, and `changes` re-projects the
+// dirty subtrees from state.
 //
-// The UI is a nested tree in `../ui/tree` (the AssemblyScript twin of the
-// Rust demos' `component-ui` crate), rebuilt from state per export. The
-// readout "123 ms" is composed per projection (an integer plus a literal)
-// into the label the node materializes in the tree's static pool; the
-// elapsed reading is sampled *once*, so one exported list never mixes two
+// The UI is a nested tree in `../ui/tree`, rebuilt from state per export;
+// the elapsed reading is sampled once, so one exported list never mixes two
 // clock readings.
 //
 // `onclick`/`ontick` are renamed to the world's hyphenated names after
@@ -85,8 +80,8 @@ function elapsed(): i64 {
   return frozen;
 }
 
-// While running the readout glows with the host's accent; the button says
-// what it will do (start = good, pause = careful).
+// The readout takes the host's accent color while running; the button's
+// label and color say what it will do.
 function readout(e: i64, running: i32): Widget {
   return text(
     `${e} ms`,
@@ -138,8 +133,8 @@ export function changes(): i32 {
   let w = 0;
   if ((d & BIT_READOUT) != 0) roots[w++] = readout(e, running);
   if ((d & BIT_BUTTON) != 0) roots[w++] = control(running);
-  // Projected standing alone, each states its parent explicitly (the
-  // lowering walk states it for us inside `view`).
+  // Projected standing alone, each states its parent explicitly (inside
+  // `view`, the lowering walk states it).
   return mutationsOfAll(roots, BOX);
 }
 

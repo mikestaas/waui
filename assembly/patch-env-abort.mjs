@@ -18,8 +18,8 @@
 // renumbers it. `WebAssembly.validate` plus the selftest then prove the
 // result.
 //
-// `unreachable` is behaviorally identical to `abort` for our purposes —
-// both trap, so the OOM path remains a trap, exactly like a Rust panic.
+// `unreachable` is behaviorally identical to `abort` for this purpose —
+// both trap, so the OOM path remains a trap.
 // The output is checked (valid, no `env` imports, same export names) before
 // it is written, and a module without the import (e.g. a `--runtime stub`
 // build) is copied through untouched.

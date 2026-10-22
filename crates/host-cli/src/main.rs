@@ -1,15 +1,9 @@
-//! A terminal host for waui components.
+//! A minimal terminal host for waui components: renders `view()` as an
+//! ASCII tree and forwards clicks read from standard input.
 //!
-//! Loads a component, renders its `view()` as an ASCII tree, and forwards
-//! widget clicks read from standard input. This is a second, trivially
-//! different renderer for the same component — the point being that the
-//! component doesn't know or care which host it runs in.
-//!
-//! This host deliberately ignores the world's diff channel (`changes`) and
-//! re-queries `view()` after every event: `view()` is always the full
-//! truth, so a full-snapshot host stays correct. The diff is an
-//! optimization, opt-in per host (host-tui, host-iced, and the web host
-//! all use it).
+//! Ignores the diff channel — it re-queries `view()` after every event,
+//! which stays correct because `view()` is always the full tree — and
+//! ignores `style` (plain ASCII has no palette).
 
 use std::io::{self, BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -85,10 +79,8 @@ fn main() {
     }
 }
 
-/// Render the tree as indented ASCII. The shared tree carries each node's
-/// semantic `style`, but this renderer deliberately ignores it: plain ASCII
-/// has no palette, and a host is allowed to express less of the contract
-/// than it consumes.
+/// Render the tree as indented ASCII, ignoring the nodes' `style` (plain
+/// ASCII has no palette).
 fn render(node: &Tree, depth: usize, out: &mut String) {
     let indent = "  ".repeat(depth);
     match node {
@@ -96,8 +88,7 @@ fn render(node: &Tree, depth: usize, out: &mut String) {
             out.push_str(&format!("{indent}\"{content}\"\n"));
         }
         Tree::Button(id, label, _) => {
-            // A button the component gave no id is display-only; print its
-            // label with nothing to address it by.
+            // A button with no id is display-only; no id prefix.
             let id = id.map_or_else(String::new, |i| format!("{i}: "));
             out.push_str(&format!("{indent}[{id}{label}]\n"));
         }

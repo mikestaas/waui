@@ -5,11 +5,10 @@
 // and after each click or tick the host applies the component's
 // `changes()` to a retained copy of the node list. Content-only mutations
 // (a text or button whose position in the tree is unchanged) are applied
-// *in place* — the existing element is restyled, no DOM is rebuilt, and
-// the delegated click listener keeps working. Anything structural
-// (removals, additions, re-parenting, container changes) falls back to a
-// full rebuild from the retained tree. A no-op event reports an empty
-// diff, and the host does nothing at all.
+// in place — the existing element is restyled, no DOM rebuild, and the
+// delegated click listener survives. Anything structural (removals,
+// additions, re-parenting, container changes) falls back to a full rebuild
+// from the retained tree; an empty diff does nothing.
 //
 // This file is concatenated into the generated page by build.mjs, so it
 // relies on `createApp` from glue.js and `WAUI_WASM_BYTES` from the page.
