@@ -88,31 +88,24 @@ function elapsed(): i64 {
 // While running the readout glows with the host's accent; the button says
 // what it will do (start = good, pause = careful).
 function readout(e: i64, running: i32): Widget {
-  const w = text(
+  return text(
     `${e} ms`,
     running != 0 ? COLOR_ACCENT : COLOR_NEUTRAL,
     SIZE_LARGE,
-  );
-  w.id = READOUT;
-  w.reserve(24); // "18446744073709551615 ms" is 23 bytes
-  return w;
+  ).id(READOUT).reserve(24); // "18446744073709551615 ms" is 23 bytes
 }
 
 function control(running: i32): Widget {
-  const w = button(
+  return button(
     running != 0 ? 'pause' : 'start',
     running != 0 ? COLOR_WARNING : COLOR_POSITIVE,
     SIZE_MEDIUM,
-  );
-  w.id = BUTTON;
-  return w;
+  ).id(BUTTON);
 }
 
 /// The stopwatch's whole UI, nested.
 function tree(e: i64, running: i32): Widget {
-  const box = column([readout(e, running), control(running)]);
-  box.id = BOX;
-  return box;
+  return column([readout(e, running), control(running)]).id(BOX);
 }
 
 export function view(): i32 {

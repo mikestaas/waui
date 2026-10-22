@@ -72,21 +72,18 @@ function markExported(): void {
 // (negative below zero). The buttons and the box are static and so need no
 // attention in the diff.
 function readout(v: i32): Widget {
-  const w = text(`${v}`, v < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL, SIZE_LARGE);
-  w.id = READOUT;
-  w.reserve(16); // "-2147483648" is 11 bytes
-  return w;
+  return text(`${v}`, v < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL, SIZE_LARGE)
+    .id(READOUT)
+    .reserve(16); // "-2147483648" is 11 bytes
 }
 
 /// The counter's whole UI, nested — the same expression the Rust demo writes.
 function tree(v: i32): Widget {
-  const inc = button('+', COLOR_POSITIVE, SIZE_MEDIUM);
-  inc.id = INC;
-  const dec = button('-', COLOR_NEGATIVE, SIZE_MEDIUM);
-  dec.id = DEC;
-  const box = column([inc, readout(v), dec]);
-  box.id = BOX;
-  return box;
+  return column([
+    button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(INC),
+    readout(v),
+    button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(DEC),
+  ]).id(BOX);
 }
 
 export function view(): i32 {
