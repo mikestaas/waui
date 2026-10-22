@@ -1,16 +1,13 @@
 //! A counter whose UI and logic live entirely in the component.
 //!
-//! The host is a dumb renderer: it draws whatever `view()` returns and
-//! forwards clicks via `on-click`. Nothing about this counter (its state,
-//! its layout, its buttons) exists in the host.
+//! The host is a plain renderer: it draws what `view()` returns and
+//! forwards clicks via `on-click`.
 //!
-//! The view is written as a *nested* widget tree (the `component-ui` crate)
-//! and projected into the contract's flat node list at the ABI boundary —
-//! the mirror of the hosts' own list→tree rebuild, on the authoring side.
+//! The view is a nested `component-ui` tree projected into the contract's
+//! flat node list at the ABI boundary.
 //!
-//! The counter also exercises the diff channel: only the readout depends
-//! on its state, so after an event it reports exactly one changed node —
-//! never the whole tree.
+//! The diff: only the readout depends on state, so after an event the
+//! component reports exactly that node (the whole tree on first contact).
 
 wit_bindgen::generate!({
     world: "app",
@@ -64,9 +61,9 @@ fn tree(value: i32) -> Tree {
     .id(1)
 }
 
-/// The one seam between the ergonomic tree and the generated bindings:
-/// each `generate!` is crate-local, so the tree's token mirrors and the
-/// ABI's generated types are different, even if identical in shape.
+/// Project the ergonomic tree's tokens onto this crate's generated types:
+/// each `generate!` is crate-local, so the two type families are distinct
+/// even where identical in shape.
 fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
     let style = |s: Style| wit::Style {
         color: match s.color {
@@ -135,8 +132,8 @@ impl Guest for Counter {
         }
         DIRTY.store(false, Ordering::Relaxed);
         // The buttons and the box are static; only the readout changed.
-        // Projected standing alone, so its parent is stated explicitly
-        // (the lowering walk states it for us inside `view`).
+        // Projected standing alone, its parent is stated explicitly (inside
+        // `view`, the lowering walk states it).
         let value = VALUE.load(Ordering::Relaxed);
         vec![Mutation::Changed(to_node(&readout(value), Some(1)))]
     }

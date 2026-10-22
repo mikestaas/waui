@@ -1,12 +1,10 @@
-//! This host's iced theme: the web page's palette, so the windowed host
-//! reads like a sibling of the static web host.
+//! This host's iced theme: the web page's exact palette, so the windowed
+//! host matches the static web host.
 //!
-//! The web page (`web/index.html`) is built on the Tokyo Night palette —
+//! The web page (`web/index.html`) uses the Tokyo Night palette —
 //! `#1a1b26` background, `#c0caf5` text, `#24283b` buttons. Iced ships a
-//! built-in `Theme::TokyoNight` that is close, but its text and primary
-//! colors differ from the page's, so we feed the page's exact values into
-//! a custom theme instead. The component's semantic tokens then land on
-//! the same colors in the window as in the browser.
+//! built-in `Theme::TokyoNight` whose text and primary colors differ from
+//! the page's, so the page's exact values go into a custom theme instead.
 
 use iced::theme::{Palette, Style};
 use iced::{Color, Theme};

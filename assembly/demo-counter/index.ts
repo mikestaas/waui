@@ -1,29 +1,19 @@
 // The counter, in AssemblyScript — the same component as
-// `crates/demo-counter`, speaking the same `waui:ui/app` world.
+// `crates/demo-counter`, same `waui:ui/app` world.
 //
-// The UI is written as a nested *tree* in `../ui/tree` — the AssemblyScript
-// twin of the `component-ui` crate the Rust demos use: real objects on the
-// runtime heap, nested the same way the Rust demo writes them. This file is
-// state, event handling, and the two projection calls; the diff is the
-// demo's own bookkeeping, exactly as in the Rust original.
+// The UI is a nested tree in `../ui/tree` (the AS twin of the Rust demos'
+// `component-ui` crate), rebuilt from state on every export; the diff is the
+// demo's own bookkeeping, as in the Rust original.
 //
-// Behavior mirrors the Rust original exactly:
 //   view:     a column (id 1) with the "+" button (id 2, positive), the
 //             readout (id 3; its color is state — negative below zero), and
-//             the "−" button (id 4, negative).
-//   on-click: 2 increments, 4 decrements; each marks the readout stale.
-//   changes:  the one stale readout — never the whole tree.
-//   on-tick:  nothing (a counter has no clock).
+//             the "-" button (id 4, negative)
+//   on-click: 2 increments, 4 decrements; each marks the readout dirty
+//   changes:  the one dirty readout (the whole tree on first contact)
+//   on-tick:  nothing (a counter has no clock)
 //
-// The tree is rebuilt from state on every export (the Rust model — state is
-// the source of truth); the tree layer projects it, and the label bytes it
-// points at come from the tree's static pool, so a rebuild never moves what
-// a projected record points at.
-//
-// The two exports whose world names contain hyphens (`on-click`, `on-tick`)
-// are authored here as `onclick`/`ontick` — AssemblyScript identifiers
-// cannot contain hyphens — and renamed in the module after compilation
-// (see `../rename-exports.mjs`).
+// `onclick`/`ontick` are renamed to the world's hyphenated names after
+// compilation (see `../rename-exports.mjs`).
 
 import {
   cabi_post_changes,
@@ -77,7 +67,7 @@ function readout(v: i32): Widget {
     .reserve(16); // "-2147483648" is 11 bytes
 }
 
-/// The counter's whole UI, nested — the same expression the Rust demo writes.
+/// The counter's whole UI, nested.
 function tree(v: i32): Widget {
   return column([
     button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(INC),
@@ -107,8 +97,8 @@ export function changes(): i32 {
     return makeList(0, 0);
   }
   dirty = 0;
-  // Projected standing alone, so its parent is stated explicitly (the
-  // lowering walk states it for us inside `view`).
+  // Projected standing alone, its parent is stated explicitly (inside
+  // `view`, the lowering walk states it).
   return mutationsOf(readout(value), BOX);
 }
 

@@ -1,15 +1,13 @@
-// Headless verification of the web host's ABI layer (Node, same code the
-// browser page uses). Exercises the counter's round-trip, the diff channel
-// (changes), and the stopwatch's import side (now + tick) against the raw
+// Headless verification of the web host's ABI layer (Node; the same code
+// the browser page uses). Exercises the counter's round-trip and diff
+// channel, and the stopwatch's import side (now + tick), against the raw
 // wasm modules.
 //
 //   node web/selftest.mjs [counter.wasm] [stopwatch.wasm]
 //
 // The paths default to the Rust components; passing other core modules
-// (e.g. the AssemblyScript builds, `make web-test-as`) runs the exact same
-// checks against them — the same glue.js, the same assertions. That is the
-// language-agnosticism check: the host's ABI layer must not care who
-// produced the module.
+// (e.g. the AssemblyScript builds, `make web-test-as`) runs the same checks
+// against them — same glue.js, same assertions, a different producer.
 
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';

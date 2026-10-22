@@ -18,20 +18,19 @@ components:
 	done
 	@echo "wrote target/components/*.component.wasm"
 
-# Build the AssemblyScript demos and lift them into the component model.
+# Build the AssemblyScript demos and lift them.
 #
-# No `wit-bindgen` exists for AssemblyScript, so the lift is typed by an
-# explicit step: the WIT files in `wit/` are embedded into the hand-rolled
-# module (`wasm-tools component embed`) and then lifted (`component new`).
-# The WIT is the only shared spec — the compiler is the only tool.
+# No wit-bindgen exists for AssemblyScript, so the lift is typed explicitly:
+# the WIT in `wit/` is embedded into the module (`component embed`) and the
+# result lifted (`component new`).
 #
-#   asc  (incremental runtime — the ui/tree object tree needs a heap)
-#        →  patch-env-abort (the runtime's one import becomes unreachable,
-#           so the module is import-free again)
-#        →  rename exports (world names with hyphens are not AS identifiers)
-#        →  component embed wit/  →  component new
+#   asc (incremental runtime — the ui/tree object tree needs a heap)
+#   → patch-env-abort (the runtime's one import becomes an in-module
+#     unreachable, so the module stays import-free)
+#   → rename exports (world names with hyphens are not AS identifiers)
+#   → component embed wit/ → component new
 #
-# Requires the npm toolchain: `npm install` (assemblyscript) first.
+# Needs node + `npm install` (asc) and wabt on the PATH (the patch step).
 components-as:
 	@command -v node >/dev/null 2>&1 || { echo "components-as needs node/npm — run: npm install"; exit 1; }
 	@test -x node_modules/.bin/asc || { echo "assemblyscript not installed — run: npm install"; exit 1; }
@@ -113,8 +112,7 @@ web-as: components-as
 web-test: components
 	node web/selftest.mjs
 
-# The same selftest, pointed at the AssemblyScript core modules: the same
-# glue, the same assertions, a different producer language.
+# The same selftest against the AssemblyScript core modules.
 web-test-as: components-as
 	node web/selftest.mjs target/assembly/demo-counter-as.wasm target/assembly/demo-stopwatch-as.wasm
 

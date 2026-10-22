@@ -1,23 +1,21 @@
-//! The shared core of the waui wasmtime-based hosts.
+//! The shared core of the wasmtime hosts: contract-level code only.
 //!
-//! Everything in here is *contract-level* code: the bindings for the
-//! `waui:ui/app` world, the rebuild of the component's flat node list
-//! into a widget tree, and the retained tree the diff protocol applies
-//! against. The flat-list invariants all of these depend on (depth-first
-//! pre-order, parents precede children) are documented by the WIT contract
-//! itself, so their reference implementation lives in one place instead of
-//! being duplicated per host.
+//! - `bindgen!` for the `waui:ui/app` world
+//! - [`build_tree`]: the rebuild of the component's flat node list into a
+//!   widget tree
+//! - [`Retained`]: the retained node list the diff protocol applies against
 //!
-//! What stays per-host is the *renderer* — the mapping of this tree onto a
-//! particular toolkit (iced widgets, ratatui widgets, ASCII) — plus whatever
-//! host-local concerns the renderer adds (the TUI's focus ring, for example).
-//! A host that cannot express part of the contract (host-cli, which renders
-//! plain ASCII) simply draws less of it.
+//! The flat-list invariants these depend on (depth-first pre-order, parents
+//! precede children) are documented by the WIT itself, so their reference
+//! implementation lives here rather than in every host. What stays per-host
+//! is the renderer — the mapping of this tree onto a toolkit — plus
+//! host-local concerns (the TUI's focus ring). A host that cannot express
+//! part of the contract (host-cli, plain ASCII) draws less of it.
 //!
-//! The web host deliberately does *not* use this crate: it is JavaScript,
-//! and it re-implements the same rebuild in `web/app.js`. The WIT package —
-//! not this crate — is the artifact that must work across languages; the
-//! Rust hosts merely share their one reference implementation of it.
+//! The web host does not use this crate: it is JavaScript, and
+//! `web/app.js` re-implements the same rebuild. The WIT package is the
+//! cross-language artifact; this crate is the Rust hosts' shared
+//! implementation of it.
 
 wasmtime::component::bindgen!({
     world: "app",

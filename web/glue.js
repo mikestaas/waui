@@ -5,7 +5,7 @@
 // lifts for the wasmtime hosts — and speaks the calling convention
 // wit-bindgen 0.63 emits for wasm32-unknown-unknown:
 //
-//   view() -> list<node>     : `view() -> i32`, a pointer to a 16-byte
+//   view() -> list<node>     : `view() -> i32`, a pointer to an 8-byte
 //                              little-endian {ptr, len} descriptor; the
 //                              items are a contiguous run of 32-byte
 //                              nodes. The result is guest-allocated and
@@ -14,7 +14,7 @@
 //   changes() -> list<mut.>  : same shape; the items are 36-byte
 //                              mutations and the buffer is returned with
 //                              `cabi_post_changes(desc)`.
-//   on-click(id: u32)        : `on-click(i32)` — narrow values pass directly.
+//   on-click(id: u32)        : `on-click(i32)` — passes directly.
 //   on-tick()                : `on-tick()`.
 //   now() -> u64             : imported as `$root"."now"`, `() -> i64`
 //                              (JS BigInt). Provided unconditionally; the
@@ -95,7 +95,7 @@ export async function createApp(wasmBytes) {
       : { kind: 'text', id, parent, content: s, style };
   };
 
-  // Decode a `list` result: a 16-byte {ptr, len} descriptor, then `len`
+  // Decode a `list` result: an 8-byte {ptr, len} descriptor, then `len`
   // items of `stride` bytes, then hand the guest-allocated buffer back.
   const readList = (call, post, stride, item) => {
     const desc = call();

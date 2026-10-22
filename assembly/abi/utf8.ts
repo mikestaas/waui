@@ -67,8 +67,8 @@ export function writeInt32(dst: i32, v: i32, end: i32 = 2147483647): i32 {
     minus = 0;
     t = changetype<u32>(v);
   }
-  // Digits in reverse into arena scratch (10 bytes fits any u32), then
-  // emitted reversed.
+  // Digits in reverse into arena scratch (10 bytes fits any u32; 16 after
+  // 8-byte alignment), then emitted reversed.
   const scratch = arenaAlloc(16);
   let count = 0;
   do {
@@ -96,8 +96,8 @@ export function writeInt64(dst: i32, v: i64, end: i32 = 2147483647): i32 {
     minus = 0;
     t = changetype<u64>(v);
   }
-  // Digits in reverse into arena scratch (20 bytes fits any u64), then
-  // emitted reversed.
+  // Digits in reverse into arena scratch (20 bytes fits any u64; 32 after
+  // 8-byte alignment), then emitted reversed.
   const scratch = arenaAlloc(32);
   let count = 0;
   do {

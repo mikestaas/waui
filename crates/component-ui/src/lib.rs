@@ -1,33 +1,23 @@
-//! The component-side widget tree.
+//! The component-side widget tree: a nested [`Tree`] that authors write and
+//! [`lower`], which projects it into the contract's flat, pre-ordered node
+//! list — the mirror of `host-shared`'s `build_tree` on the other side of
+//! the ABI.
 //!
-//! The `waui:ui/widget` contract deliberately has *no* recursive types: the
-//! tree crosses the ABI as a flat, pre-ordered list of nodes, because that
-//! is what the hosts rebuild from. But authoring a UI *as that flat list* —
-//! hand-assigning parent ids, hand-ordering the pre-order walk, hand-
-//! tracking which node is the readout — is not a pleasant way to write a
-//! component. This crate supplies the ergonomic half:
+//! The WIT contract has no recursive types, so the tree crosses the ABI as
+//! a flat list; hand-assigning parent ids and pre-order is what authors
+//! would otherwise do.
 //!
-//! - a **nested** [`Tree`] that component authors write, and
-//! - [`lower`], which projects that nested tree into the contract's flat
-//!   list. The mirror of `host-shared`'s `build_tree` (list → tree) on the
-//!   other side of the ABI.
-//!
-//! This crate is deliberately *dependency-free* — no `wit-bindgen`, no WIT
-//! path in its build. Its token enums ([`Color`], [`Size`], [`Direction`])
-//! are plain Rust mirrors of the WIT contract's, and [`lower`] is generic
-//! over the output type: a component passes a projection that builds *its
-//! own* `wit-bindgen`-generated `Node` (each `generate!` call is
-//! crate-local, so the types this crate sees and the types the component's
-//! generated bindings see are different, even if identical in shape). The
-//! projection is the one seam between this library and the generated
-//! bindings; a component writes it once.
+//! This crate is dependency-free: its token enums ([`Color`], [`Size`],
+//! [`Direction`]) are plain Rust mirrors of the WIT contract's, and
+//! [`lower`] is generic over the output type. Each `wit-bindgen generate!`
+//! is crate-local, so a component passes a projection that builds *its own*
+//! generated `Node` — written once per component.
 //!
 //! **Identity.** A node's `id` (optional, mirroring the WIT) is its handle:
 //! what `on-click` targets and what the `changes` diff channel keys on. A
 //! node that is never clicked, diffed, or removed may omit its id. But a
 //! node must *have* one if it has children (its children name it in their
-//! `parent` field) or if its fate matters — [`lower`] asserts this in debug
-//! builds.
+//! `parent` field) — asserted in debug builds.
 
 /// A semantic color, mirroring `waui:ui/widget`'s `color` enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

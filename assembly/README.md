@@ -1,102 +1,69 @@
 # AssemblyScript components
 
-The two demos, rewritten in [AssemblyScript](https://www.assemblyscript.org/) —
-the same components as [`crates/demo-counter`](../crates/demo-counter/) and
-[`crates/demo-stopwatch`](../crates/demo-stopwatch/), speaking the same
-[`waui:ui/app`](../wit/app.wit) world through the same four hosts.
+The two demos in AssemblyScript: the same components as
+[`crates/demo-counter`](../crates/demo-counter/) and
+[`crates/demo-stopwatch`](../crates/demo-stopwatch/), the same
+[`waui:ui/app`](../wit/app.wit) world, the same four hosts.
 
-They exist to prove the one direction the Rust demos can't: that the
-contract is language-agnostic. No `wit-bindgen` exists for AssemblyScript, so
-there are **no generated bindings here at all** — the canonical ABI is written
-by hand against the WIT, and the WIT is the only shared spec. The claim,
-verified by the hosts rather than asserted: a different compiler, a different
-toolchain, the same component.
+There is no `wit-bindgen` for AssemblyScript, so the canonical ABI is
+hand-rolled against the WIT (`abi/`), and the lift is typed by an explicit
+`wasm-tools component embed wit/` step. The WIT file is the only shared spec.
 
-## The build pipeline
+## Build pipeline
 
 ```
 assembly/<demo>/index.ts
-  │  asc  (incremental runtime, -O --noAssert; static data from page 1)
+  │  asc  -O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2
   ▼
-target/assembly/<demo>.raw.wasm          (exports onclick / ontick; imports env.abort)
-  │  patch-env-abort.mjs  (env.abort → an in-module definition, same index)
+target/assembly/<demo>.raw.wasm        exports onclick/ontick; imports env.abort
+  │  node assembly/patch-env-abort.mjs
   ▼
 target/assembly/<demo>.core.wasm
-  │  rename-exports.mjs  (onclick → on-click, ontick → on-tick)
+  │  node assembly/rename-exports.mjs ... onclick=on-click ontick=on-tick
   ▼
-target/assembly/<demo>-as.wasm           (the web host consumes this one)
-  │  wasm-tools component embed wit/
-  ▼
-target/assembly/<demo>-as.embedded.wasm
-  │  wasm-tools component new
+target/assembly/<demo>-as.wasm         (the web host runs this one)
+  │  wasm-tools component embed wit/  →  wasm-tools component new
   ▼
 target/components/<demo>-as.component.wasm
 ```
 
-Each step exists for a specific reason:
+- **`asc`** compiles the sources. In 0.28.20 only two runtime names resolve
+  against the installed package: `stub` (no runtime, no heap) and
+  `incremental` (in-module TLSF allocator + conservative GC, one import:
+  `env.abort`, its OOM path). `static` and `full` fail with "runtime not
+  found". The tree needs a heap, so `incremental` is the one that works.
+  Also: asc hardcodes `.ts` as the source extension; `--memoryBase 65536`
+  moves static data to page 1, leaving page 0 for the arena and pool below.
+- **`patch-env-abort.mjs`** turns the `env.abort` import into an in-module
+  `unreachable` definition at the same function index, and renumbers every
+  later function reference. (Imports and defined functions share one index
+  space; deleting the import would renumber everything after it and corrupt
+  `call` sites in a way `WebAssembly.validate` cannot catch.) It round-trips
+  through WAT (wabt's `wasm2wat`/`wat2wasm`) and checks the result: valid,
+  no `env` imports, same export set. Both old and new bodies trap on OOM, so
+  behavior is unchanged. After the patch: the counter is import-free; the
+  stopwatch keeps only the world's own `$root.now`.
+- **`rename-exports.mjs`** rewrites two export names: the world spells them
+  `on-click`/`on-tick` (hyphens, which WIT uses verbatim as wasm export
+  names), and AssemblyScript identifiers cannot contain hyphens, so the demos
+  export `onclick`/`ontick` and are renamed after compilation.
+- **`component embed` + `new`** is the stand-in for Rust's `generate!`: the
+  WIT world is embedded into the core module as component-type metadata, and
+  the lift is typed against it.
+- **The hosts** are unchanged: the web host runs the renamed core module
+  through `glue.js`; the wasmtime hosts run the lifted component through
+  `host-shared`.
 
-- **`asc`** compiles the `.ts` sources. Two toolchain facts drive the flags.
-  First, asc 0.28 hardcodes `.ts` as its source extension (a `.as` entry
-  fails with a baffling `file.as.ts not found`). Second, the runtime: the
-  tree is a real nested *object* tree (see below), and objects need a heap —
-  which in 0.28.20 only `--runtime incremental` provides. The other documented
-  names do not resolve against the installed package (`static` and `full`
-  fail with "runtime not found"; `stub` strips the runtime entirely), so
-  *incremental is a necessity, not a choice*: an in-module heap (TLSF
-  allocator + conservative GC, all static within the module) in exchange for
-  a single `env.abort` import — its OOM path. The module still needs
-  `--memoryBase 65536 --initialMemory 2`: static data (string literals, the
-  app's state globals) and the runtime heap start at page 1, leaving page 0
-  for the arena and the label pool below.
-- **`patch-env-abort.mjs`** removes that one import so the lift stays
-  import-free. A component's *world* imports are part of its lifted type, so
-  an `env.abort` import would leave a stray, unsatisfiable import in the
-  component; and the WIT — the only shared spec — must not be bent to
-  accommodate a runtime detail. The patch converts the import into an
-  *in-module definition at the same function index* (body: `unreachable`)
-  and renumbers every later function reference to keep the indices stable —
-  removing an import outright would renumber all later functions and
-  silently corrupt the `call` sites, which validation cannot catch. It
-  round-trips through WAT (`wasm2wat`/`wat2wasm`, from
-  [wabt](https://github.com/WebAssembly/wabt)), re-inserting the converted
-  definition first (WAT requires imports before definitions), asserting the
-  computed old→new index map is total and injective, and `WebAssembly.validate`-ing
-  the result. The behavior is identical — both trap on OOM — and the web
-  host needs nothing either way. After the patch, the counter is fully
-  import-free; the stopwatch keeps only the world's own `$root.now`.
-  Wabt is a hard build dependency, the same class of system tool as
-  `wasm-tools`.
-- **`rename-exports.mjs`** rewrites two export names. The world spells them
-  `on-click` and `on-tick`; WIT uses those names verbatim as raw wasm export
-  names; and AssemblyScript identifiers cannot contain hyphens. A 60-line,
-  dependency-free export-section rewriter bridges that one gap.
-- **`component embed wit/`** is the explicit stand-in for `wit-bindgen`: it
-  embeds the WIT world as component-type metadata into the hand-rolled core
-  module, and **`component new`** reads that metadata to type the lift. Rust
-  gets this for free from `generate!`; a language without a bindings
-  generator must say, out loud, which world it implements. The WIT file is
-  the spec, machine-checked at lift time.
-- **The hosts** — iced, the TUI, the CLI, and the web page — need no changes
-  whatsoever. The web host runs the renamed *core* module (browsers
-  instantiate core wasm, not components) through the same unmodified
-  `glue.js`; the wasmtime hosts run the lifted component through the same
-  unmodified `host-shared`.
+`make components-as` runs all of it. Requires Node + `npm install` (asc) and
+wabt on the PATH (the patch step).
 
-`make components-as` runs all of it; `make web-test-as` and the `*_as`
-round-trip tests run the same checks the Rust components pass.
+## The tree layer (`ui/tree`)
 
-## The ergonomics layer (`ui/tree`)
-
-Where the Rust demos share `component-ui` (a nested `Tree` that lowers to the
-flat list), the AS demos share `ui/tree.ts` — the AssemblyScript twin of that
-crate, and structurally the *same thing*: nodes are `Widget` **objects on the
-runtime heap**, nested through their `children` arrays, exactly the shape of
-the Rust `Tree::column(vec![...])`. There is no slot table, so there is no
-slot cap — a tree's size is limited by the heap, not by an arbitrary 32. The
-demos author it the way the Rust demos do:
+Nodes are `Widget` **objects on the incremental runtime heap**, nested through
+their `children` arrays — the same shape as the Rust
+`Tree::column(vec![...])`. Tree size is limited only by the heap.
 
 ```ts
-/// The counter's whole UI, nested — the same expression the Rust demo writes.
 function tree(v: i32): Widget {
   return column([
     button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(INC),
@@ -106,126 +73,82 @@ function tree(v: i32): Widget {
 }
 ```
 
-The API: constructors `text(content, color, size)` / `button(label, color,
-size)` / `row(children)` / `column(children)`; chainable `id()` / `label()`
-/ `reserve()` / `style()` for the state-dependent bits; a plain field
-`children`. The id is set with the `.id(n)` builder — the twin of the Rust
-crate's, which returns `this` so a whole tree can be one nested expression.
-(AssemblyScript cannot name a field and a method alike the way Rust can, so
-the builder's storage field wears an underscore; address the id through
-`id()`. And as before: no lambdas, no overloads — the layer stays a handful
-of functions.)
+API:
 
-One behavior of the Rust model carries over exactly: **the tree is rebuilt
-from state on every export** — `view()` and `changes()` each call `tree(value)`,
-and state is the source of truth. The `Widget` objects are local to that
-call: the conservative GC reclaims them when the export returns, and the
-selftest's leak check (a few hundred rebuilds, zero page growth) is the
-proof that nothing lingers.
+- constructors: `text(content, color, size)`, `button(label, color, size)`,
+  `row(children)`, `column(children)`
+- chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`
+  (AssemblyScript cannot name a field and a method alike the way Rust can, so
+  the id's storage is `_id`; set it with `.id()`)
+- plain field: `children`
 
-**Diffing is the demo's bookkeeping, not the layer's** — as in the Rust
-demos. The layer provides only the tree, its pool, and the projection:
-`viewOf(root)` (the whole tree), `mutationsOf(root, parent)` (one subtree,
-as `changed` mutations with an explicit parent), `mutationsOfAll(roots,
-parent)` (the dirty set), and `count`. The counter keeps a single `dirty`
-flag; the stopwatch keeps the Rust demo's `AtomicU8` bit mask (bit 0 the
-readout, bit 1 the button). `changes()` is the bootstrap (the whole tree, on
-first contact) and then the re-projection of exactly the dirty subtrees.
+Behavior:
 
-### Labels, and the one place the heap must not rule
+- The demos rebuild the tree from state on every export, as the Rust demos do;
+  the `Widget` objects are local to the call and the conservative GC reclaims
+  them when the export returns.
+- **Labels** live in the static **label pool** (raw linear memory; the GC
+  never scans it). `label()` only stores the UTF-16 source; the UTF-8 pool
+  write happens at projection, keyed by the node's id. A partition is
+  allocated at the id's first build (sized by `reserve`), never moves or
+  grows, and later content overwrites it in place, clamped to fit. Why static:
+  a projected record carries a *pointer* into the label bytes and the host
+  keeps the result, so the bytes must outlive the tree. A labeled node without
+  an id gets a fresh partition per build — a changing label with no stable id
+  grows the pool until it is exhausted, which then renders an empty label
+  rather than corrupting memory.
+- **The diff is the demo's bookkeeping** (the counter: one `dirty` flag; the
+  stopwatch: the Rust demo's bit mask), as in Rust — `component-ui` provides
+  no diff machinery either. The layer provides only: `viewOf(root)`,
+  `mutationsOf(root, parent)`, `mutationsOfAll(roots, parent)`, `count(w)`.
 
-A projected record carries a *pointer* into a node's label bytes, and the
-host keeps that copy after the result is posted — so the bytes must outlive
-the tree that pointed at them, and the GC reclaims that tree on the way out.
-The label bytes therefore live in the **label pool**: raw linear memory the
-GC never scans, one partition per stable node id. `label()` only stores the
-UTF-16 source; the pool write happens at projection time, keyed by the node's
-*final* id — authoring order is free, exactly as in Rust, and there is no
-id-before-label footgun. A partition is allocated at the id's first sight
-(honoring `reserve`), and never moves or grows: later content overwrites it
-in place and clamps to fit, so `reserve` for the longest content you will
-show. A labeled node *without* an id gets a fresh partition per build — a
-changing label that never carries a stable id would grow the pool until it
-is exhausted, which then renders an empty label rather than corrupting
-anything.
-
-## The memory layout
-
-Page 0 keeps the two regions the projection needs, and the heap takes the
-rest:
+## Memory layout
 
 ```
-[0 ......... RESULT_END = 32 KiB)   the result arena — reset by cabi_post_*
-[RESULT_END ... 64 KiB)             the label pool — one partition per stable id
-[64 KiB ...)                        static data + the runtime heap, from page 1 up
+[0 ......... RESULT_END = 32 KiB)   result arena, reset by cabi_post_*
+[RESULT_END ... 64 KiB)             the label pool (above)
+[64 KiB ...)                        static data + runtime heap, from page 1
 ```
 
-A projected node points its string field into the pool — a region the host
-can read anyway (the web glue `subarray`s at the pointer; the Rust hosts
-read store memory) — while the result buffer stays a self-contained record
-run, so one `arenaReset()` in `cabi_post_*` is still the entire free and the
-selftest's leak check still holds. The counter's pool footprint after its
-first build is three partitions — 16 + 8 + 8 bytes; the tree's *structure*
-(a few hundred bytes of `Widget` objects per rebuild, on the heap) is
-invisible to the steady state: the counter idles at two pages, before and
-after a few hundred rebuilds.
+Every byte of a result comes from the arena, so one pointer reset in
+`cabi_post_*` is the whole free. The counter's pool holds 40 bytes after its
+first build (16 + 12 + 12); the module stays at its 2 initial pages across
+hundreds of rebuilds — the selftest's leak check allows <4 pages of growth
+over 120 calls.
 
 ## The ABI layer (`abi/`)
 
-Under the tree, the hand-rolled canonical ABI against the WIT:
+| file        | what it is                                                                                                                                     |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it)                              |
+| `utf8.ts`   | `writeUtf8` (surrogate pairs; stops at a whole character at the `end` bound) and `writeInt32`/`writeInt64` (a number that would not fit whole is not written) |
+| `node.ts`   | emitters for the ABI encodings: the 32-byte `node` record, the 36-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`)           |
+| `root.ts`   | the world's import side: `now` as `@external('$root', 'now')`                                                                                   |
 
-| file            | what it is |
-| --------------- | ---------- |
-| `arena.ts`      | the bump arena (page 0) + the world's `cabi_post_*` functions, which reset it — one result's buffers are the only live allocations, so a pointer-reset *is* the free: zero net growth across repeated `view()`/`changes()` calls, no GC, deterministic |
-| `utf8.ts`       | byte-oriented emitters (`writeUtf8` incl. surrogate pairs, `writeInt32`/`writeInt64`) that write straight into a buffer — AssemblyScript strings are UTF-16, the ABI's are UTF-8 bytes; an opt-in `end` bound stops at a whole character / whole number |
-| `node.ts`       | emitters for the ABI encodings of the `widget` types: the 32-byte `node` record, the 36-byte `mutation` record, and the `{ptr, len}` list descriptor (`makeList`) |
-| `root.ts`       | the world's import side: `now` as a raw `@external('$root', 'now')` |
+AS strings are UTF-16; the ABI's are UTF-8 bytes, converted at write time.
+The demos' output is byte-identical to the Rust demos' — the selftest asserts
+it.
 
-The tree layer projects its objects through these same emitters, so the
-demos' output is byte-identical to the Rust demos' — the selftest is the
-proof — and the post functions are still the only free.
+## Things that will bite you (asc 0.28.20)
 
-## Things that will bite you
-
-- **`Map.get` throws on an absent key.** Unlike JavaScript, the
-  AssemblyScript stdlib cannot represent `undefined`, so `Map.get` on a
-  missing key *throws* — and a throw in wasm is an `abort` trap. (It is
-  `has(key) ? get(key) : …`, always: `has` is a pure bool.) The pool
-  registry's lookup does exactly that; a JS-muscle-memory `get` is a
-  guaranteed trap on the first build.
-- **Conservative GC keeps anything a module global references.** This is
-  the pool retention rule, working as intended: the id→partition registry is
-  a module-level `Map`, so every partition it ever allocated lives for the
-  module's lifetime, and a partition never moves. It is also the trap: a
-  `Widget` parked in a module global would pin its whole subtree forever.
-  The demos keep trees local to the call that built them.
-- **`incremental` is the only runtime with a heap in asc 0.28.20** (see the
-  pipeline), and its one `env.abort` import costs a build step — the patch.
-  If a future asc ships `full`/`static` properly, the flag can move; the
-  patch stays until the OOM path stops importing.
-- **Precedence, twice.** AssemblyScript (like JavaScript) binds `!=` tighter
-  than `&`, so `d & BIT != 0` silently tests the *constant* side — the
-  stopwatch's bit tests are parenthesized on purpose. And it binds `<`
-  tighter than `?:`, so an unparenthesized `… != 0 ? 36 : 32` parses as a
-  ternary *as* the condition. `lower` therefore computes its stride and its
-  bound into scalars *first* — the same shape that, once, ran a zero-clear
-  off the end of memory.
-- **No `undefined`, no flow narrowing.** Use `null`; and a nullable variable
-  assigned inside an `if` is still nullable after it, so branches end in
-  plain scalars (the `materializeLabel` pattern) rather than trusting a
-  narrowed type.
-- **`static` is a class-field keyword** in 0.28 at module scope; module
-  globals are `var`.
-- **`var x = <non-literal const expression>`** compiles to a zeroed `mut`
-  global plus a start-section init thunk (and, in `-O0` builds, a funcref
-  table) — the value is only final *after* instantiation's start runs.
-  (Lifted components may have no start of their own, which is why the demos
-  build lazily on first export rather than in one.)
-- String literals live in the data segment as UTF-16 (from page 1 up, thanks
-  to `--memoryBase 65536`); the `utf8.ts` emitters do the UTF-8 conversion
-  at write time.
-- The pool is allocated and never freed: a partition's first allocation
-  sizes it (honoring `reserve`), later content clamps. The result arena is
-  capped at `RESULT_END`, the pool at the 64 KiB page edge — an over-big
-  request renders an empty label rather than walk into anything — and the
-  selftest's leak check is the other backstop.
+- **`Map.get` on an absent key throws** (the stdlib cannot represent
+  `undefined`), and a throw in wasm is an `abort` trap. Always
+  `has(key) ? get(key) : …`.
+- **The conservative GC keeps anything a module global references** for the
+  module's lifetime. That is how the pool registry keeps partitions stable
+  across rebuilds; it also means a `Widget` parked in a module global pins its
+  whole subtree forever. The demos keep trees local to the call that built
+  them.
+- **Precedence is JavaScript's**: `!=` binds tighter than `&` (so
+  `d & BIT != 0` tests the constant — parenthesize), and `<` binds tighter
+  than `?:` (so an unparenthesized `… != 0 ? 36 : 32` parses as a ternary *as*
+  the condition, which never terminates a loop). Compute such values into
+  locals first, as `lower` does.
+- **No `undefined`** (use `null`), **no flow narrowing** (a nullable variable
+  assigned inside an `if` is still nullable after it; end branches in scalars).
+- **`static` is a class-field keyword** at module scope; module globals are
+  `var`.
+- **`var x = <non-literal expression>`** compiles to a zeroed global plus a
+  start-section init thunk; the value is final only after the start runs.
+- **String literals are UTF-16** in the data segment (page 1 up, via
+  `--memoryBase 65536`); the `utf8.ts` emitters convert at write time.

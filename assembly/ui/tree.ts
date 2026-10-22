@@ -1,13 +1,11 @@
-// The ergonomic half of the component side — the AssemblyScript twin of the
-// Rust `component-ui` crate: a widget tree an author writes, projected into
-// the contract's flat, pre-ordered node list (and its diff channel) by the
-// emitters in `../abi`.
+// The AssemblyScript twin of the Rust `component-ui` crate: the widget tree
+// an author writes, projected through the `../abi` emitters into the
+// contract's flat, pre-ordered node list and its diff channel.
 //
-// The tree is a real nested *value*, exactly like the Rust crate's: nodes are
-// `Widget` objects on the incremental runtime's heap (TLSF allocator +
-// conservative GC, all in-module), nested through their `children` arrays.
-// There is no slot table, so there is no slot cap — a tree's size is limited
-// only by the heap — and the demos author it the way the Rust demos do:
+// Nodes are `Widget` objects on the incremental runtime heap (in-module
+// TLSF allocator + conservative GC), nested through their `children` arrays —
+// the same shape as the Rust `Tree::column(vec![...])`. Tree size is limited
+// only by the heap:
 //
 //   column([
 //     button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(2),
@@ -15,37 +13,27 @@
 //     button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(4),
 //   ]).id(1);
 //
-// One price of the real heap: the module is no longer import-free. The
-// incremental runtime pulls in a single `env.abort` import (its OOM path),
-// which `../patch-env-abort.mjs` replaces with an in-module `unreachable`
-// after compilation — behaviorally identical (both trap), so the lifted
-// component is import-free again and the WIT world stays untouched.
+// The heap costs one import: the incremental runtime pulls in `env.abort`
+// (its OOM path), which `../patch-env-abort.mjs` replaces with an in-module
+// `unreachable` after compilation, so the lifted component is import-free.
 //
-// Page 0 keeps two bump regions (see `abi/arena`):
+// Page 0 (see `abi/arena`):
 //
-//   [0 ......... RESULT_END)   result arena — reset by `cabi_post_*`
-//   [RESULT_END . 64 KiB)      label pool — one partition per stable id
+//   [0 ......... RESULT_END)   result arena, reset by cabi_post_*
+//   [RESULT_END . 64 KiB)      label pool, one partition per stable id
 //
-// The tree's *structure* lives on the heap (page 1 and up), but a node's
-// label *bytes* must outlive the tree: a projected record carries a
-// *pointer* into them, and the tree is rebuilt from state on every export —
-// bytes that died with the previous tree would dangle in the host's copy of
-// the result. The pool is raw linear memory the GC never touches, so a
-// partition stays put for the module's lifetime. A node that keeps its id
-// claims the same partition on every rebuild: the first allocation sizes it
-// (honoring `reserve`), later writes clamp to fit — reserve for the longest
-// content you will show. A labeled node *without* an id gets a fresh
-// partition per build; a changing label that never carries a stable id would
-// grow the pool until it is exhausted (which then renders an empty label
-// rather than corrupting anything).
+// A projected record carries a *pointer* into a node's label bytes, and the
+// host keeps the result, so the bytes must outlive the tree (which is
+// rebuilt from state on every export and the GC reclaims it). The pool is
+// raw linear memory the GC never scans: a partition is allocated at the id's
+// first build, sized by `reserve`, never moves or grows, and later content
+// overwrites it in place, clamped to fit. A labeled node without an id gets
+// a fresh partition per build.
 //
-// The diff channel follows the Rust demos exactly: the *demo* owns the dirty
-// state (a flag, or a small bit mask over its state-dependent nodes) and
-// re-projects the dirty subtrees from state. The bookkeeping is the demo's,
-// not the layer's — the Rust `component-ui` crate provides no diff
-// machinery either, only the tree and its projection. `view()` is always
-// the full truth; `changes()` is the bootstrap (the whole tree, on first
-// contact) and then the demo's diff.
+// The diff is the demo's bookkeeping (a flag or a bit mask over its
+// state-dependent nodes), as in the Rust demos; `component-ui` provides no
+// diff machinery either. This module provides the tree, the pool, and the
+// projection (`viewOf`, `mutationsOf`, `mutationsOfAll`, `count`).
 
 import { arenaAlloc, RESULT_END } from '../abi/arena';
 import {
@@ -72,10 +60,8 @@ class PoolBuf {
   cap: i32 = 0; // the partition's size in bytes (and the write clamp)
 }
 
-// A node id → its label partition. Retained by this module global for the
-// module's lifetime, so a buffer stays put across rebuilds. (An instance of
-// `Map` is a runtime object — fine: these components now compile with the
-// incremental runtime, which has a heap.)
+// Node id → its label partition. A module global, so the conservative GC
+// keeps every partition for the module's lifetime: stable across rebuilds.
 var pool = new Map<i32, PoolBuf>();
 var poolCur = RESULT_END; // bump cursor, RESULT_END → the 64 KiB page edge
 
@@ -93,13 +79,12 @@ function poolAlloc(n: i32): i32 {
 
 // ------------------------------------------------------------------ the tree
 
-/// One node of a widget tree: a real object on the runtime heap, nested via
+/// One node of a widget tree: an object on the runtime heap, nested via
 /// `children` — the AS twin of the Rust crate's `Tree`.
 export class Widget {
-  /// The contract's node id (0 = none) — the storage behind the `id()`
+  /// The contract's node id (0 = none); the storage behind the `id()`
   /// builder. Rust lets a field and a method share a name; AssemblyScript
-  /// does not, so the builder's storage wears an underscore and is
-  /// addressed through `id()`.
+  /// does not, so address the id through `id()`.
   _id: i32 = 0;
   /// One of the `abi/node` TAG_* values.
   kind: i32;
@@ -206,19 +191,13 @@ function materializeLabel(w: Widget): void {
     w.labelLen = 0;
     return;
   }
-  // A UTF-16 char takes at most 4 UTF-8 bytes, plus headroom; the author's
+  // A UTF-16 char is at most 4 UTF-8 bytes, plus headroom; the author's
   // reserve may ask for more.
   const content = src.length * 4 + 8;
   const want = w.labelCap > content ? w.labelCap : content;
-  // (AssemblyScript does no flow narrowing: a `PoolBuf | null` variable
-  // assigned inside an `if` is still nullable after it, so the branch ends
-  // in plain scalars.)
-  //
-  // The lookup must go through `has` first: unlike JavaScript, the
-  // AssemblyScript stdlib's `Map.get` *throws* on an absent key (it cannot
-  // represent `undefined`) — a throw is an `abort` trap in wasm, so a
-  // missing key would kill the call. `has` is a pure bool; `get` on a key
-  // `has` confirmed is safe.
+  // `Map.get` throws on an absent key (the stdlib cannot represent
+  // `undefined`, and a throw in wasm is an `abort` trap), so the lookup goes
+  // through `has` first. No flow narrowing, so the branch ends in scalars.
   let off: i32;
   let cap: i32;
   if (w._id > 0 && pool.has(w._id)) {
@@ -255,18 +234,15 @@ export function count(w: Widget): i32 {
   return n;
 }
 
-/// Emit `w` and its descendants as records at `buf + off * stride`, in the
-/// contract's depth-first pre-order. With `isMutation`, each record is a
-/// 36-byte `changed` mutation (the tag word in front of the 32-byte node).
-/// Returns the next offset.
-///
-/// The walk stops when it reaches the arena's cap instead of running on:
-/// the records would otherwise walk into the label pool. A too-big tree
-/// therefore renders *less* rather than corrupts.
+/// Emit `w` and its descendants as records at `buf + off * stride`, in
+/// depth-first pre-order. With `isMutation`, each record is a 36-byte
+/// `changed` mutation (the tag word in front of the 32-byte node). Returns
+/// the next offset; stops at the arena's cap rather than walk into the label
+/// pool.
 function lower(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32 {
-  // The stride must be computed first: AssemblyScript (like JavaScript)
-  // binds `<` tighter than `?:`, so an unparenthesized `buf + off *
-  // isMutation != 0 ? 36 : 32` would parse as a ternary-as-condition.
+  // Computed first: AS (like JS) binds `<` tighter than `?:`, so an
+  // unparenthesized `buf + off * isMutation != 0 ? 36 : 32` would parse as
+  // a ternary *as* the comparison.
   const stride = isMutation != 0 ? 36 : 32;
   const rec = buf + off * stride;
   if (rec + stride > RESULT_END) return off;
@@ -295,8 +271,7 @@ function lower(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32
 }
 
 /// Project the whole tree as a `view()` result: every node as a 32-byte node
-/// record in depth-first pre-order, behind a list descriptor. Always the
-/// full truth.
+/// record in depth-first pre-order, behind a list descriptor.
 export function viewOf(root: Widget): i32 {
   const n = count(root);
   const buf = arenaAlloc(n * 32);
@@ -305,8 +280,8 @@ export function viewOf(root: Widget): i32 {
 }
 
 /// Project one subtree as `changed` mutations (the diff channel). Its root's
-/// parent is stated explicitly: projected standing alone, it must name its
-/// box (the `view` walk would otherwise state it for it).
+/// parent is stated explicitly: projected standing alone, the node must name
+/// its box (inside `view`, the walk states it).
 export function mutationsOf(root: Widget, parent: i32): i32 {
   const n = count(root);
   const buf = arenaAlloc(n * 36);
