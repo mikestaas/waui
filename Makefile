@@ -25,7 +25,10 @@ components:
 # module (`wasm-tools component embed`) and then lifted (`component new`).
 # The WIT is the only shared spec — the compiler is the only tool.
 #
-#   asc  →  rename exports (world names with hyphens are not AS identifiers)
+#   asc  (incremental runtime — the ui/tree object tree needs a heap)
+#        →  patch-env-abort (the runtime's one import becomes unreachable,
+#           so the module is import-free again)
+#        →  rename exports (world names with hyphens are not AS identifiers)
 #        →  component embed wit/  →  component new
 #
 # Requires the npm toolchain: `npm install` (assemblyscript) first.
@@ -36,8 +39,9 @@ components-as:
 	@for c in $(AS_COMPONENTS); do \
 		echo "==> building $$c (assemblyscript)"; \
 		npx asc assembly/$$c/index.ts --outFile target/assembly/$$c.raw.wasm \
-			-O --noAssert --runtime stub --memoryBase 65536 --initialMemory 2 || exit 1; \
-		node assembly/rename-exports.mjs target/assembly/$$c.raw.wasm target/assembly/$$c-as.wasm \
+			-O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2 || exit 1; \
+		node assembly/patch-env-abort.mjs target/assembly/$$c.raw.wasm target/assembly/$$c.core.wasm || exit 1; \
+		node assembly/rename-exports.mjs target/assembly/$$c.core.wasm target/assembly/$$c-as.wasm \
 			onclick=on-click ontick=on-tick || exit 1; \
 		wasm-tools component embed wit/ target/assembly/$$c-as.wasm \
 			--output target/assembly/$$c-as.embedded.wasm || exit 1; \

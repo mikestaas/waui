@@ -106,7 +106,8 @@ static RUST_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static AS_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Build the AssemblyScript counter and lift it:
-/// asc -> export rename -> component embed (the WIT) -> component new.
+/// asc (the incremental runtime) -> the `env.abort` patch -> export rename
+/// -> component embed (the WIT) -> component new.
 /// (Callers hold `AS_BUILD_LOCK` across the build *and* the load, so a
 /// sibling test cannot lift over the file while we read it.)
 fn build_component_as() {
@@ -117,7 +118,8 @@ fn build_component_as() {
         .expect("failed to create target/components");
 
     let raw = root.join("target/assembly/demo-counter.raw.wasm");
-    let core = root.join("target/assembly/demo-counter-as.wasm");
+    let core = root.join("target/assembly/demo-counter.core.wasm");
+    let renamed = root.join("target/assembly/demo-counter-as.wasm");
     let embedded = root.join("target/assembly/demo-counter-as.embedded.wasm");
     let out = component_path_as();
 
@@ -125,17 +127,25 @@ fn build_component_as() {
     {
         let mut c = Command::new("npx");
         c.args(["asc", "assembly/demo-counter/index.ts", "--outFile", raw.to_str().unwrap()]);
-        c.args(["-O", "--noAssert", "--runtime", "stub", "--memoryBase", "65536", "--initialMemory", "2"]);
+        c.args(["-O", "--noAssert", "--runtime", "incremental", "--memoryBase", "65536", "--initialMemory", "2"]);
+        steps.push(c);
+    }
+    {
+        // The incremental runtime's one import (`env.abort`, its OOM path)
+        // is replaced with an in-module `unreachable` so the lifted
+        // component is import-free again (see assembly/patch-env-abort.mjs).
+        let mut c = Command::new("node");
+        c.args(["assembly/patch-env-abort.mjs", raw.to_str().unwrap(), core.to_str().unwrap()]);
         steps.push(c);
     }
     {
         let mut c = Command::new("node");
-        c.args(["assembly/rename-exports.mjs", raw.to_str().unwrap(), core.to_str().unwrap(), "onclick=on-click", "ontick=on-tick"]);
+        c.args(["assembly/rename-exports.mjs", core.to_str().unwrap(), renamed.to_str().unwrap(), "onclick=on-click", "ontick=on-tick"]);
         steps.push(c);
     }
     {
         let mut c = Command::new("wasm-tools");
-        c.args(["component", "embed", "wit/", core.to_str().unwrap(), "--output", embedded.to_str().unwrap()]);
+        c.args(["component", "embed", "wit/", renamed.to_str().unwrap(), "--output", embedded.to_str().unwrap()]);
         steps.push(c);
     }
     {

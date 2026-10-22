@@ -16,9 +16,12 @@ toolchain, the same component.
 
 ```
 assembly/<demo>/index.ts
-  │  asc  (stub runtime, -O; arena in page 0, static data from page 1)
+  │  asc  (incremental runtime, -O --noAssert; static data from page 1)
   ▼
-target/assembly/<demo>.raw.wasm          (exports onclick / ontick)
+target/assembly/<demo>.raw.wasm          (exports onclick / ontick; imports env.abort)
+  │  patch-env-abort.mjs  (env.abort → an in-module definition, same index)
+  ▼
+target/assembly/<demo>.core.wasm
   │  rename-exports.mjs  (onclick → on-click, ontick → on-tick)
   ▼
 target/assembly/<demo>-as.wasm           (the web host consumes this one)
@@ -32,13 +35,37 @@ target/components/<demo>-as.component.wasm
 
 Each step exists for a specific reason:
 
-- **`asc`** compiles the `.ts` sources. Two toolchain facts drive the flags:
-  asc 0.28 hardcodes `.ts` as its source extension (a `.as` entry fails with
-  a baffling `file.as.ts not found`), and `--runtime stub` strips the AS
-  runtime entirely — no allocator, no GC, no `env.abort` import. What the
-  module *does* need is `--memoryBase 65536 --initialMemory 2`: static data
-  (string literals, the app's state globals) starts at page 1, leaving page 0
-  for the arena below.
+- **`asc`** compiles the `.ts` sources. Two toolchain facts drive the flags.
+  First, asc 0.28 hardcodes `.ts` as its source extension (a `.as` entry
+  fails with a baffling `file.as.ts not found`). Second, the runtime: the
+  tree is a real nested *object* tree (see below), and objects need a heap —
+  which in 0.28.20 only `--runtime incremental` provides. The other documented
+  names do not resolve against the installed package (`static` and `full`
+  fail with "runtime not found"; `stub` strips the runtime entirely), so
+  *incremental is a necessity, not a choice*: an in-module heap (TLSF
+  allocator + conservative GC, all static within the module) in exchange for
+  a single `env.abort` import — its OOM path. The module still needs
+  `--memoryBase 65536 --initialMemory 2`: static data (string literals, the
+  app's state globals) and the runtime heap start at page 1, leaving page 0
+  for the arena and the label pool below.
+- **`patch-env-abort.mjs`** removes that one import so the lift stays
+  import-free. A component's *world* imports are part of its lifted type, so
+  an `env.abort` import would leave a stray, unsatisfiable import in the
+  component; and the WIT — the only shared spec — must not be bent to
+  accommodate a runtime detail. The patch converts the import into an
+  *in-module definition at the same function index* (body: `unreachable`)
+  and renumbers every later function reference to keep the indices stable —
+  removing an import outright would renumber all later functions and
+  silently corrupt the `call` sites, which validation cannot catch. It
+  round-trips through WAT (`wasm2wat`/`wat2wasm`, from
+  [wabt](https://github.com/WebAssembly/wabt)), re-inserting the converted
+  definition first (WAT requires imports before definitions), asserting the
+  computed old→new index map is total and injective, and `WebAssembly.validate`-ing
+  the result. The behavior is identical — both trap on OOM — and the web
+  host needs nothing either way. After the patch, the counter is fully
+  import-free; the stopwatch keeps only the world's own `$root.now`.
+  Wabt is a hard build dependency, the same class of system tool as
+  `wasm-tools`.
 - **`rename-exports.mjs`** rewrites two export names. The world spells them
   `on-click` and `on-tick`; WIT uses those names verbatim as raw wasm export
   names; and AssemblyScript identifiers cannot contain hyphens. A 60-line,
@@ -62,53 +89,83 @@ round-trip tests run the same checks the Rust components pass.
 
 Where the Rust demos share `component-ui` (a nested `Tree` that lowers to the
 flat list), the AS demos share `ui/tree.ts` — the AssemblyScript twin of that
-crate. The demos are state and event handling plus a tree written once
-through a small scope-based API; updates afterwards address nodes by their
-slot handle:
+crate, and structurally the *same thing*: nodes are `Widget` **objects on the
+runtime heap**, nested through their `children` arrays, exactly the shape of
+the Rust `Tree::column(vec![...])`. There is no slot table, so there is no
+slot cap — a tree's size is limited by the heap, not by an arbitrary 32. The
+demos author it the way the Rust demos do:
 
 ```ts
-beginColumn();            // open a scope — the indentation is the tree
-id(1);
-beginButton();
-id(2);
-label('+');               // reserve + write; reserve once for the longest
-style(C_POS, SIZE_MEDIUM);// you will show, update in place
-...
-end();                    // close the scope
+/// The counter's whole UI, nested — the same expression the Rust demo writes.
+function tree(v: i32): Widget {
+  const inc = button('+', COLOR_POSITIVE, SIZE_MEDIUM);
+  inc.id = INC;
+  const dec = button('-', COLOR_NEGATIVE, SIZE_MEDIUM);
+  dec.id = DEC;
+  const box = column([inc, readout(v), dec]);
+  box.id = BOX;
+  return box;
+}
 ```
 
-The API is `begin*`/`end` for structure, `id`/`color`/`size`/`style`/
-`label`/`reserve` at build time, `set*`/`append*`/`labelReset`/`mark`/
-`setColor`/`setSize` at runtime, and `view()`/`changes()` for the projection.
-Deliberately no lambdas and no overloads: both pull runtime allocation this
-toolchain does not have.
+The API: constructors `text(content, color, size)` / `button(label, color,
+size)` / `row(children)` / `column(children)`; fluent `label()` / `reserve()`
+/ `style()` for the state-dependent bits; plain fields `id` / `children`.
+(No lambdas, no overloads: the layer stays a handful of functions.)
 
-**One deliberate difference from the Rust layer, forced by the toolchain:
-the tree is not a nested *value*.** `--runtime stub` strips the AS runtime —
-no heap, no allocator — so there is nothing to nest with. The tree is a
-table of fixed-size *slots* (10 words each: kind, id, parent, color, size,
-direction, label pointer/length/capacity) in the state region, built once
-through the scopes and addressed by slot handle afterwards. Same contract,
-same output, a per-language ergonomics shape: the languages have different
-memory models, so the *form* of the tree differs even where the *role* is
-the same.
+One behavior of the Rust model carries over exactly: **the tree is rebuilt
+from state on every export** — `view()` and `changes()` each call `tree(value)`,
+and state is the source of truth. The `Widget` objects are local to that
+call: the conservative GC reclaims them when the export returns, and the
+selftest's leak check (a few hundred rebuilds, zero page growth) is the
+proof that nothing lingers.
 
-**Page 0 is split in two.** Both halves are bump regions; neither needs a
-runtime:
+**Diffing is the demo's bookkeeping, not the layer's** — as in the Rust
+demos. The layer provides only the tree, its pool, and the projection:
+`viewOf(root)` (the whole tree), `mutationsOf(root, parent)` (one subtree,
+as `changed` mutations with an explicit parent), `mutationsOfAll(roots,
+parent)` (the dirty set), and `count`. The counter keeps a single `dirty`
+flag; the stopwatch keeps the Rust demo's `AtomicU8` bit mask (bit 0 the
+readout, bit 1 the button). `changes()` is the bootstrap (the whole tree, on
+first contact) and then the re-projection of exactly the dirty subtrees.
+
+### Labels, and the one place the heap must not rule
+
+A projected record carries a *pointer* into a node's label bytes, and the
+host keeps that copy after the result is posted — so the bytes must outlive
+the tree that pointed at them, and the GC reclaims that tree on the way out.
+The label bytes therefore live in the **label pool**: raw linear memory the
+GC never scans, one partition per stable node id. `label()` only stores the
+UTF-16 source; the pool write happens at projection time, keyed by the node's
+*final* id — authoring order is free, exactly as in Rust, and there is no
+id-before-label footgun. A partition is allocated at the id's first sight
+(honoring `reserve`), and never moves or grows: later content overwrites it
+in place and clamps to fit, so `reserve` for the longest content you will
+show. A labeled node *without* an id gets a fresh partition per build — a
+changing label that never carries a stable id would grow the pool until it
+is exhausted, which then renders an empty label rather than corrupting
+anything.
+
+## The memory layout
+
+Page 0 keeps the two regions the projection needs, and the heap takes the
+rest:
 
 ```
 [0 ......... RESULT_END = 32 KiB)   the result arena — reset by cabi_post_*
-[RESULT_END ... 64 KiB)             the state region — slot table + label pool,
-                                    built once, never freed
+[RESULT_END ... 64 KiB)             the label pool — one partition per stable id
+[64 KiB ...)                        static data + the runtime heap, from page 1 up
 ```
 
-A projected node points its string field into the label pool — a region the
-host can read anyway (the web glue `subarray`s at the pointer; the Rust hosts
+A projected node points its string field into the pool — a region the host
+can read anyway (the web glue `subarray`s at the pointer; the Rust hosts
 read store memory) — while the result buffer stays a self-contained record
-run, so one `arenaReset()` is still the entire free and the selftest's leak
-check still holds. The tree's footprint is static: at most 32 slots
-(1.25 KiB) plus the label capacity the author reserved — trivial against the
-32 KiB halves.
+run, so one `arenaReset()` in `cabi_post_*` is still the entire free and the
+selftest's leak check still holds. The counter's pool footprint after its
+first build is three partitions — 16 + 8 + 8 bytes; the tree's *structure*
+(a few hundred bytes of `Widget` objects per rebuild, on the heap) is
+invisible to the steady state: the counter idles at two pages, before and
+after a few hundred rebuilds.
 
 ## The ABI layer (`abi/`)
 
@@ -121,27 +178,39 @@ Under the tree, the hand-rolled canonical ABI against the WIT:
 | `node.ts`       | emitters for the ABI encodings of the `widget` types: the 32-byte `node` record, the 36-byte `mutation` record, and the `{ptr, len}` list descriptor (`makeList`) |
 | `root.ts`       | the world's import side: `now` as a raw `@external('$root', 'now')` |
 
-The tree layer projects its slots through these same emitters, so the demos'
-output is byte-identical to what they emitted by hand before the layer
-existed — the selftest is the proof — and the post functions are still the
-only free.
+The tree layer projects its objects through these same emitters, so the
+demos' output is byte-identical to the Rust demos' — the selftest is the
+proof — and the post functions are still the only free.
 
 ## Things that will bite you
 
+- **`Map.get` throws on an absent key.** Unlike JavaScript, the
+  AssemblyScript stdlib cannot represent `undefined`, so `Map.get` on a
+  missing key *throws* — and a throw in wasm is an `abort` trap. (It is
+  `has(key) ? get(key) : …`, always: `has` is a pure bool.) The pool
+  registry's lookup does exactly that; a JS-muscle-memory `get` is a
+  guaranteed trap on the first build.
+- **Conservative GC keeps anything a module global references.** This is
+  the pool retention rule, working as intended: the id→partition registry is
+  a module-level `Map`, so every partition it ever allocated lives for the
+  module's lifetime, and a partition never moves. It is also the trap: a
+  `Widget` parked in a module global would pin its whole subtree forever.
+  The demos keep trees local to the call that built them.
+- **`incremental` is the only runtime with a heap in asc 0.28.20** (see the
+  pipeline), and its one `env.abort` import costs a build step — the patch.
+  If a future asc ships `full`/`static` properly, the flag can move; the
+  patch stays until the OOM path stops importing.
 - **Precedence, twice.** AssemblyScript (like JavaScript) binds `!=` tighter
   than `&`, so `d & BIT != 0` silently tests the *constant* side — the
   stopwatch's bit tests are parenthesized on purpose. And it binds `<`
-  tighter than `?:`, so `i < flag != 0 ? 36 : 32` parses as
-  `(i < flag) != 0 ? 36 : 32`: a ternary *as* the loop condition, which is
-  never zero, so the loop never exits. That is how the zero-clear in
-  `ui/tree.ts` runs off the end of memory when unparenthesized (it now
-  computes the bound first); the same shape that once escaped the selftest
-  on a brand-new file.
-- **Index access into a typed array** (read *or* write) under
-  `--runtime stub --noAssert` makes asc pull the AS runtime back in as an
-  `env.abort` import, and the lift then fails. Everything in these layers is
-  raw `store`/`load` at computed offsets for that reason — including the
-  tree, which is a slot table rather than an `Array`.
+  tighter than `?:`, so an unparenthesized `… != 0 ? 36 : 32` parses as a
+  ternary *as* the condition. `lower` therefore computes its stride and its
+  bound into scalars *first* — the same shape that, once, ran a zero-clear
+  off the end of memory.
+- **No `undefined`, no flow narrowing.** Use `null`; and a nullable variable
+  assigned inside an `if` is still nullable after it, so branches end in
+  plain scalars (the `materializeLabel` pattern) rather than trusting a
+  narrowed type.
 - **`static` is a class-field keyword** in 0.28 at module scope; module
   globals are `var`.
 - **`var x = <non-literal const expression>`** compiles to a zeroed `mut`
@@ -152,10 +221,8 @@ only free.
 - String literals live in the data segment as UTF-16 (from page 1 up, thanks
   to `--memoryBase 65536`); the `utf8.ts` emitters do the UTF-8 conversion
   at write time.
-- The state region is built once and never freed; label updates overwrite
-  their reserved buffer in place, and a buffer shorter than the new content
-  clamps. Size the reservation for the *longest* string you will show.
-- The result arena is capped at `RESULT_END` (a soft backstop: an over-big
-  allocation clamps instead of walking into the state region), and the label
-  pool is capped at the 64 KiB page edge; the selftest's leak check is the
-  other backstop.
+- The pool is allocated and never freed: a partition's first allocation
+  sizes it (honoring `reserve`), later content clamps. The result arena is
+  capped at `RESULT_END`, the pool at the 64 KiB page edge — an over-big
+  request renders an empty label rather than walk into anything — and the
+  selftest's leak check is the other backstop.
