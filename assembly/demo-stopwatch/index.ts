@@ -4,10 +4,13 @@
 // Exercises the world's import side: the component polls `now()` (a host
 // clock) and renders elapsed time, driven by the host's `on-tick`.
 //
-// The diff is state-dependent, as in the Rust original: while running, every
-// tick marks the readout dirty; while paused, nothing. The marks live on the
-// two state-dependent nodes — the readout and the button, held as persistent
-// objects — and `changes` projects the stale ones from state.
+// The diff is state-dependent, as in the Rust original: while running, the
+// readout's value moves with the clock, so each `changes` reports it; while
+// paused, nothing does. The `label()`/`style()` modifiers mark a node stale
+// only when its value actually changes, and the two state-dependent nodes —
+// the readout and the button — are persistent objects so the marks survive
+// between exports. The handlers mutate state and nothing else; `changes` is
+// a single `diffOf` call.
 //
 // The UI is a nested tree in `../ui/tree`, rebuilt from state per export;
 // the elapsed reading is sampled once, so one exported list never mixes two
@@ -112,13 +115,12 @@ export function onclick(id: i32): void { // → `on-click` after the export rena
     start = t;
     running = 1;
   }
-  // Starting and stopping both change the readout (its color) and the
-  // button (its label and color).
-  readout.dirty = 1;
-  control.dirty = 1;
+  // The state transition is all the click does: the next build re-derives
+  // both nodes, and the modifiers mark each stale only if its value changed.
 }
 
-export function ontick(): void { // → `on-tick`
-  // The readout advances only while running.
-  if (running != 0) readout.dirty = 1;
-}
+// → `on-tick` after the export rename. Nothing to do: while running, the
+// readout's value moves with the clock, so the next `changes` re-derives it
+// and the modifiers mark it stale; while paused, the value is frozen and
+// nothing is reported.
+export function ontick(): void {}

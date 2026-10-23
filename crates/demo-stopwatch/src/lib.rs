@@ -1,17 +1,19 @@
 //! A stopwatch that uses the host's clock: the component polls `now()` and
 //! renders elapsed time, driven by the host's periodic `on-tick` calls.
 //!
-//! Its diff is state-dependent: while running, every tick reports the
-//! readout; while paused, it reports nothing. The view is a nested
-//! `component-ui` tree projected into the contract's flat list at the ABI
-//! boundary.
+//! Its diff is state-dependent: while running, the readout's value moves
+//! with the clock, so each `changes` reports it; while paused, it reports
+//! nothing. The view is a nested `component-ui` tree projected into the
+//! contract's flat list at the ABI boundary, and the diff's *state* lives in
+//! `component-ui`, which retains the last export and reports what differs;
+//! the handlers mutate state and nothing else.
 
 wit_bindgen::generate!({
     world: "app",
     path: "../../wit",
 });
 
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
@@ -23,21 +25,6 @@ const NOT_RUNNING: u64 = 0;
 static START: AtomicU64 = AtomicU64::new(NOT_RUNNING);
 static FROZEN: AtomicU64 = AtomicU64::new(0);
 static RUNNING: AtomicBool = AtomicBool::new(false);
-/// Which nodes are stale since the last export: bit 0 = the readout,
-/// bit 1 = the button.
-static DIRTY: AtomicU8 = AtomicU8::new(0);
-/// Cleared once the initial tree was exported, via `view` or `changes`.
-static EXPORTED: AtomicBool = AtomicBool::new(false);
-
-const READOUT: u8 = 0b01;
-const BUTTON: u8 = 0b10;
-
-/// Record that the current state has just been exported (as a full
-/// snapshot or as a diff): nothing is pending any more.
-fn mark_exported() {
-    DIRTY.store(0, Ordering::Relaxed);
-    EXPORTED.store(true, Ordering::Relaxed);
-}
 
 /// The elapsed milliseconds, as the component currently sees it.
 fn elapsed() -> u64 {
@@ -143,40 +130,23 @@ impl Guest for Stopwatch {
     fn view() -> Vec<Node> {
         let running = RUNNING.load(Ordering::Relaxed);
         let elapsed = elapsed();
-        // A full snapshot means everything is accounted for.
-        mark_exported();
-        component_ui::lower(&tree(elapsed, running), to_node)
+        let t = tree(elapsed, running);
+        // A full snapshot means everything is accounted for: it becomes the
+        // reference the next diff compares against.
+        component_ui::note_view(&t);
+        component_ui::lower(&t, to_node)
     }
 
     fn changes() -> Vec<Mutation> {
-        if !EXPORTED.load(Ordering::Relaxed) {
-            // First contact with this host: everything is new to it.
-            let running = RUNNING.load(Ordering::Relaxed);
-            let elapsed = elapsed();
-            mark_exported();
-            return component_ui::lower(&tree(elapsed, running), to_node)
-                .into_iter()
-                .map(Mutation::Changed)
-                .collect();
-        }
-        let dirty = DIRTY.swap(0, Ordering::Relaxed);
-        if dirty == 0 {
-            // Nothing changed (a tick while paused, an unknown click):
-            // the host can skip its whole refresh.
-            return Vec::new();
-        }
-        let running = RUNNING.load(Ordering::Relaxed);
-        let elapsed = elapsed();
-        // Projected standing alone, each states its parent explicitly
-        // (inside `view`, the lowering walk states it).
-        let mut out = Vec::new();
-        if dirty & READOUT != 0 {
-            out.push(Mutation::Changed(to_node(&readout(elapsed, running), Some(1))));
-        }
-        if dirty & BUTTON != 0 {
-            out.push(Mutation::Changed(to_node(&button(running), Some(1))));
-        }
-        out
+        // First contact, a running tick, a start/stop: all of the diff
+        // channel's business, held in `component-ui` against its retained
+        // last export. While paused, nothing differs and this is empty.
+        component_ui::diff(&tree(elapsed(), RUNNING.load(Ordering::Relaxed)), |c| match c {
+            component_ui::DiffNode::Changed(node, parent) => {
+                Mutation::Changed(to_node(node, parent))
+            }
+            component_ui::DiffNode::Removed(id) => Mutation::Removed(id),
+        })
     }
 
     fn on_click(id: u32) {
@@ -193,17 +163,15 @@ impl Guest for Stopwatch {
             START.store(now, Ordering::Relaxed);
             RUNNING.store(true, Ordering::Relaxed);
         }
-        // Starting and stopping both change the readout (its color) and
-        // the button (its label and color).
-        DIRTY.store(READOUT | BUTTON, Ordering::Relaxed);
+        // The state transition is all the click does: the next build
+        // re-derives both nodes, and the diff compares each to the last
+        // export.
     }
 
-    fn on_tick() {
-        // The readout advances only while running.
-        if RUNNING.load(Ordering::Relaxed) {
-            DIRTY.fetch_or(READOUT, Ordering::Relaxed);
-        }
-    }
+    // Nothing to do: while running, the readout's value moves with the
+    // clock, so the next `changes` re-derives it and the diff reports it;
+    // while paused, the value is frozen and nothing does.
+    fn on_tick() {}
 }
 
 export!(Stopwatch);

@@ -8,13 +8,15 @@
 //!
 //! The diff: only the readout depends on state, so after an event the
 //! component reports exactly that node (the whole tree on first contact).
+//! The diff's *state* lives in `component-ui`, which retains the last export
+//! and reports what differs; the handler mutates state and nothing else.
 
 wit_bindgen::generate!({
     world: "app",
     path: "../../wit",
 });
 
-use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, Ordering};
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
@@ -22,17 +24,6 @@ use component_ui::{Color, Direction, Size, Style, Tree};
 use waui::ui::widget as wit;
 
 static VALUE: AtomicI32 = AtomicI32::new(0);
-/// Set when the state changed since it was last exported.
-static DIRTY: AtomicBool = AtomicBool::new(false);
-/// Cleared once the initial tree was exported, via `view` or `changes`.
-static EXPORTED: AtomicBool = AtomicBool::new(false);
-
-/// Record that the current state has just been exported (as a full
-/// snapshot or as a diff): nothing is pending any more.
-fn mark_exported() {
-    DIRTY.store(false, Ordering::Relaxed);
-    EXPORTED.store(true, Ordering::Relaxed);
-}
 
 /// The readout is the only node that depends on `VALUE`; its color is
 /// state (negative below zero).
@@ -108,34 +99,23 @@ struct Counter;
 impl Guest for Counter {
     fn view() -> Vec<Node> {
         let value = VALUE.load(Ordering::Relaxed);
-        // A full snapshot means everything is accounted for.
-        mark_exported();
-        component_ui::lower(&tree(value), to_node)
+        let t = tree(value);
+        // A full snapshot means everything is accounted for: it becomes the
+        // reference the next diff compares against.
+        component_ui::note_view(&t);
+        component_ui::lower(&t, to_node)
     }
 
     fn changes() -> Vec<Mutation> {
-        if !EXPORTED.load(Ordering::Relaxed) {
-            // First contact with this host: it has seen nothing, so
-            // everything is new to it. (A host may bootstrap from
-            // `changes` alone.)
-            let value = VALUE.load(Ordering::Relaxed);
-            mark_exported();
-            return component_ui::lower(&tree(value), to_node)
-                .into_iter()
-                .map(Mutation::Changed)
-                .collect();
-        }
-        if !DIRTY.load(Ordering::Relaxed) {
-            // A no-op event (a tick, a click on an unknown id): there is
-            // nothing for the host to do.
-            return Vec::new();
-        }
-        DIRTY.store(false, Ordering::Relaxed);
-        // The buttons and the box are static; only the readout changed.
-        // Projected standing alone, its parent is stated explicitly (inside
-        // `view`, the lowering walk states it).
-        let value = VALUE.load(Ordering::Relaxed);
-        vec![Mutation::Changed(to_node(&readout(value), Some(1)))]
+        // First contact, a value change, a removal: all of the diff
+        // channel's business, held in `component-ui` against its retained
+        // last export.
+        component_ui::diff(&tree(VALUE.load(Ordering::Relaxed)), |c| match c {
+            component_ui::DiffNode::Changed(node, parent) => {
+                Mutation::Changed(to_node(node, parent))
+            }
+            component_ui::DiffNode::Removed(id) => Mutation::Removed(id),
+        })
     }
 
     fn on_click(id: u32) {
@@ -144,9 +124,11 @@ impl Guest for Counter {
             4 => -1,
             _ => 0,
         };
+        // The state transition is all the click does: the next build
+        // re-derives the readout, and the diff compares it to the last
+        // export.
         if delta != 0 {
             VALUE.fetch_add(delta, Ordering::Relaxed);
-            DIRTY.store(true, Ordering::Relaxed);
         }
     }
 

@@ -30,15 +30,18 @@
 // overwrites it in place, clamped to fit. A labeled node without an id gets
 // a fresh partition per build.
 //
-// The diff channel is a stale mark on the node. A demo holds its
+// The diff channel is a stale mark on the node, set by the *modifier
+// methods*: `.label(s)` and `.style(c, s)` mark a node stale when the value
+// actually changes, so the demo's mutation handlers mutate state only — the
+// next build re-derives the node and the mark follows. A demo holds its
 // state-dependent nodes as persistent objects (module globals; the
-// conservative GC keeps them for the module's lifetime) and its mutation
-// handlers set their `dirty` mark. `diffOf(root)` projects the stale nodes —
-// the parent taken from the tree structure — as `changed` mutations, then
-// clears the marks; a component that has never exported its tree reports the
-// whole tree, the host having seen nothing. The Rust `component-ui` has no
-// node mark (its demos keep the equivalent as a scalar flag); the exported
-// byte stream is the same either way.
+// conservative GC keeps them for the module's lifetime) so the mark survives
+// between exports. `diffOf(root)` projects the stale nodes — the parent
+// taken from the tree structure — as `changed` mutations, then clears the
+// marks; a component that has never exported its tree reports the whole
+// tree, the host having seen nothing. The Rust `component-ui` reaches the
+// same result another way (its `Tree` is immutable): it retains the last
+// export and compares. The exported byte stream is the same either way.
 //
 // This module provides the tree, the pool, and the projection
 // (`viewOf`, `diffOf`, `count`).
@@ -107,9 +110,10 @@ export class Widget {
   labelSrc: string = '';
   /// The label buffer's requested capacity (consumed at first allocation).
   labelCap: i32 = 0;
-  /// Stale since the last export: the demo sets it in its mutation handlers,
-  /// and `diffOf` consumes and clears it. Only a node the demo holds
-  /// persistently keeps the mark between exports; a rebuilt node starts clean.
+  /// Stale: the modifiers (`.label`, `.style`) set it when the value
+  /// actually changes; `diffOf` and `viewOf` consume and clear it. Only a
+  /// node the demo holds persistently keeps the mark between exports; a
+  /// rebuilt node starts clean.
   dirty: i32 = 0;
   // Materialized by `lower` (valid from projection on):
   labelPtr: i32 = 0; // the partition's base (0 = no label)
@@ -118,7 +122,9 @@ export class Widget {
   constructor(kind: i32, label: string = '', children: Widget[] = []) {
     this.kind = kind;
     this.children = children;
-    this.label(label);
+    // Direct assignment, not `label()`: construction is not a mutation, and
+    // a fresh node must start clean (the mark is what the diff reads).
+    this.labelSrc = label;
   }
 
   /// Assign the contract's node id (0 = none) and return `this` for
@@ -130,9 +136,15 @@ export class Widget {
     return this;
   }
 
-  /// Replace the label (UTF-16 in; UTF-8 in the pool at projection).
+  /// Replace the label (UTF-16 in; UTF-8 in the pool at projection), and
+  /// mark the node stale when the value actually changes. (AssemblyScript
+  /// compares strings by content, so a rebuilt-but-identical label does not
+  /// re-mark.)
   label(s: string): this {
-    this.labelSrc = s;
+    if (s != this.labelSrc) {
+      this.labelSrc = s;
+      this.dirty = 1;
+    }
     return this;
   }
 
@@ -144,10 +156,14 @@ export class Widget {
     return this;
   }
 
-  /// Set the style in one call (text/buttons only).
+  /// Set the style in one call (text/buttons only), marking the node stale
+  /// when the value actually changes.
   style(colorV: i32, sizeV: i32): this {
-    this.color = colorV;
-    this.size = sizeV;
+    if (colorV != this.color || sizeV != this.size) {
+      this.color = colorV;
+      this.size = sizeV;
+      this.dirty = 1;
+    }
     return this;
   }
 
