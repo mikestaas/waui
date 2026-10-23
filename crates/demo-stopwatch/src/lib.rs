@@ -1,12 +1,12 @@
 //! A stopwatch that uses the host's clock: the component polls `now()` and
 //! renders elapsed time, driven by the host's periodic `on-tick` calls.
 //!
-//! Its diff is state-dependent: while running, the readout's value moves
+//! Its diff is state-dependent: while running, the readout's value changes
 //! with the clock, so each `changes` reports it; while paused, it reports
 //! nothing. The view is a nested `component-ui` tree projected into the
-//! contract's flat list at the ABI boundary, and the diff's *state* lives in
-//! `component-ui`, which retains the last export and reports what differs;
-//! the handlers mutate state and nothing else.
+//! contract's flat list at the ABI boundary; the diff state lives in
+//! `component-ui`, which retains the last export and reports what differs.
+//! The handlers mutate state only.
 
 wit_bindgen::generate!({
     world: "app",
@@ -42,7 +42,7 @@ fn elapsed() -> u64 {
 }
 
 /// The readout takes the host's accent color while running; the button's
-/// label and color say what it will do.
+/// label and color name the action.
 fn readout(elapsed: u64, running: bool) -> Tree {
     Tree::text(
         format!("{elapsed} ms"),
@@ -131,16 +131,15 @@ impl Guest for Stopwatch {
         let running = RUNNING.load(Ordering::Relaxed);
         let elapsed = elapsed();
         let t = tree(elapsed, running);
-        // A full snapshot means everything is accounted for: it becomes the
-        // reference the next diff compares against.
+        // The full snapshot becomes the reference the next diff compares
+        // against.
         component_ui::note_view(&t);
         component_ui::lower(&t, to_node)
     }
 
     fn changes() -> Vec<Mutation> {
-        // First contact, a running tick, a start/stop: all of the diff
-        // channel's business, held in `component-ui` against its retained
-        // last export. While paused, nothing differs and this is empty.
+        // `component-ui`'s diff against its retained last export; while
+        // paused, nothing differs and this is empty.
         component_ui::diff(&tree(elapsed(), RUNNING.load(Ordering::Relaxed)), |c| match c {
             component_ui::DiffNode::Changed(node, parent) => {
                 Mutation::Changed(to_node(node, parent))
@@ -163,14 +162,13 @@ impl Guest for Stopwatch {
             START.store(now, Ordering::Relaxed);
             RUNNING.store(true, Ordering::Relaxed);
         }
-        // The state transition is all the click does: the next build
-        // re-derives both nodes, and the diff compares each to the last
-        // export.
+        // State only: the next build re-derives both nodes, and the diff
+        // compares.
     }
 
-    // Nothing to do: while running, the readout's value moves with the
-    // clock, so the next `changes` re-derives it and the diff reports it;
-    // while paused, the value is frozen and nothing does.
+    // A tick changes no state: while running, the next `changes` re-derives
+    // the readout and reports it; while paused, the value is frozen and the
+    // diff is empty.
     fn on_tick() {}
 }
 

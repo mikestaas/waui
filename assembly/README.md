@@ -117,18 +117,15 @@ Behavior:
   rather than corrupting memory.
 - **The diff is a stale mark on the node, set by the modifiers.**
   `label(s)` and `style(color, size)` mark a node stale when the value
-  actually changes (identical values do not re-mark), so the demos' mutation
-  handlers mutate state and nothing else: the next build re-derives the
-  state-dependent nodes, and the marks follow. `changes` calls
-  `diffOf(root)`: the stale nodes, in depth-first pre-order, with the parent
-  taken from the structure, as `changed` mutations, marks cleared. `viewOf`
-  clears the marks too — a full snapshot accounts for everything. A
-  component that has never exported its tree reports the whole tree from
-  `diffOf`: the WIT's bootstrap rule, held here rather than in each demo.
-  The Rust `component-ui` reaches the same result another way (its `Tree` is
-  immutable, so it retains the last export and compares; it also expresses
-  node add/remove/re-parent, which the mark diff does not); the exported
-  byte stream is the same for these demos.
+  changes (identical values do not re-mark); the demos' handlers mutate
+  state only, and the next build re-derives the state-dependent nodes.
+  `changes` calls `diffOf(root)`: the stale nodes in depth-first pre-order,
+  parent from the structure, as `changed` mutations, marks cleared. `viewOf`
+  clears the marks too. Before the first export, `diffOf` reports the whole
+  tree (the WIT bootstrap rule). The Rust `component-ui` is immutable, so it
+  retains the last export and compares; that diff also expresses node
+  add/remove/re-parent, which the mark diff does not. For these demos the
+  exported stream is the same.
 
 ## Memory layout
 
