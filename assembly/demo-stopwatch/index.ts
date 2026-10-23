@@ -5,9 +5,9 @@
 // clock) and renders elapsed time, driven by the host's `on-tick`.
 //
 // The diff is state-dependent, as in the Rust original: while running, every
-// tick dirties the readout; while paused, nothing. The dirty state is a bit
-// mask over the two state-dependent nodes, and `changes` re-projects the
-// dirty subtrees from state.
+// tick marks the readout dirty; while paused, nothing. The marks live on the
+// two state-dependent nodes — the readout and the button, held as persistent
+// objects — and `changes` projects the stale ones from state.
 //
 // The UI is a nested tree in `../ui/tree`, rebuilt from state per export;
 // the elapsed reading is sampled once, so one exported list never mixes two
@@ -27,15 +27,13 @@ import {
   COLOR_WARNING,
   SIZE_LARGE,
   SIZE_MEDIUM,
-  makeList,
 } from '../abi/node';
 import { now } from '../abi/root';
 import {
   Widget,
   button,
   column,
-  mutationsOf,
-  mutationsOfAll,
+  diffOf,
   text,
   viewOf,
 } from '../ui/tree';
@@ -54,21 +52,13 @@ var start: i64 = 0;
 /// Elapsed milliseconds at the last pause.
 var frozen: i64 = 0;
 var running: i32 = 0;
-/// Which nodes are stale since the last export: bit 0 = the readout,
-/// bit 1 = the button.
-var dirty: i32 = 0;
-/// Cleared once the initial tree was exported, via `view` or `changes`.
-var exported: i32 = 0;
 
-const BIT_READOUT = 1;
-const BIT_BUTTON = 2;
-
-/// Record that the current state has just been exported (as a full
-/// snapshot or as a diff): nothing is pending any more.
-function markExported(): void {
-  dirty = 0;
-  exported = 1;
-}
+/// The two state-dependent nodes, held in module globals so their dirty
+/// marks survive between exports (the conservative GC keeps them for the
+/// module's lifetime, intended); the box stays local to the call.
+var readout = text('', COLOR_NEUTRAL, SIZE_LARGE).id(READOUT);
+var control = button('start', COLOR_POSITIVE, SIZE_MEDIUM).id(BUTTON);
+readout.reserve(24); // "18446744073709551615 ms" is 23 bytes
 
 /// The elapsed milliseconds, as the component currently sees it.
 function elapsed(): i64 {
@@ -80,62 +70,33 @@ function elapsed(): i64 {
   return frozen;
 }
 
-// The readout takes the host's accent color while running; the button's
-// label and color say what it will do.
-function readout(e: i64, running: i32): Widget {
-  return text(
-    `${e} ms`,
-    running != 0 ? COLOR_ACCENT : COLOR_NEUTRAL,
-    SIZE_LARGE,
-  ).id(READOUT).reserve(24); // "18446744073709551615 ms" is 23 bytes
+/// The readout takes the host's accent color while running; the button's
+/// label and color say what it will do. Both derive from the sampled state,
+/// so the derivation happens here, on every build.
+function apply(e: i64, r: i32): void {
+  readout
+    .label(`${e} ms`)
+    .style(r != 0 ? COLOR_ACCENT : COLOR_NEUTRAL, SIZE_LARGE);
+  control
+    .label(r != 0 ? 'pause' : 'start')
+    .style(r != 0 ? COLOR_WARNING : COLOR_POSITIVE, SIZE_MEDIUM);
 }
 
-function control(running: i32): Widget {
-  return button(
-    running != 0 ? 'pause' : 'start',
-    running != 0 ? COLOR_WARNING : COLOR_POSITIVE,
-    SIZE_MEDIUM,
-  ).id(BUTTON);
-}
-
-/// The stopwatch's whole UI, nested.
-function tree(e: i64, running: i32): Widget {
-  return column([readout(e, running), control(running)]).id(BOX);
+/// The stopwatch's whole UI, nested: the structure is rebuilt, the readout
+/// and the button are the persistent leaves.
+function tree(e: i64, r: i32): Widget {
+  apply(e, r);
+  return column([readout, control]).id(BOX);
 }
 
 export function view(): i32 {
-  const t = tree(elapsed(), running);
-  // A full snapshot means everything is accounted for.
-  markExported();
-  return viewOf(t);
+  // `elapsed()` sampled once: one exported list never mixes two readings.
+  return viewOf(tree(elapsed(), running));
 }
 
 export function changes(): i32 {
-  if (exported == 0) {
-    // First contact with this host: everything is new to it.
-    const t = tree(elapsed(), running);
-    markExported();
-    return mutationsOf(t, 0);
-  }
-  const d = dirty;
-  dirty = 0;
-  if (d == 0) {
-    // Nothing changed (a tick while paused, an unknown click): the host can
-    // skip its whole refresh.
-    return makeList(0, 0);
-  }
-  const e = elapsed(); // one reading for the whole projection
-  // Gather exactly the dirty subtrees.
-  let k = 0;
-  if ((d & BIT_READOUT) != 0) k++;
-  if ((d & BIT_BUTTON) != 0) k++;
-  const roots = new Array<Widget>(k);
-  let w = 0;
-  if ((d & BIT_READOUT) != 0) roots[w++] = readout(e, running);
-  if ((d & BIT_BUTTON) != 0) roots[w++] = control(running);
-  // Projected standing alone, each states its parent explicitly (inside
-  // `view`, the lowering walk states it).
-  return mutationsOfAll(roots, BOX);
+  // Same one sample; the layer diffs and clears the marks.
+  return diffOf(tree(elapsed(), running));
 }
 
 export function onclick(id: i32): void { // → `on-click` after the export rename
@@ -153,10 +114,11 @@ export function onclick(id: i32): void { // → `on-click` after the export rena
   }
   // Starting and stopping both change the readout (its color) and the
   // button (its label and color).
-  dirty = BIT_READOUT | BIT_BUTTON;
+  readout.dirty = 1;
+  control.dirty = 1;
 }
 
 export function ontick(): void { // → `on-tick`
   // The readout advances only while running.
-  if (running != 0) dirty |= BIT_READOUT;
+  if (running != 0) readout.dirty = 1;
 }

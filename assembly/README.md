@@ -63,11 +63,25 @@ Nodes are `Widget` **objects on the incremental runtime heap**, nested through
 their `children` arrays — the same shape as the Rust
 `Tree::column(vec![...])`. Tree size is limited only by the heap.
 
+The counter's shape: the box and both buttons are static, the readout is the
+only state-dependent node, so it is a persistent object.
+
 ```ts
+var readout = text('', COLOR_NEUTRAL, SIZE_LARGE).id(READOUT);
+readout.reserve(16); // "-2147483648" is 11 bytes
+
+/// The readout's label and color, derived from state on every build.
+function applyReadout(v: i32): void {
+  readout
+    .label(`${v}`)
+    .style(v < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL, SIZE_LARGE);
+}
+
 function tree(v: i32): Widget {
+  applyReadout(v);
   return column([
     button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(INC),
-    readout(v),
+    readout, // the persistent leaf, embedded by reference
     button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(DEC),
   ]).id(BOX);
 }
@@ -77,16 +91,20 @@ API:
 
 - constructors: `text(content, color, size)`, `button(label, color, size)`,
   `row(children)`, `column(children)`
-- chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`
-  (AssemblyScript cannot name a field and a method alike the way Rust can, so
-  the id's storage is `_id`; set it with `.id()`)
-- plain field: `children`
+- chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`,
+  `.markClean()` (AssemblyScript cannot name a field and a method alike the
+  way Rust can, so the id's storage is `_id`; set it with `.id()`)
+- plain fields: `children`, `dirty` (the stale mark, 0/1)
+- projection: `viewOf(root)`, `diffOf(root)`, `count(w)`
 
 Behavior:
 
-- The demos rebuild the tree from state on every export, as the Rust demos do;
-  the `Widget` objects are local to the call and the conservative GC reclaims
-  them when the export returns.
+- The demos rebuild the tree's *structure* from state on every export, as the
+  Rust demos do; the structural `Widget` objects are local to the call and the
+  conservative GC reclaims them when the export returns. The state-dependent
+  nodes (the counter's readout; the stopwatch's readout and button) are the
+  exception: module globals, kept for the module's lifetime, so their dirty
+  marks survive between exports. A few bytes per node, never growing.
 - **Labels** live in the static **label pool** (raw linear memory; the GC
   never scans it). `label()` only stores the UTF-16 source; the UTF-8 pool
   write happens at projection, keyed by the node's id. A partition is
@@ -97,10 +115,16 @@ Behavior:
   an id gets a fresh partition per build — a changing label with no stable id
   grows the pool until it is exhausted, which then renders an empty label
   rather than corrupting memory.
-- **The diff is the demo's bookkeeping** (the counter: one `dirty` flag; the
-  stopwatch: the Rust demo's bit mask), as in Rust — `component-ui` provides
-  no diff machinery either. The layer provides only: `viewOf(root)`,
-  `mutationsOf(root, parent)`, `mutationsOfAll(roots, parent)`, `count(w)`.
+- **The diff is a stale mark on the node.** The demo sets `dirty` on its
+  state-dependent nodes in its mutation handlers (a click, a tick) and
+  `changes` calls `diffOf(root)`: the stale nodes, in depth-first pre-order,
+  with the parent taken from the structure, as `changed` mutations, marks
+  cleared. `viewOf` clears the marks too — a full snapshot accounts for
+  everything. A component that has never exported its tree reports the whole
+  tree from `diffOf`: the WIT's bootstrap rule, held here rather than in each
+  demo. The Rust `component-ui` has no node mark (its demos keep the
+  equivalent as a scalar flag); the exported byte stream is the same either
+  way.
 
 ## Memory layout
 
@@ -114,7 +138,8 @@ Every byte of a result comes from the arena, so one pointer reset in
 `cabi_post_*` is the whole free. The counter's pool holds 40 bytes after its
 first build (16 + 12 + 12); the module stays at its 2 initial pages across
 hundreds of rebuilds — the selftest's leak check allows <4 pages of growth
-over 120 calls.
+over 120 calls. The demos' persistent state-dependent nodes add a constant
+few hundred bytes of retained heap, never growing.
 
 ## The ABI layer (`abi/`)
 
@@ -136,9 +161,10 @@ it.
   `has(key) ? get(key) : …`.
 - **The conservative GC keeps anything a module global references** for the
   module's lifetime. That is how the pool registry keeps partitions stable
-  across rebuilds; it also means a `Widget` parked in a module global pins its
-  whole subtree forever. The demos keep trees local to the call that built
-  them.
+  across rebuilds, and how the demos' persistent state-dependent nodes keep
+  their dirty marks: park only the leaves. A whole tree parked in a global
+  would pin its whole subtree forever, so the structure stays local to the
+  call.
 - **Precedence is JavaScript's**: `!=` binds tighter than `&` (so
   `d & BIT != 0` tests the constant — parenthesize), and `<` binds tighter
   than `?:` (so an unparenthesized `… != 0 ? 36 : 32` parses as a ternary *as*
@@ -149,6 +175,9 @@ it.
 - **`static` is a class-field keyword** at module scope; module globals are
   `var`.
 - **`var x = <non-literal expression>`** compiles to a zeroed global plus a
-  start-section init thunk; the value is final only after the start runs.
+  start-section init thunk; the value is final only after the start runs. The
+  demos use it for their persistent nodes; in a component the start runs at
+  instantiation, before the host calls anything, so the globals are ready by
+  the first export.
 - **String literals are UTF-16** in the data segment (page 1 up, via
   `--memoryBase 65536`); the `utf8.ts` emitters convert at write time.
