@@ -39,15 +39,13 @@ error-prone, so component authors write a nested tree and project it:
 
 - Rust: the [`component-ui`](crates/component-ui/) crate — a nested `Tree`
   with `.id()`/`.style()` builders, a `lower` that emits the flat list, and
-  a `diff` that reports what changed since the last export (the diff
-  channel's state lives in the crate, so a demo's handlers mutate state and
-  nothing else). It is dependency-free, and `lower` is generic over the
-  output type because each `wit-bindgen generate!` is crate-local, so each
-  demo writes one small projection onto its own generated `Node`.
-- AssemblyScript: `assembly/ui/tree` — the same shape and the same result in
-  AS: the diff is a stale mark on the node, set by its `label()`/`style()`
-  modifiers when the value actually changes (see
-  [`assembly/README.md`](assembly/README.md)).
+  a `diff` that reports what changed since the last export. It is
+  dependency-free; `lower` is generic over the output type because each
+  `wit-bindgen generate!` is crate-local, so each demo writes one small
+  projection onto its own generated `Node`.
+- AssemblyScript: `assembly/ui/tree` — the same shape in AS: the diff is a
+  stale mark on the node, set by its `label()`/`style()` modifiers when the
+  value changes (see [`assembly/README.md`](assembly/README.md)).
 
 ## Layout
 
@@ -109,6 +107,6 @@ it runs from disk with no server and no network.
 ## Not implemented
 
 Component-directed focus, text input, images (a `resource`), multi-component
-hosts, and structural change in the AssemblyScript demos' diff: their mark
-diff tracks value change on the persistent nodes, while the Rust
-`component-ui` diff also expresses node add, remove, and re-parent.
+hosts, and structural change in the AssemblyScript demos' diff: the mark
+diff tracks value change, while the Rust `component-ui` diff also expresses
+add, remove, and re-parent.

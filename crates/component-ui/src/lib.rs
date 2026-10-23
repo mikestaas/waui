@@ -20,13 +20,11 @@
 //! `parent` field) — asserted in debug builds.
 //!
 //! **Diff.** The `changes` channel is owned by the layer, not the component:
-//! the last export this component made is retained ([`note_view`] records a
-//! full snapshot, [`diff`] records a diff), and a node is reported `changed`
-//! when its record — content, style, direction, or parent — differs from it,
-//! or when the host has never seen its id (bootstrap: before the first
-//! export, every node is `changed`); an id that was exported and is no
-//! longer in the tree is `removed`. A demo's handlers therefore mutate state
-//! and nothing else, and `changes` is one [`diff`] call.
+//! the last export this component made is retained ([`note_view`] for a full
+//! snapshot, [`diff`] for a diff). A node is reported `changed` when its
+//! record — content, style, direction, or parent — differs from it, or when
+//! the host has never seen its id; an id no longer in the tree is `removed`.
+//! A demo's handlers mutate state only, and `changes` is one [`diff`] call.
 
 use std::sync::Mutex;
 
@@ -96,11 +94,9 @@ pub struct Container {
     pub children: Vec<Tree>,
 }
 
-/// A nested widget tree — what a component *author* writes.
-///
-/// Nodes are immutable: state-dependent values are re-derived into a fresh
-/// tree on every export, and the diff channel detects what changed by
-/// comparing (see the crate docs, *Diff*).
+/// A nested widget tree — what a component *author* writes. Nodes are
+/// immutable: state-dependent values are re-derived into a fresh tree per
+/// export, and the diff compares trees (see the crate docs, *Diff*).
 #[derive(Debug, Clone)]
 pub enum Tree {
     Text(Text),
@@ -194,9 +190,9 @@ impl Tree {
 /// world typically project onto their generated types instead (see
 /// [`lower`]).
 ///
-/// Also what the diff channel compares: a node's record is exactly its flat
-/// form (a container carries no child data, so a container is "changed"
-/// only when its own id, parent, or direction is).
+/// Also what the diff channel compares: a node's record is its flat form
+/// (a container carries no child data, so it is `changed` only for its own
+/// id, parent, or direction).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Flat {
     Text {
@@ -228,21 +224,16 @@ impl Flat {
     }
 }
 
-/// One entry of the diff channel: what [`diff`] decides to report.
-///
-/// `Changed` is a node (with the parent the lowering computed for it) whose
-/// record differs from the last export — or one the host has never seen.
-/// `Removed` is an id the host retains that is no longer in the tree.
+/// One diff entry: a node to report `changed` (with the lowering's parent,
+/// whose record differs from the last export or which the host has never
+/// seen), or an id to report `removed`.
 pub enum DiffNode<'a> {
     Changed(&'a Tree, Option<u32>),
     Removed(u32),
 }
 
 /// What this component last exported: the tree flattened, one [`Flat`] per
-/// node in depth-first pre-order, or `None` before the first export.
-///
-/// The diff channel's state lives here rather than in the component, so a
-/// demo's handlers mutate state and nothing else. The retained list is one
+/// node in depth-first pre-order, or `None` before the first export. One
 /// tree's worth of buffers, replaced on every export.
 static LAST_EXPORTED: Mutex<Option<Vec<Flat>>> = Mutex::new(None);
 
@@ -321,19 +312,17 @@ pub fn flat_list(tree: &Tree) -> Vec<Flat> {
     lower(tree, flat)
 }
 
-/// The diff channel for a tree against an explicit reference — the
+/// The diff channel for a tree against an explicit reference; the
 /// component-facing [`diff`] holds that reference in [`LAST_EXPORTED`].
 ///
-/// A node with an id is reported [`DiffNode::Changed`] when its record —
-/// content, style, direction, or parent — differs from the reference, or
-/// when the reference is `None` (bootstrap: the host has seen nothing, so
-/// every node is new to it). Ids in the reference that are no longer in the
-/// tree are reported [`DiffNode::Removed`], after the `changed` nodes, in
-/// the reference's pre-order. Id-less nodes are unaddressable (the WIT's
-/// identity rule) and are never reported. A sibling re-order under an
-/// unchanged parent is not expressible in place — a `changed` node is
-/// replaced where it stands; the WIT's answer is to remove the node and
-/// re-add it.
+/// An id'd node is reported [`DiffNode::Changed`] when its record — content,
+/// style, direction, or parent — differs from the reference, or when the
+/// reference is `None` (bootstrap). Ids in the reference that are no longer
+/// in the tree are reported [`DiffNode::Removed`], after the `changed`
+/// nodes, in the reference's pre-order. Id-less nodes are unaddressable (the
+/// WIT's identity rule) and never reported. A sibling re-order under an
+/// unchanged parent is not expressible (a `changed` node is replaced where it
+/// stands); the WIT says: remove it and re-add it.
 ///
 /// Returns the mutation list and the tree flattened, ready to be the next
 /// reference.
@@ -356,8 +345,8 @@ where
     (out, new)
 }
 
-/// The new tree, in pre-order: report a node whose record differs from the
-/// reference (or which the reference predates entirely).
+/// Walk the new tree in pre-order, reporting a node whose record differs
+/// from the reference (or every id'd node when there is none).
 fn diff_node_against<'a, M, F>(
     node: &'a Tree,
     parent: Option<u32>,
@@ -385,13 +374,10 @@ fn diff_node_against<'a, M, F>(
     }
 }
 
-/// The diff channel: what `tree` reports to a host that retains this
-/// component's last export, as the caller's mutation type behind `f` (see
-/// [`diff_with`] for what is reported and in what order).
-///
-/// The tree just diffed becomes the reference for the next call; a full
-/// snapshot leaves nothing pending, so the demo's `view` calls
-/// [`note_view`] for the same reason.
+/// The component-facing diff channel: what `tree` reports against
+/// [`LAST_EXPORTED`], as the caller's mutation type behind `f` (see
+/// [`diff_with`]). The tree just diffed becomes the next reference; a full
+/// snapshot goes through [`note_view`].
 pub fn diff<M, F>(tree: &Tree, f: F) -> Vec<M>
 where
     F: FnMut(DiffNode<'_>) -> M,
@@ -402,9 +388,8 @@ where
     out
 }
 
-/// Record a full snapshot as the reference for the next [`diff`]. A host
-/// that just received `view()` retains the whole tree, so a diff after it
-/// sees nothing pending; the demo's `view` calls this.
+/// Record a full snapshot as the reference for the next [`diff`]; the demo's
+/// `view` calls this, so a diff after a view sees nothing.
 pub fn note_view(tree: &Tree) {
     *LAST_EXPORTED.lock().unwrap() = Some(flat_list(tree));
 }
@@ -573,7 +558,7 @@ mod tests {
     fn diff_is_empty_when_unchanged() {
         let tree = counter("0", Color::Neutral);
         let last = flat_list(&tree);
-        // Rebuild the same tree from "state" the way the demos do.
+        // Rebuilt the way the demos do: a fresh tree from state.
         let again = counter("0", Color::Neutral);
         let (out, _) = diff_with(&again, Some(&last), proj);
         assert_eq!(out, Vec::<M>::new());

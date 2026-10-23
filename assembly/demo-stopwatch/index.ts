@@ -5,12 +5,11 @@
 // clock) and renders elapsed time, driven by the host's `on-tick`.
 //
 // The diff is state-dependent, as in the Rust original: while running, the
-// readout's value moves with the clock, so each `changes` reports it; while
-// paused, nothing does. The `label()`/`style()` modifiers mark a node stale
-// only when its value actually changes, and the two state-dependent nodes —
-// the readout and the button — are persistent objects so the marks survive
-// between exports. The handlers mutate state and nothing else; `changes` is
-// a single `diffOf` call.
+// readout's value changes with the clock, so each `changes` reports it;
+// while paused, nothing does. The readout and the button are the
+// state-dependent nodes: persistent objects, derived on every build, marked
+// stale by their modifiers when the value changes. The handlers mutate state
+// only.
 //
 // The UI is a nested tree in `../ui/tree`, rebuilt from state per export;
 // the elapsed reading is sampled once, so one exported list never mixes two
@@ -56,9 +55,9 @@ var start: i64 = 0;
 var frozen: i64 = 0;
 var running: i32 = 0;
 
-/// The two state-dependent nodes, held in module globals so their dirty
-/// marks survive between exports (the conservative GC keeps them for the
-/// module's lifetime, intended); the box stays local to the call.
+/// The two state-dependent nodes. Module globals, so their dirty marks
+/// survive between exports (the conservative GC keeps them for the module's
+/// lifetime); the box is local to the call.
 var readout = text('', COLOR_NEUTRAL, SIZE_LARGE).id(READOUT);
 var control = button('start', COLOR_POSITIVE, SIZE_MEDIUM).id(BUTTON);
 readout.reserve(24); // "18446744073709551615 ms" is 23 bytes
@@ -74,8 +73,8 @@ function elapsed(): i64 {
 }
 
 /// The readout takes the host's accent color while running; the button's
-/// label and color say what it will do. Both derive from the sampled state,
-/// so the derivation happens here, on every build.
+/// label and color name the action. Both derive from the sampled state, on
+/// every build.
 function apply(e: i64, r: i32): void {
   readout
     .label(`${e} ms`)
@@ -115,12 +114,11 @@ export function onclick(id: i32): void { // → `on-click` after the export rena
     start = t;
     running = 1;
   }
-  // The state transition is all the click does: the next build re-derives
-  // both nodes, and the modifiers mark each stale only if its value changed.
+  // State only: the next build re-derives both nodes, and the modifiers mark
+  // them stale.
 }
 
-// → `on-tick` after the export rename. Nothing to do: while running, the
-// readout's value moves with the clock, so the next `changes` re-derives it
-// and the modifiers mark it stale; while paused, the value is frozen and
-// nothing is reported.
+// → `on-tick` after the export rename. A tick changes no state: while
+// running, the next `changes` re-derives the readout and reports it; while
+// paused, the value is frozen and the diff is empty.
 export function ontick(): void {}

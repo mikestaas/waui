@@ -7,9 +7,9 @@
 //! flat node list at the ABI boundary.
 //!
 //! The diff: only the readout depends on state, so after an event the
-//! component reports exactly that node (the whole tree on first contact).
-//! The diff's *state* lives in `component-ui`, which retains the last export
-//! and reports what differs; the handler mutates state and nothing else.
+//! component reports that node (the whole tree on first contact). The diff
+//! state lives in `component-ui`, which retains the last export and reports
+//! what differs; the handler mutates state only.
 
 wit_bindgen::generate!({
     world: "app",
@@ -100,16 +100,15 @@ impl Guest for Counter {
     fn view() -> Vec<Node> {
         let value = VALUE.load(Ordering::Relaxed);
         let t = tree(value);
-        // A full snapshot means everything is accounted for: it becomes the
-        // reference the next diff compares against.
+        // The full snapshot becomes the reference the next diff compares
+        // against.
         component_ui::note_view(&t);
         component_ui::lower(&t, to_node)
     }
 
     fn changes() -> Vec<Mutation> {
-        // First contact, a value change, a removal: all of the diff
-        // channel's business, held in `component-ui` against its retained
-        // last export.
+        // Bootstrap, a value change, a removal: `component-ui`'s diff
+        // against its retained last export.
         component_ui::diff(&tree(VALUE.load(Ordering::Relaxed)), |c| match c {
             component_ui::DiffNode::Changed(node, parent) => {
                 Mutation::Changed(to_node(node, parent))
@@ -124,9 +123,8 @@ impl Guest for Counter {
             4 => -1,
             _ => 0,
         };
-        // The state transition is all the click does: the next build
-        // re-derives the readout, and the diff compares it to the last
-        // export.
+        // State only: the next build re-derives the readout, and the diff
+        // compares.
         if delta != 0 {
             VALUE.fetch_add(delta, Ordering::Relaxed);
         }

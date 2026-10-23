@@ -5,11 +5,14 @@
 // Nodes are `Widget` objects on the incremental runtime heap (in-module
 // TLSF allocator + conservative GC), nested through their `children` arrays —
 // the same shape as the Rust `Tree::column(vec![...])`. Tree size is limited
-// only by the heap:
+// only by the heap. The readout is state-dependent, so it is a persistent
+// object (a module global in the demos); the buttons are rebuilt with the
+// column:
 //
+//   var readout = text('', COLOR_NEUTRAL, SIZE_LARGE).id(3);
 //   column([
 //     button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(2),
-//     readout(value),
+//     readout,
 //     button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(4),
 //   ]).id(1);
 //
@@ -30,18 +33,14 @@
 // overwrites it in place, clamped to fit. A labeled node without an id gets
 // a fresh partition per build.
 //
-// The diff channel is a stale mark on the node, set by the *modifier
-// methods*: `.label(s)` and `.style(c, s)` mark a node stale when the value
-// actually changes, so the demo's mutation handlers mutate state only — the
-// next build re-derives the node and the mark follows. A demo holds its
-// state-dependent nodes as persistent objects (module globals; the
-// conservative GC keeps them for the module's lifetime) so the mark survives
-// between exports. `diffOf(root)` projects the stale nodes — the parent
-// taken from the tree structure — as `changed` mutations, then clears the
-// marks; a component that has never exported its tree reports the whole
-// tree, the host having seen nothing. The Rust `component-ui` reaches the
-// same result another way (its `Tree` is immutable): it retains the last
-// export and compares. The exported byte stream is the same either way.
+// The diff channel is a stale mark on the node: `.label(s)` and `.style(c, s)`
+// set it when the value changes, and `diffOf(root)` projects the stale nodes
+// as `changed` mutations (the parent from the tree structure), clearing the
+// marks. Before the first export it reports the whole tree (the WIT bootstrap
+// rule). A demo keeps its state-dependent nodes in module globals so the mark
+// survives between exports (the conservative GC retains them). The Rust
+// `component-ui` is immutable, so it diffs by retaining the last export; the
+// emitted stream matches the Rust demos'.
 //
 // This module provides the tree, the pool, and the projection
 // (`viewOf`, `diffOf`, `count`).
@@ -110,10 +109,9 @@ export class Widget {
   labelSrc: string = '';
   /// The label buffer's requested capacity (consumed at first allocation).
   labelCap: i32 = 0;
-  /// Stale: the modifiers (`.label`, `.style`) set it when the value
-  /// actually changes; `diffOf` and `viewOf` consume and clear it. Only a
-  /// node the demo holds persistently keeps the mark between exports; a
-  /// rebuilt node starts clean.
+  /// Stale: set by `.label`/`.style` when the value changes, cleared by
+  /// `diffOf`/`viewOf`. Only a node the demo holds persistently keeps it
+  /// between exports; a rebuilt node starts clean.
   dirty: i32 = 0;
   // Materialized by `lower` (valid from projection on):
   labelPtr: i32 = 0; // the partition's base (0 = no label)
@@ -122,8 +120,7 @@ export class Widget {
   constructor(kind: i32, label: string = '', children: Widget[] = []) {
     this.kind = kind;
     this.children = children;
-    // Direct assignment, not `label()`: construction is not a mutation, and
-    // a fresh node must start clean (the mark is what the diff reads).
+    // Direct assignment, not `label()`: a fresh node starts clean.
     this.labelSrc = label;
   }
 
@@ -136,10 +133,9 @@ export class Widget {
     return this;
   }
 
-  /// Replace the label (UTF-16 in; UTF-8 in the pool at projection), and
-  /// mark the node stale when the value actually changes. (AssemblyScript
-  /// compares strings by content, so a rebuilt-but-identical label does not
-  /// re-mark.)
+  /// Replace the label (UTF-16 in; UTF-8 in the pool at projection) and mark
+  /// the node stale when it changes. AS compares strings by content, so an
+  /// identical re-derivation does not re-mark.
   label(s: string): this {
     if (s != this.labelSrc) {
       this.labelSrc = s;
@@ -156,8 +152,8 @@ export class Widget {
     return this;
   }
 
-  /// Set the style in one call (text/buttons only), marking the node stale
-  /// when the value actually changes.
+  /// Set the style (text/buttons only) and mark the node stale when it
+  /// changes.
   style(colorV: i32, sizeV: i32): this {
     if (colorV != this.color || sizeV != this.size) {
       this.color = colorV;
@@ -261,9 +257,8 @@ function materializeLabel(w: Widget): void {
 
 // ------------------------------------------------------------- projection
 
-/// Whether this component has ever exported its whole tree (via `viewOf` or
-/// a bootstrap `diffOf`). The WIT's bootstrap rule keys off it: a host that
-/// has seen nothing gets the whole tree as `changed` nodes.
+/// Set once the component has exported its whole tree (`viewOf`, or a
+/// bootstrap `diffOf`); the WIT bootstrap rule keys off it.
 var everExported: i32 = 0;
 
 /// Count the nodes of a tree (depth-first pre-order), for sizing the arena.
@@ -350,9 +345,8 @@ function lowerDirty(w: Widget, parent: i32, buf: i32, off: i32): i32 {
 }
 
 /// Project the whole tree as a `view()` result: every node as a 32-byte node
-/// record in depth-first pre-order, behind a list descriptor. A full
-/// snapshot accounts for everything: the stale marks are cleared, and the
-/// component is marked exported for the bootstrap rule.
+/// record in depth-first pre-order, behind a list descriptor. Clears the
+/// stale marks and sets `everExported`.
 export function viewOf(root: Widget): i32 {
   everExported = 1;
   markAllClean(root);
@@ -362,11 +356,10 @@ export function viewOf(root: Widget): i32 {
   return makeList(buf, n);
 }
 
-/// The diff channel for the demo's rebuilt tree. A component that has never
-/// exported its tree reports every node as `changed` (the bootstrap rule,
-/// held here rather than in each demo); otherwise exactly the stale nodes,
-/// in depth-first pre-order, each with the parent taken from the structure.
-/// The marks are cleared either way: after the call, nothing is pending.
+/// Project the diff channel for the demo's rebuilt tree: every node as
+/// `changed` before the first export, otherwise the stale nodes, in
+/// depth-first pre-order, each with the parent from the structure. The marks
+/// are cleared either way.
 export function diffOf(root: Widget): i32 {
   const first = everExported == 0;
   const n = first ? count(root) : dirtyCount(root);
