@@ -4,14 +4,15 @@
 // The UI is a nested tree in `../ui/tree` (the AS twin of the Rust demos'
 // `component-ui` crate). The box and both buttons are static and are rebuilt
 // from state on every export, as in the Rust original; the readout is the
-// only state-dependent node, so it is a persistent object: its `dirty` mark
-// (set in `onclick`) survives between exports, and its label and color are
-// derived from `value` on every build.
+// only state-dependent node, so it is a persistent object: its label and
+// color are derived from `value` on every build, and the `label()`/`style()`
+// modifiers mark it stale only when the value actually changes. The handlers
+// mutate state and nothing else; `changes` is a single `diffOf` call.
 //
 //   view:     a column (id 1) with the "+" button (id 2, positive), the
 //             readout (id 3; its color is state — negative below zero), and
 //             the "-" button (id 4, negative)
-//   on-click: 2 increments, 4 decrements; each marks the readout dirty
+//   on-click: 2 increments, 4 decrements
 //   changes:  the stale readout (the whole tree on first contact)
 //   on-tick:  nothing (a counter has no clock)
 //
@@ -87,9 +88,10 @@ export function changes(): i32 {
 
 export function onclick(id: i32): void { // → `on-click` after the export rename
   const delta = id == INC ? 1 : id == DEC ? -1 : 0;
+  // The state transition is all the click does: the next build re-derives
+  // the readout, and the modifiers mark it stale only if the value changed.
   if (delta != 0) {
     value += delta;
-    readout.dirty = 1;
   }
 }
 

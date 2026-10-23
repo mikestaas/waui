@@ -38,11 +38,15 @@ Protocol rules:
 error-prone, so component authors write a nested tree and project it:
 
 - Rust: the [`component-ui`](crates/component-ui/) crate — a nested `Tree`
-  with `.id()`/`.style()` builders and a `lower` that emits the flat list.
-  It is dependency-free, and `lower` is generic over the output type because
-  each `wit-bindgen generate!` is crate-local, so each demo writes one small
-  projection onto its own generated `Node`.
-- AssemblyScript: `assembly/ui/tree` — the same shape in AS (see
+  with `.id()`/`.style()` builders, a `lower` that emits the flat list, and
+  a `diff` that reports what changed since the last export (the diff
+  channel's state lives in the crate, so a demo's handlers mutate state and
+  nothing else). It is dependency-free, and `lower` is generic over the
+  output type because each `wit-bindgen generate!` is crate-local, so each
+  demo writes one small projection onto its own generated `Node`.
+- AssemblyScript: `assembly/ui/tree` — the same shape and the same result in
+  AS: the diff is a stale mark on the node, set by its `label()`/`style()`
+  modifiers when the value actually changes (see
   [`assembly/README.md`](assembly/README.md)).
 
 ## Layout
@@ -56,7 +60,7 @@ error-prone, so component authors write a nested tree and project it:
 | `crates/host-cli`        | terminal host, ASCII tree, clicks via stdin; ignores `style` and the diff channel                      |
 | `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm)             |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation                       |
-| `crates/demo-stopwatch`  | the stopwatch: polls `now()`, advances on `on-tick`; diff is a bit mask over its two state nodes      |
+| `crates/demo-stopwatch`  | the stopwatch: polls `now()`, advances on `on-tick`; a running tick reports one mutation              |
 | `assembly/`              | the same two demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`), no bindings |
 
 The three wasmtime hosts load the same component file. The web host runs the
@@ -104,5 +108,7 @@ it runs from disk with no server and no network.
 
 ## Not implemented
 
-Component-directed focus, text input, images (a `resource`), and
-multi-component hosts.
+Component-directed focus, text input, images (a `resource`), multi-component
+hosts, and structural change in the AssemblyScript demos' diff: their mark
+diff tracks value change on the persistent nodes, while the Rust
+`component-ui` diff also expresses node add, remove, and re-parent.

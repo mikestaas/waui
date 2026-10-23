@@ -94,7 +94,7 @@ API:
 - chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`,
   `.markClean()` (AssemblyScript cannot name a field and a method alike the
   way Rust can, so the id's storage is `_id`; set it with `.id()`)
-- plain fields: `children`, `dirty` (the stale mark, 0/1)
+- plain fields: `children`, `dirty` (the stale mark, set by the modifiers)
 - projection: `viewOf(root)`, `diffOf(root)`, `count(w)`
 
 Behavior:
@@ -106,8 +106,8 @@ Behavior:
   exception: module globals, kept for the module's lifetime, so their dirty
   marks survive between exports. A few bytes per node, never growing.
 - **Labels** live in the static **label pool** (raw linear memory; the GC
-  never scans it). `label()` only stores the UTF-16 source; the UTF-8 pool
-  write happens at projection, keyed by the node's id. A partition is
+  never scans it). The label is kept as UTF-16 source; the UTF-8 pool write
+  happens at projection, keyed by the node's id. A partition is
   allocated at the id's first build (sized by `reserve`), never moves or
   grows, and later content overwrites it in place, clamped to fit. Why static:
   a projected record carries a *pointer* into the label bytes and the host
@@ -115,16 +115,20 @@ Behavior:
   an id gets a fresh partition per build — a changing label with no stable id
   grows the pool until it is exhausted, which then renders an empty label
   rather than corrupting memory.
-- **The diff is a stale mark on the node.** The demo sets `dirty` on its
-  state-dependent nodes in its mutation handlers (a click, a tick) and
-  `changes` calls `diffOf(root)`: the stale nodes, in depth-first pre-order,
-  with the parent taken from the structure, as `changed` mutations, marks
-  cleared. `viewOf` clears the marks too — a full snapshot accounts for
-  everything. A component that has never exported its tree reports the whole
-  tree from `diffOf`: the WIT's bootstrap rule, held here rather than in each
-  demo. The Rust `component-ui` has no node mark (its demos keep the
-  equivalent as a scalar flag); the exported byte stream is the same either
-  way.
+- **The diff is a stale mark on the node, set by the modifiers.**
+  `label(s)` and `style(color, size)` mark a node stale when the value
+  actually changes (identical values do not re-mark), so the demos' mutation
+  handlers mutate state and nothing else: the next build re-derives the
+  state-dependent nodes, and the marks follow. `changes` calls
+  `diffOf(root)`: the stale nodes, in depth-first pre-order, with the parent
+  taken from the structure, as `changed` mutations, marks cleared. `viewOf`
+  clears the marks too — a full snapshot accounts for everything. A
+  component that has never exported its tree reports the whole tree from
+  `diffOf`: the WIT's bootstrap rule, held here rather than in each demo.
+  The Rust `component-ui` reaches the same result another way (its `Tree` is
+  immutable, so it retains the last export and compares; it also expresses
+  node add/remove/re-parent, which the mark diff does not); the exported
+  byte stream is the same for these demos.
 
 ## Memory layout
 
@@ -170,6 +174,9 @@ it.
   than `?:` (so an unparenthesized `… != 0 ? 36 : 32` parses as a ternary *as*
   the condition, which never terminates a loop). Compute such values into
   locals first, as `lower` does.
+- **String `==` compares contents** (unlike JavaScript's reference semantics
+  for constructed strings): two independently built strings with the same
+  content are equal. The label setter's change detection relies on this.
 - **No `undefined`** (use `null`), **no flow narrowing** (a nullable variable
   assigned inside an `if` is still nullable after it; end branches in scalars).
 - **`static` is a class-field keyword** at module scope; module globals are
