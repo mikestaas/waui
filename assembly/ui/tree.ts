@@ -30,10 +30,18 @@
 // overwrites it in place, clamped to fit. A labeled node without an id gets
 // a fresh partition per build.
 //
-// The diff is the demo's bookkeeping (a flag or a bit mask over its
-// state-dependent nodes), as in the Rust demos; `component-ui` provides no
-// diff machinery either. This module provides the tree, the pool, and the
-// projection (`viewOf`, `mutationsOf`, `mutationsOfAll`, `count`).
+// The diff channel is a stale mark on the node. A demo holds its
+// state-dependent nodes as persistent objects (module globals; the
+// conservative GC keeps them for the module's lifetime) and its mutation
+// handlers set their `dirty` mark. `diffOf(root)` projects the stale nodes —
+// the parent taken from the tree structure — as `changed` mutations, then
+// clears the marks; a component that has never exported its tree reports the
+// whole tree, the host having seen nothing. The Rust `component-ui` has no
+// node mark (its demos keep the equivalent as a scalar flag); the exported
+// byte stream is the same either way.
+//
+// This module provides the tree, the pool, and the projection
+// (`viewOf`, `diffOf`, `count`).
 
 import { arenaAlloc, RESULT_END } from '../abi/arena';
 import {
@@ -99,6 +107,10 @@ export class Widget {
   labelSrc: string = '';
   /// The label buffer's requested capacity (consumed at first allocation).
   labelCap: i32 = 0;
+  /// Stale since the last export: the demo sets it in its mutation handlers,
+  /// and `diffOf` consumes and clears it. Only a node the demo holds
+  /// persistently keeps the mark between exports; a rebuilt node starts clean.
+  dirty: i32 = 0;
   // Materialized by `lower` (valid from projection on):
   labelPtr: i32 = 0; // the partition's base (0 = no label)
   labelLen: i32 = 0; // UTF-8 bytes, clamped to the partition
@@ -136,6 +148,13 @@ export class Widget {
   style(colorV: i32, sizeV: i32): this {
     this.color = colorV;
     this.size = sizeV;
+    return this;
+  }
+
+  /// Clear the stale mark, for chaining. `diffOf` calls this on every node
+  /// it projects.
+  markClean(): this {
+    this.dirty = 0;
     return this;
   }
 }
@@ -226,6 +245,11 @@ function materializeLabel(w: Widget): void {
 
 // ------------------------------------------------------------- projection
 
+/// Whether this component has ever exported its whole tree (via `viewOf` or
+/// a bootstrap `diffOf`). The WIT's bootstrap rule keys off it: a host that
+/// has seen nothing gets the whole tree as `changed` nodes.
+var everExported: i32 = 0;
+
 /// Count the nodes of a tree (depth-first pre-order), for sizing the arena.
 export function count(w: Widget): i32 {
   let n = 1;
@@ -234,12 +258,26 @@ export function count(w: Widget): i32 {
   return n;
 }
 
-/// Emit `w` and its descendants as records at `buf + off * stride`, in
-/// depth-first pre-order. With `isMutation`, each record is a 36-byte
-/// `changed` mutation (the tag word in front of the 32-byte node). Returns
-/// the next offset; stops at the arena's cap rather than walk into the label
-/// pool.
-function lower(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32 {
+/// Count the stale nodes of a tree (depth-first pre-order).
+function dirtyCount(w: Widget): i32 {
+  let n = w.dirty;
+  const c = w.children;
+  for (let i = 0; i < c.length; i++) n += dirtyCount(c[i]);
+  return n;
+}
+
+/// Clear the stale marks of a tree (depth-first pre-order).
+function markAllClean(w: Widget): void {
+  w.markClean();
+  const c = w.children;
+  for (let i = 0; i < c.length; i++) markAllClean(c[i]);
+}
+
+/// Emit one record for `w` at `buf + off * stride`. With `isMutation`, the
+/// record is a 36-byte `changed` mutation (the tag word in front of the
+/// 32-byte node). Returns the next offset; stops at the arena's cap rather
+/// than walk into the label pool.
+function emitNode(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32 {
   // Computed first: AS (like JS) binds `<` tighter than `?:`, so an
   // unparenthesized `buf + off * isMutation != 0 ? 36 : 32` would parse as
   // a ternary *as* the comparison.
@@ -262,7 +300,14 @@ function lower(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32
   } else {
     emitContainer(node, id, parent, w.direction);
   }
-  let next = off + 1;
+  return off + 1;
+}
+
+/// Emit `w` and its descendants in depth-first pre-order (see `emitNode`).
+/// Returns the next offset.
+function lower(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32 {
+  const id = w._id;
+  let next = emitNode(w, parent, buf, off, isMutation);
   const c = w.children;
   for (let i = 0; i < c.length; i++) {
     next = lower(c[i], id, buf, next, isMutation);
@@ -270,35 +315,53 @@ function lower(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32
   return next;
 }
 
+/// Emit the stale nodes of a tree in depth-first pre-order, each with the
+/// parent stated from the structure, and clear their marks. Non-stale nodes
+/// are skipped but descended into: a stale child sits under its unmarked
+/// parent. Returns the next offset.
+function lowerDirty(w: Widget, parent: i32, buf: i32, off: i32): i32 {
+  const id = w._id;
+  let next = off;
+  if (w.dirty != 0) {
+    next = emitNode(w, parent, buf, off, 1);
+    w.markClean();
+  }
+  const c = w.children;
+  for (let i = 0; i < c.length; i++) {
+    next = lowerDirty(c[i], id, buf, next);
+  }
+  return next;
+}
+
 /// Project the whole tree as a `view()` result: every node as a 32-byte node
-/// record in depth-first pre-order, behind a list descriptor.
+/// record in depth-first pre-order, behind a list descriptor. A full
+/// snapshot accounts for everything: the stale marks are cleared, and the
+/// component is marked exported for the bootstrap rule.
 export function viewOf(root: Widget): i32 {
+  everExported = 1;
+  markAllClean(root);
   const n = count(root);
   const buf = arenaAlloc(n * 32);
   lower(root, 0, buf, 0, 0);
   return makeList(buf, n);
 }
 
-/// Project one subtree as `changed` mutations (the diff channel). Its root's
-/// parent is stated explicitly: projected standing alone, the node must name
-/// its box (inside `view`, the walk states it).
-export function mutationsOf(root: Widget, parent: i32): i32 {
-  const n = count(root);
-  const buf = arenaAlloc(n * 36);
-  lower(root, parent, buf, 0, 1);
-  return makeList(buf, n);
-}
-
-/// Project a *set* of subtrees — the demo's dirty nodes, each with the same
-/// explicit parent — as one `changed` mutation list.
-export function mutationsOfAll(roots: Widget[], parent: i32): i32 {
-  let n = 0;
-  for (let i = 0; i < roots.length; i++) n += count(roots[i]);
+/// The diff channel for the demo's rebuilt tree. A component that has never
+/// exported its tree reports every node as `changed` (the bootstrap rule,
+/// held here rather than in each demo); otherwise exactly the stale nodes,
+/// in depth-first pre-order, each with the parent taken from the structure.
+/// The marks are cleared either way: after the call, nothing is pending.
+export function diffOf(root: Widget): i32 {
+  const first = everExported == 0;
+  const n = first ? count(root) : dirtyCount(root);
+  if (first) everExported = 1;
   if (n == 0) return makeList(0, 0); // an empty list's ptr is 0
   const buf = arenaAlloc(n * 36);
-  let off = 0;
-  for (let i = 0; i < roots.length; i++) {
-    off = lower(roots[i], parent, buf, off, 1);
+  if (first) {
+    lower(root, 0, buf, 0, 1);
+    markAllClean(root);
+  } else {
+    lowerDirty(root, 0, buf, 0);
   }
   return makeList(buf, n);
 }
