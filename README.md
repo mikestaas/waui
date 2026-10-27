@@ -4,6 +4,8 @@ A WIT world for UI components. The component owns all UI state and logic; it
 exports its widget tree, and any host renders it. Adding a host requires no
 component changes.
 
+> **Slop warning:** this code was written by Qwen 3.8 27B (LM Studio) running in OpenCode on macOS. It had web search, a browser, and shell access while doing it. Read it before shipping.
+
 ## The contract (`wit/`, package `waui:ui`)
 
 - **`widget` interface** — `text`, `button`, `container` (row/column) records,
