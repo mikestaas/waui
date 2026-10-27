@@ -45,15 +45,21 @@ impl AppImports for Host {
 impl waui::ui::widget::Host for Host {}
 
 fn waui_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
 }
 
 fn component_path(demo: &str) -> PathBuf {
-    waui_root().join("target/components").join(format!("{demo}.component.wasm"))
+    waui_root()
+        .join("target/components")
+        .join(format!("{demo}.component.wasm"))
 }
 
 fn component_path_as(demo: &str) -> PathBuf {
-    waui_root().join("target/components").join(format!("{demo}-as.component.wasm"))
+    waui_root()
+        .join("target/components")
+        .join(format!("{demo}-as.component.wasm"))
 }
 
 /// Build the component and lift it, so the test is self-contained. Cargo
@@ -65,8 +71,7 @@ fn build_component(demo: &str) {
         .join(format!("{}{}", demo.replace('-', "_"), ".wasm"));
     let out = component_path(demo);
     if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent)
-            .expect("failed to create target/components");
+        std::fs::create_dir_all(parent).expect("failed to create target/components");
     }
 
     let status = Command::new("cargo")
@@ -93,19 +98,17 @@ fn build_component(demo: &str) {
         ])
         .status()
         .expect("failed to run wasm-tools");
-    assert!(
-        status.success(),
-        "failed to lift {demo} into a component"
-    );
+    assert!(status.success(), "failed to lift {demo} into a component");
 }
 
 // The AssemblyScript build needs node + the local npm toolchain (asc);
 // without it the AS tests skip rather than fail.
 fn as_toolchain_available() -> bool {
-    waui_root()
-        .join("node_modules/.bin/asc")
-        .exists()
-        && Command::new("node").arg("--version").output().is_ok_and(|o| o.status.success())
+    waui_root().join("node_modules/.bin/asc").exists()
+        && Command::new("node")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success())
 }
 
 // The tests share their built artifacts on disk, and run on parallel
@@ -128,10 +131,13 @@ fn build_component_as(demo: &str) {
         .expect("failed to create target/components");
 
     let src = format!("assembly/{demo}/index.ts");
-    let raw = root.join("target/assembly").join(format!("{demo}.raw.wasm"));
-    let core = root.join("target/assembly").join(format!("{demo}.core.wasm"));
-    let renamed =
-        root.join("target/assembly").join(format!("{demo}-as.wasm"));
+    let raw = root
+        .join("target/assembly")
+        .join(format!("{demo}.raw.wasm"));
+    let core = root
+        .join("target/assembly")
+        .join(format!("{demo}.core.wasm"));
+    let renamed = root.join("target/assembly").join(format!("{demo}-as.wasm"));
     let embedded = root
         .join("target/assembly")
         .join(format!("{demo}-as.embedded.wasm"));
@@ -140,13 +146,17 @@ fn build_component_as(demo: &str) {
     let mut steps: Vec<Command> = Vec::new();
     {
         let mut c = Command::new("npx");
+        c.args(["asc", src.as_str(), "--outFile", raw.to_str().unwrap()]);
         c.args([
-            "asc",
-            src.as_str(),
-            "--outFile",
-            raw.to_str().unwrap(),
+            "-O",
+            "--noAssert",
+            "--runtime",
+            "incremental",
+            "--memoryBase",
+            "65536",
+            "--initialMemory",
+            "2",
         ]);
-        c.args(["-O", "--noAssert", "--runtime", "incremental", "--memoryBase", "65536", "--initialMemory", "2"]);
         steps.push(c);
     }
     {
@@ -154,22 +164,45 @@ fn build_component_as(demo: &str) {
         // is replaced with an in-module `unreachable` so the lifted
         // component is import-free again (see assembly/patch-env-abort.mjs).
         let mut c = Command::new("node");
-        c.args(["assembly/patch-env-abort.mjs", raw.to_str().unwrap(), core.to_str().unwrap()]);
+        c.args([
+            "assembly/patch-env-abort.mjs",
+            raw.to_str().unwrap(),
+            core.to_str().unwrap(),
+        ]);
         steps.push(c);
     }
     {
         let mut c = Command::new("node");
-        c.args(["assembly/rename-exports.mjs", core.to_str().unwrap(), renamed.to_str().unwrap(), "onclick=on-click", "ontick=on-tick"]);
+        c.args([
+            "assembly/rename-exports.mjs",
+            core.to_str().unwrap(),
+            renamed.to_str().unwrap(),
+            "onclick=on-click",
+            "ontick=on-tick",
+        ]);
         steps.push(c);
     }
     {
         let mut c = Command::new("wasm-tools");
-        c.args(["component", "embed", "wit/", renamed.to_str().unwrap(), "--output", embedded.to_str().unwrap()]);
+        c.args([
+            "component",
+            "embed",
+            "wit/",
+            renamed.to_str().unwrap(),
+            "--output",
+            embedded.to_str().unwrap(),
+        ]);
         steps.push(c);
     }
     {
         let mut c = Command::new("wasm-tools");
-        c.args(["component", "new", embedded.to_str().unwrap(), "--output", out.to_str().unwrap()]);
+        c.args([
+            "component",
+            "new",
+            embedded.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ]);
         steps.push(c);
     }
     for step in &mut steps {
@@ -186,15 +219,13 @@ fn build_component_as(demo: &str) {
 /// binding. The engine and store stay in the caller (the store borrows the
 /// engine, so only the owned `App` can be returned).
 fn instantiate(engine: &Engine, store: &mut Store<Host>, path: &Path) -> App {
-    let component =
-        Component::from_file(engine, path).expect("failed to load component");
+    let component = Component::from_file(engine, path).expect("failed to load component");
 
     let mut linker = Linker::new(engine);
     App::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
         .expect("failed to link world imports");
 
-    App::instantiate(store, &component, &linker)
-        .expect("failed to instantiate component")
+    App::instantiate(store, &component, &linker).expect("failed to instantiate component")
 }
 
 fn node_id(node: &waui::ui::widget::Node) -> Option<u32> {
@@ -219,10 +250,7 @@ fn text_with_id(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&str> {
 
 /// Find a node by id and return its semantic style (text and button nodes
 /// carry one; containers do not).
-fn style_of(
-    nodes: &[waui::ui::widget::Node],
-    id: u32,
-) -> Option<&waui::ui::widget::Style> {
+fn style_of(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&waui::ui::widget::Style> {
     nodes
         .iter()
         .find(|n| node_id(n) == Some(id))
@@ -274,7 +302,11 @@ fn assert_counter_roundtrip(app: &mut App, store: &mut Store<Host>) {
     // only pending change.
     app.call_on_click(&mut *store, 4).expect("on-click failed"); // 0 -> ...-2
     let mutations = app.call_changes(&mut *store).expect("changes failed");
-    assert_eq!(mutations.len(), 1, "one click should dirty exactly one node");
+    assert_eq!(
+        mutations.len(),
+        1,
+        "one click should dirty exactly one node"
+    );
     match &mutations[0] {
         waui::ui::widget::Mutation::Changed(node) => {
             assert_eq!(node_id(node), Some(3));
@@ -294,12 +326,16 @@ fn assert_counter_roundtrip(app: &mut App, store: &mut Store<Host>) {
     // No-op events (an unknown click, a tick) produce an empty diff.
     app.call_on_click(&mut *store, 99).expect("on-click failed");
     assert!(
-        app.call_changes(&mut *store).expect("changes failed").is_empty(),
+        app.call_changes(&mut *store)
+            .expect("changes failed")
+            .is_empty(),
         "an unknown click must produce no changes"
     );
     app.call_on_tick(&mut *store).expect("on-tick failed");
     assert!(
-        app.call_changes(&mut *store).expect("changes failed").is_empty(),
+        app.call_changes(&mut *store)
+            .expect("changes failed")
+            .is_empty(),
         "a no-op tick must produce no changes"
     );
 
@@ -345,7 +381,9 @@ fn assert_changes_bootstrap(app: &mut App, store: &mut Store<Host>) {
 
     // A second call, with nothing changed, is empty.
     assert!(
-        app.call_changes(&mut *store).expect("changes failed").is_empty(),
+        app.call_changes(&mut *store)
+            .expect("changes failed")
+            .is_empty(),
         "second changes() with no events should be empty"
     );
 }
@@ -371,7 +409,8 @@ fn assert_stopwatch_roundtrip(app: &mut App, store: &mut Store<Host>) {
     app.call_on_click(&mut *store, 3).expect("on-click failed");
     app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
-        store.data().last_period, 250,
+        store.data().last_period,
+        250,
         "a running stopwatch requests a 250ms refresh"
     );
 
@@ -394,10 +433,7 @@ fn assert_stopwatch_roundtrip(app: &mut App, store: &mut Store<Host>) {
                     .unwrap()
                     .parse::<u64>()
                     .unwrap();
-                assert!(
-                    ms >= 200 && ms < 2000,
-                    "unexpected elapsed time: {ms} ms"
-                );
+                assert!(ms >= 200 && ms < 2000, "unexpected elapsed time: {ms} ms");
                 assert_eq!(t.style.color, Color::Accent);
             } else {
                 panic!("expected the text readout, got another node kind");
@@ -416,14 +452,17 @@ fn assert_stopwatch_roundtrip(app: &mut App, store: &mut Store<Host>) {
         "pausing changes the readout and the button"
     );
     assert_eq!(
-        store.data().last_period, 0,
+        store.data().last_period,
+        0,
         "a paused stopwatch cancels the refresh"
     );
 
     // ...and a further wake is empty (zero diff traffic).
     app.call_on_tick(&mut *store).expect("on-tick failed");
     assert!(
-        app.call_changes(&mut *store).expect("changes failed").is_empty(),
+        app.call_changes(&mut *store)
+            .expect("changes failed")
+            .is_empty(),
         "a paused stopwatch must produce no changes"
     );
 }

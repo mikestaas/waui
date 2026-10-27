@@ -174,11 +174,7 @@ impl Retained {
                     if node_id(node).is_none() {
                         continue;
                     }
-                    match self
-                        .nodes
-                        .iter()
-                        .position(|n| node_id(n) == node_id(node))
-                    {
+                    match self.nodes.iter().position(|n| node_id(n) == node_id(node)) {
                         Some(i) => {
                             if node_parent(&self.nodes[i]) == node_parent(node) {
                                 // Same parent: the node keeps its position.
@@ -222,11 +218,7 @@ impl Retained {
 
     /// Remove a node and, if it is a container, its whole subtree.
     fn remove_subtree(&mut self, id: u32) {
-        let Some(p) = self
-            .nodes
-            .iter()
-            .position(|n| node_id(n) == Some(id))
-        else {
+        let Some(p) = self.nodes.iter().position(|n| node_id(n) == Some(id)) else {
             return;
         };
         let mut end = p + 1;
@@ -399,9 +391,7 @@ mod tests {
         if let Tree::Column(children) = &tree {
             // List order: the readout first, then the two buttons.
             assert_eq!(children.len(), 3);
-            assert!(
-                matches!(&children[0], Tree::Text(c, _) if c.as_str() == "-1")
-            );
+            assert!(matches!(&children[0], Tree::Text(c, _) if c.as_str() == "-1"));
         } else {
             panic!("expected a column of three children");
         }

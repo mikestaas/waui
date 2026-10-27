@@ -427,8 +427,7 @@ mod tests {
     fn ids(flat: &[Flat]) -> Vec<(Option<u32>, Option<u32>)> {
         flat.iter()
             .map(|f| match f {
-                Flat::Text { id, parent, .. }
-                | Flat::Button { id, parent, .. } => (*id, *parent),
+                Flat::Text { id, parent, .. } | Flat::Button { id, parent, .. } => (*id, *parent),
                 Flat::Container { id, parent, .. } => (*id, *parent),
             })
             .collect()
@@ -445,7 +444,15 @@ mod tests {
         let flat = lower(&tree, to_flat);
         // Depth-first pre-order: the parent first, then its children in
         // visual order; every child names its parent.
-        assert_eq!(ids(&flat), vec![(Some(1), None), (Some(2), Some(1)), (Some(3), Some(1)), (Some(4), Some(1))]);
+        assert_eq!(
+            ids(&flat),
+            vec![
+                (Some(1), None),
+                (Some(2), Some(1)),
+                (Some(3), Some(1)),
+                (Some(4), Some(1))
+            ]
+        );
         assert_eq!(flat.len(), 4);
         match &flat[1] {
             Flat::Button { label, .. } => assert_eq!(label, "+"),
@@ -457,13 +464,20 @@ mod tests {
     fn nested_containers_link_their_parents() {
         let tree = Tree::column(vec![
             Tree::text("a", style(Color::Neutral, Size::Small)).id(3),
-            Tree::row(vec![Tree::button("b", style(Color::Accent, Size::Small)).id(5)])
-                .id(4),
+            Tree::row(vec![
+                Tree::button("b", style(Color::Accent, Size::Small)).id(5)
+            ])
+            .id(4),
         ])
         .id(1);
         assert_eq!(
             ids(&lower(&tree, to_flat)),
-            vec![(Some(1), None), (Some(3), Some(1)), (Some(4), Some(1)), (Some(5), Some(4))]
+            vec![
+                (Some(1), None),
+                (Some(3), Some(1)),
+                (Some(4), Some(1)),
+                (Some(5), Some(4))
+            ]
         );
     }
 
@@ -471,7 +485,10 @@ mod tests {
     fn multiple_roots_are_all_lowered() {
         let trees = vec![
             Tree::text("one", style(Color::Neutral, Size::Small)).id(1),
-            Tree::column(vec![Tree::text("two", style(Color::Neutral, Size::Small)).id(3)]).id(2),
+            Tree::column(vec![
+                Tree::text("two", style(Color::Neutral, Size::Small)).id(3)
+            ])
+            .id(2),
         ];
         assert_eq!(
             ids(&lower_all(&trees, to_flat)),
@@ -524,7 +541,9 @@ mod tests {
 
     fn proj(d: DiffNode<'_>) -> M {
         match d {
-            DiffNode::Changed(t, p) => M::Changed(t.node_id().expect("a reported node has an id"), p),
+            DiffNode::Changed(t, p) => {
+                M::Changed(t.node_id().expect("a reported node has an id"), p)
+            }
             DiffNode::Removed(i) => M::Removed(i),
         }
     }
@@ -597,13 +616,18 @@ mod tests {
     fn diff_reports_additions_and_reparenting() {
         // The reference: a text (5) directly under the box (1).
         let last = flat_list(
-            &Tree::column(vec![Tree::text("a", style(Color::Neutral, Size::Small)).id(5)]).id(1),
+            &Tree::column(vec![
+                Tree::text("a", style(Color::Neutral, Size::Small)).id(5)
+            ])
+            .id(1),
         );
         // The new tree: a new row (6) under the box, the text re-parented
         // under it.
-        let new = Tree::column(vec![Tree::row(vec![
-            Tree::text("a", style(Color::Neutral, Size::Small)).id(5),
-        ])
+        let new = Tree::column(vec![Tree::row(vec![Tree::text(
+            "a",
+            style(Color::Neutral, Size::Small),
+        )
+        .id(5)])
         .id(6)])
         .id(1);
         let (out, _) = diff_with(&new, Some(&last), proj);
@@ -612,11 +636,13 @@ mod tests {
 
     #[test]
     fn diff_never_reports_idless_nodes() {
-        let last = flat_list(&Tree::column(vec![
-            Tree::text("old", style(Color::Neutral, Size::Small)), // id-less
-            Tree::text("keep", style(Color::Neutral, Size::Small)).id(2),
-        ])
-        .id(1));
+        let last = flat_list(
+            &Tree::column(vec![
+                Tree::text("old", style(Color::Neutral, Size::Small)), // id-less
+                Tree::text("keep", style(Color::Neutral, Size::Small)).id(2),
+            ])
+            .id(1),
+        );
         let new = Tree::column(vec![
             Tree::text("new", style(Color::Neutral, Size::Small)), // id-less, changed
             Tree::text("keep", style(Color::Neutral, Size::Small)).id(2),

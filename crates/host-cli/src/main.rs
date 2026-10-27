@@ -14,7 +14,7 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, App, AppImports, Tree, waui};
+use host_shared::{build_tree, waui, App, AppImports, Tree};
 
 /// The host's implementation of the world's imports.
 struct Host;
@@ -44,16 +44,15 @@ fn main() {
     };
 
     let engine = Engine::default();
-    let component =
-        Component::from_file(&engine, &path).expect("failed to load component");
+    let component = Component::from_file(&engine, &path).expect("failed to load component");
 
     let mut linker = Linker::new(&engine);
     App::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
         .expect("failed to link world imports");
 
     let mut store = Store::new(&engine, Host);
-    let app = App::instantiate(&mut store, &component, &linker)
-        .expect("failed to instantiate component");
+    let app =
+        App::instantiate(&mut store, &component, &linker).expect("failed to instantiate component");
 
     println!("waui (terminal host) rendering: {path}");
     println!("type the id of a widget to click it, or q to quit");
