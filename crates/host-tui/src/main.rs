@@ -21,7 +21,7 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, App, AppImports, Retained, Tree, waui};
+use host_shared::{build_tree, waui, App, AppImports, Retained, Tree};
 
 // The contract's style tokens, aliased to avoid clashing with ratatui's
 // `Color` and `Style`.
@@ -30,10 +30,7 @@ use host_shared::waui::ui::widget::{Color as WColor, Size as WSize, Style as WSt
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{
-        disable_raw_mode, enable_raw_mode, EnterAlternateScreen,
-        LeaveAlternateScreen,
-    },
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::{CrosstermBackend, TestBackend},
@@ -63,8 +60,10 @@ impl AppImports for Host {
         now_ms()
     }
     fn schedule(&mut self, period: u64) {
-        *self.wake.lock().unwrap() =
-            Wake { rate_ms: period, last_wake_ms: now_ms() };
+        *self.wake.lock().unwrap() = Wake {
+            rate_ms: period,
+            last_wake_ms: now_ms(),
+        };
     }
 }
 
@@ -153,9 +152,7 @@ fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>) {
             } else {
                 node_style(style)
             };
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(style);
+            let block = Block::default().borders(Borders::ALL).border_style(style);
             frame.render_widget(
                 Paragraph::new(label.clone())
                     .style(style)
@@ -165,21 +162,15 @@ fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>) {
             );
         }
         Tree::Row(children) => {
-            let layout = Layout::horizontal(
-                children
-                    .iter()
-                    .map(|c| Constraint::Length(width_of(c))),
-            );
+            let layout =
+                Layout::horizontal(children.iter().map(|c| Constraint::Length(width_of(c))));
             for (child, child_area) in children.iter().zip(layout.split(area).iter()) {
                 render(frame, child, *child_area, focus);
             }
         }
         Tree::Column(children) => {
-            let layout = Layout::vertical(
-                children
-                    .iter()
-                    .map(|c| Constraint::Length(height_of(c))),
-            );
+            let layout =
+                Layout::vertical(children.iter().map(|c| Constraint::Length(height_of(c))));
             for (child, child_area) in children.iter().zip(layout.split(area).iter()) {
                 render(frame, child, *child_area, focus);
             }
@@ -215,14 +206,11 @@ fn sgr_fg(c: Color) -> Option<&'static str> {
 /// Draw one full frame: a hint bar, then the tree centered below it.
 fn draw(frame: &mut Frame, tree: &Tree, focus: Option<u32>) {
     let area = frame.area();
-    let bars: [Rect; 2] =
-        Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
+    let bars: [Rect; 2] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
     frame.render_widget(
-        Paragraph::new(
-            " waui (tui)   up/down or j/k: focus   enter/space: click   q: quit ",
-        )
-        .style(Style::default().fg(Color::DarkGray))
-        .alignment(Alignment::Left),
+        Paragraph::new(" waui (tui)   up/down or j/k: focus   enter/space: click   q: quit ")
+            .style(Style::default().fg(Color::DarkGray))
+            .alignment(Alignment::Left),
         bars[0],
     );
 
@@ -266,11 +254,7 @@ struct TerminalGuard;
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(
-            io::stdout(),
-            LeaveAlternateScreen,
-            crossterm::cursor::Show
-        );
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
     }
 }
 
@@ -285,9 +269,7 @@ fn main() {
             "--dump" => {}
             "--click" => {
                 if let Some(v) = args.get(i + 1) {
-                    clicks.push(
-                        v.parse().expect("--click takes a numeric widget id"),
-                    );
+                    clicks.push(v.parse().expect("--click takes a numeric widget id"));
                     i += 1;
                 } else {
                     eprintln!("--click takes a numeric widget id");
@@ -311,37 +293,36 @@ fn main() {
     };
 
     let engine = Engine::default();
-    let component =
-        Component::from_file(&engine, &path).expect("failed to load component");
+    let component = Component::from_file(&engine, &path).expect("failed to load component");
 
     let mut linker = Linker::new(&engine);
     App::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
         .expect("failed to link world imports");
 
     let mut store = Store::new(&engine, Host::default());
-    let app = App::instantiate(&mut store, &component, &linker)
-        .expect("failed to instantiate component");
+    let app =
+        App::instantiate(&mut store, &component, &linker).expect("failed to instantiate component");
     // The loop's handle on the component's refresh request.
     let wake = store.data().wake.clone();
 
     for id in &clicks {
-        app.call_on_click(&mut store, *id).expect("on-click() failed");
+        app.call_on_click(&mut store, *id)
+            .expect("on-click() failed");
     }
 
     if dump {
         // Headless: render one frame into an in-memory buffer and print it.
         let nodes = app.call_view(&mut store).expect("view() failed");
         let tree = build_tree(&nodes);
-        let (w, h) = (
-            width_of(&tree).max(10) + 2,
-            height_of(&tree) + 3,
-        );
-        let mut terminal = Terminal::new(TestBackend::new(w, h))
-            .expect("failed to create terminal");
+        let (w, h) = (width_of(&tree).max(10) + 2, height_of(&tree) + 3);
+        let mut terminal =
+            Terminal::new(TestBackend::new(w, h)).expect("failed to create terminal");
         let mut focus_ids = Vec::new();
         focusable_ids(&tree, &mut focus_ids);
         let focus = focus_ids.first().copied();
-        let completed = terminal.draw(|f| draw(f, &tree, focus)).expect("draw failed");
+        let completed = terminal
+            .draw(|f| draw(f, &tree, focus))
+            .expect("draw failed");
         let buf = completed.buffer;
         let area = buf.area();
         // Print the buffer as text, prefixed with ANSI escapes for styled
@@ -360,13 +341,11 @@ fn main() {
                     styled = true;
                 }
                 if modifier.intersects(Modifier::BOLD | Modifier::DIM) {
-                    line.push_str(
-                        if modifier.contains(Modifier::BOLD) {
-                            "\x1b[1m"
-                        } else {
-                            "\x1b[2m"
-                        },
-                    );
+                    line.push_str(if modifier.contains(Modifier::BOLD) {
+                        "\x1b[1m"
+                    } else {
+                        "\x1b[2m"
+                    });
                     styled = true;
                 }
                 line.push_str(sym);
@@ -385,8 +364,8 @@ fn main() {
     let _guard = TerminalGuard;
     let mut stdout = stdout();
     execute!(stdout, EnterAlternateScreen).expect("failed to enter alt screen");
-    let mut terminal = Terminal::new(CrosstermBackend::new(stdout))
-        .expect("failed to create terminal");
+    let mut terminal =
+        Terminal::new(CrosstermBackend::new(stdout)).expect("failed to create terminal");
 
     let poll = Duration::from_millis(50);
     // The retained tree, as the diff protocol maintains it: a full
@@ -404,9 +383,7 @@ fn main() {
     while !quit {
         // Read every pending event before acting on them.
         if event::poll(poll).expect("failed to poll events") {
-            while event::poll(Duration::ZERO)
-                .expect("failed to poll events")
-            {
+            while event::poll(Duration::ZERO).expect("failed to poll events") {
                 match event::read().expect("failed to read event") {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         match key.code {
@@ -419,10 +396,7 @@ fn main() {
                             KeyCode::Up | KeyCode::Char('k') => {
                                 focus_idx = focus_idx.wrapping_sub(1);
                             }
-                            KeyCode::Down
-                            | KeyCode::Left
-                            | KeyCode::Right
-                            | KeyCode::Char('j') => {
+                            KeyCode::Down | KeyCode::Left | KeyCode::Right | KeyCode::Char('j') => {
                                 focus_idx = focus_idx.wrapping_add(1);
                             }
                             KeyCode::Enter | KeyCode::Char(' ') => {
@@ -443,8 +417,7 @@ fn main() {
             let mut w = wake.lock().unwrap();
             if w.rate_ms > 0 && now >= w.last_wake_ms + w.rate_ms {
                 w.last_wake_ms = now;
-                app.call_on_tick(&mut store)
-                    .expect("on-tick() failed");
+                app.call_on_tick(&mut store).expect("on-tick() failed");
                 pending = true;
             }
         }
@@ -453,9 +426,7 @@ fn main() {
         // reported something (an empty diff skips the rebuild).
         if pending {
             pending = false;
-            let mutations = app
-                .call_changes(&mut store)
-                .expect("changes() failed");
+            let mutations = app.call_changes(&mut store).expect("changes() failed");
             if retained.apply(&mutations) {
                 tree = build_tree(retained.nodes());
             }

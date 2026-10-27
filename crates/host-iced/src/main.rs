@@ -18,7 +18,7 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, App, AppImports, Retained, Tree, waui};
+use host_shared::{build_tree, waui, App, AppImports, Retained, Tree};
 
 // The contract's style tokens, aliased to avoid clashing with `iced::Color`.
 use host_shared::waui::ui::widget::{Color as WColor, Size as WSize};
@@ -45,8 +45,10 @@ impl AppImports for Host {
         now_ms()
     }
     fn schedule(&mut self, period: u64) {
-        *self.wake.lock().unwrap() =
-            Wake { rate_ms: period, last_wake_ms: now_ms() };
+        *self.wake.lock().unwrap() = Wake {
+            rate_ms: period,
+            last_wake_ms: now_ms(),
+        };
     }
 }
 
@@ -99,8 +101,7 @@ fn boot() -> State {
     };
 
     let engine = Engine::default();
-    let component =
-        Component::from_file(&engine, &path).expect("failed to load component");
+    let component = Component::from_file(&engine, &path).expect("failed to load component");
 
     let mut linker = Linker::new(&engine);
     App::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
@@ -108,8 +109,8 @@ fn boot() -> State {
 
     let wake = Arc::new(Mutex::new(Wake::default()));
     let mut store = Store::new(&engine, Host { wake: wake.clone() });
-    let app = App::instantiate(&mut store, &component, &linker)
-        .expect("failed to instantiate component");
+    let app =
+        App::instantiate(&mut store, &component, &linker).expect("failed to instantiate component");
 
     let retained = Retained::from_view(
         app.call_view(&mut store)
@@ -231,17 +232,13 @@ fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
             }
             // A button with no id is display-only.
             match id {
-                Some(id) => widget::button(label)
-                    .on_press(Message::Click(*id))
-                    .into(),
+                Some(id) => widget::button(label).on_press(Message::Click(*id)).into(),
                 None => widget::button(label).into(),
             }
         }
-        Tree::Row(children) => {
-            widget::row(children.iter().map(map_tree)).spacing(8).into()
-        }
-        Tree::Column(children) => {
-            widget::column(children.iter().map(map_tree)).spacing(8).into()
-        }
+        Tree::Row(children) => widget::row(children.iter().map(map_tree)).spacing(8).into(),
+        Tree::Column(children) => widget::column(children.iter().map(map_tree))
+            .spacing(8)
+            .into(),
     }
 }

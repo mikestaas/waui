@@ -64,11 +64,7 @@ fn readout(elapsed: u64, running: bool) -> Tree {
 
 fn button(running: bool) -> Tree {
     Tree::button(
-        if running {
-            "pause"
-        } else {
-            "start"
-        },
+        if running { "pause" } else { "start" },
         Style::new(
             if running {
                 Color::Warning
@@ -144,12 +140,15 @@ impl Guest for Stopwatch {
     fn changes() -> Vec<Mutation> {
         // `component-ui`'s diff against its retained last export; while
         // paused, nothing differs and this is empty.
-        component_ui::diff(&tree(elapsed(), RUNNING.load(Ordering::Relaxed)), |c| match c {
-            component_ui::DiffNode::Changed(node, parent) => {
-                Mutation::Changed(to_node(node, parent))
-            }
-            component_ui::DiffNode::Removed(id) => Mutation::Removed(id),
-        })
+        component_ui::diff(
+            &tree(elapsed(), RUNNING.load(Ordering::Relaxed)),
+            |c| match c {
+                component_ui::DiffNode::Changed(node, parent) => {
+                    Mutation::Changed(to_node(node, parent))
+                }
+                component_ui::DiffNode::Removed(id) => Mutation::Removed(id),
+            },
+        )
     }
 
     fn on_click(id: u32) {
