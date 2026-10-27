@@ -1,12 +1,14 @@
 //! A stopwatch that uses the host's clock: the component polls `now()` and
-//! renders elapsed time, driven by the host's periodic `on-tick` calls.
+//! renders elapsed time.
 //!
 //! Its diff is state-dependent: while running, the readout's value changes
 //! with the clock, so each `changes` reports it; while paused, it reports
-//! nothing. The view is a nested `component-ui` tree projected into the
-//! contract's flat list at the ABI boundary; the diff state lives in
-//! `component-ui`, which retains the last export and reports what differs.
-//! The handlers mutate state only.
+//! nothing. The refresh that makes the running readout visible is requested
+//! by the component — `schedule` at 250ms while running, 0 while paused —
+//! so the host wakes it only while the readout moves. The view is a nested
+//! `component-ui` tree projected into the contract's flat list at the ABI
+//! boundary; the diff state lives in `component-ui`, which retains the last
+//! export and reports what differs.
 
 wit_bindgen::generate!({
     world: "app",
@@ -21,6 +23,8 @@ use component_ui::{Color, Direction, Size, Style, Tree};
 use waui::ui::widget as wit;
 
 const NOT_RUNNING: u64 = 0;
+/// The requested refresh period while running, in ms.
+const REFRESH_PERIOD: u64 = 250;
 
 static START: AtomicU64 = AtomicU64::new(NOT_RUNNING);
 static FROZEN: AtomicU64 = AtomicU64::new(0);
@@ -162,8 +166,13 @@ impl Guest for Stopwatch {
             START.store(now, Ordering::Relaxed);
             RUNNING.store(true, Ordering::Relaxed);
         }
-        // State only: the next build re-derives both nodes, and the diff
-        // compares.
+        // The refresh follows `running`: the host wakes the component at
+        // the period while running, never while paused.
+        schedule(if RUNNING.load(Ordering::Relaxed) {
+            REFRESH_PERIOD
+        } else {
+            0
+        });
     }
 
     // A tick changes no state: while running, the next `changes` re-derives

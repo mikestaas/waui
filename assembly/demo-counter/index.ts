@@ -6,6 +6,7 @@
 // buttons are static. The readout is the only state-dependent node, so it is
 // a persistent object: derived from `value` on every build, marked stale by
 // its modifiers when the value changes. The handlers mutate state only.
+// It never calls `schedule`, so the host never wakes it.
 //
 //   view:     a column (id 1) with the "+" button (id 2, positive), the
 //             readout (id 3; its color is state — negative below zero), and

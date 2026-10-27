@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 wasmtime = { workspace = true }
-# The `smol` executor provides `iced::time::every`, which the host needs to
-# drive periodic `on-tick` calls.
+# The `smol` executor provides `iced::time::every`, which the host needs
+# for its 50ms clock that gates the component's requested refresh.
 iced = { workspace = true, features = ["smol"] }
 host-shared = { path = "../host-shared" }

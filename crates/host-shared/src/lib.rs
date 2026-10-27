@@ -9,7 +9,8 @@
 //! precede children) are documented by the WIT itself, so their reference
 //! implementation lives here rather than in every host. What stays per-host
 //! is the renderer — the mapping of this tree onto a toolkit — plus
-//! host-local concerns (the TUI's focus ring). A host that cannot express
+//! host-local concerns (the clock and refresh-request impls, the TUI's
+//! focus ring). A host that cannot express
 //! part of the contract (host-cli, plain ASCII) draws less of it.
 //!
 //! The web host does not use this crate: it is JavaScript, and

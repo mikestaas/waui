@@ -3,7 +3,9 @@
 //!
 //! Ignores the diff channel — it re-queries `view()` after every event,
 //! which stays correct because `view()` is always the full tree — and
-//! ignores `style` (plain ASCII has no palette).
+//! ignores `style` (plain ASCII has no palette). Treats `schedule` as
+//! advisory too: it has no timer, so a time-based readout advances only
+//! when a click re-queries `view()`.
 
 use std::io::{self, BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -24,6 +26,8 @@ impl AppImports for Host {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0)
     }
+    // This host has no timer: the request is ignored (see the header).
+    fn schedule(&mut self, _period: u64) {}
 }
 
 // The `widget` interface is pulled into the world (via `use widget.{...}`),

@@ -42,7 +42,7 @@ target/components/<demo>-as.component.wasm
   through WAT (wabt's `wasm2wat`/`wat2wasm`) and checks the result: valid,
   no `env` imports, same export set. Both old and new bodies trap on OOM, so
   behavior is unchanged. After the patch: the counter is import-free; the
-  stopwatch keeps only the world's own `$root.now`.
+  stopwatch keeps only the world's own `$root.now` and `$root.schedule`.
 - **`rename-exports.mjs`** rewrites two export names: the world spells them
   `on-click`/`on-tick` (hyphens, which WIT uses verbatim as wasm export
   names), and AssemblyScript identifiers cannot contain hyphens, so the demos
@@ -149,7 +149,7 @@ few hundred bytes of retained heap, never growing.
 | `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it)                              |
 | `utf8.ts`   | `writeUtf8` (surrogate pairs; stops at a whole character at the `end` bound) and `writeInt32`/`writeInt64` (a number that would not fit whole is not written) |
 | `node.ts`   | emitters for the ABI encodings: the 32-byte `node` record, the 36-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`)           |
-| `root.ts`   | the world's import side: `now` as `@external('$root', 'now')`                                                                                   |
+| `root.ts`   | the world's import side: `now` and `schedule` as `@external('$root', ...)`                                                                        |
 
 AS strings are UTF-16; the ABI's are UTF-8 bytes, converted at write time.
 The demos' output is byte-identical to the Rust demos' — the selftest asserts

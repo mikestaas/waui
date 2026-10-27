@@ -2,14 +2,15 @@
 // `crates/demo-stopwatch`, same `waui:ui/app` world.
 //
 // Exercises the world's import side: the component polls `now()` (a host
-// clock) and renders elapsed time, driven by the host's `on-tick`.
+// clock) and renders elapsed time; it also requests its own refresh, so the
+// host wakes it only while running.
 //
 // The diff is state-dependent, as in the Rust original: while running, the
 // readout's value changes with the clock, so each `changes` reports it;
 // while paused, nothing does. The readout and the button are the
 // state-dependent nodes: persistent objects, derived on every build, marked
-// stale by their modifiers when the value changes. The handlers mutate state
-// only.
+// stale by their modifiers when the value changes. The handlers hold no
+// diff state; the running toggle also requests the refresh.
 //
 // The UI is a nested tree in `../ui/tree`, rebuilt from state per export;
 // the elapsed reading is sampled once, so one exported list never mixes two
@@ -30,7 +31,7 @@ import {
   SIZE_LARGE,
   SIZE_MEDIUM,
 } from '../abi/node';
-import { now } from '../abi/root';
+import { now, schedule } from '../abi/root';
 import {
   Widget,
   button,
@@ -47,6 +48,9 @@ export { cabi_post_changes, cabi_post_view };
 const BOX = 1;
 const READOUT = 2;
 const BUTTON = 3;
+
+/// The requested refresh period while running, in ms.
+const REFRESH_PERIOD: i64 = 250;
 
 // Host milliseconds of the start of the current run; 0 = not running (a
 // host clock starts far above 0, so it doubles as the sentinel).
@@ -114,8 +118,9 @@ export function onclick(id: i32): void { // → `on-click` after the export rena
     start = t;
     running = 1;
   }
-  // State only: the next build re-derives both nodes, and the modifiers mark
-  // them stale.
+  // The refresh follows `running`: the host wakes the component at the
+  // period while running, never while paused.
+  schedule(running != 0 ? REFRESH_PERIOD : 0);
 }
 
 // → `on-tick` after the export rename. A tick changes no state: while
