@@ -10,6 +10,9 @@
 //! component reports that node (the whole tree on first contact). The diff
 //! state lives in `component-ui`, which retains the last export and reports
 //! what differs; the handler mutates state only.
+//!
+//! It never calls `schedule` (it changes only on a click), so the host
+//! never wakes it.
 
 wit_bindgen::generate!({
     world: "app",

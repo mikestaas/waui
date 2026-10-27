@@ -11,8 +11,9 @@ package waui:ui;
 /// full tree, so this stays correct. The diff is an optimization, opt-in
 /// per host.
 ///
-/// The host calls `on-tick` periodically and provides a `now` clock the
-/// component can poll.
+/// The host calls `on-tick` at the period the component requests with
+/// `schedule` (0 = never) and provides a `now` clock the component can
+/// poll.
 world app {
   use widget.{node, mutation};
 
@@ -28,9 +29,16 @@ world app {
   /// The widget with the given id was activated (e.g. clicked).
   export on-click: func(id: u32);
 
-  /// The host calls this periodically (e.g. every 250ms) so time-based UIs
-  /// can advance.
+  /// The host calls this at the component's scheduled period, so
+  /// time-based UIs can advance.
   export on-tick: func();
+
+  /// Request a refresh period, in ms: the host wakes the component
+  /// (`on-tick`, then `changes`) at that period until the component
+  /// schedules a new one; 0 cancels. A host may ignore the request — a
+  /// time-based UI then advances only on events — because the diff stays
+  /// correct either way.
+  import schedule: func(period: u64);
 
   /// The host's clock, in milliseconds (arbitrary, monotonic epoch).
   import now: func() -> u64;

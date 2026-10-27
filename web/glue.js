@@ -16,6 +16,11 @@
 //                              `cabi_post_changes(desc)`.
 //   on-click(id: u32)        : `on-click(i32)` — passes directly.
 //   on-tick()                : `on-tick()`.
+//   schedule(p: u64)         : `$root"."schedule"`, `(i64)` — the
+//                              component's refresh request in ms (0 = no
+//                              periodic wake). Delivered to the
+//                              `onSchedule` hook, if `createApp` was
+//                              passed one; a no-op without it.
 //   now() -> u64             : imported as `$root"."now"`, `() -> i64`
 //                              (JS BigInt). Provided unconditionally; the
 //                              counter never calls it.
@@ -52,11 +57,16 @@
 // This module is written to run in both a browser and Node so the same code
 // can be exercised headlessly (see selftest.mjs).
 
-export async function createApp(wasmBytes) {
+export async function createApp(wasmBytes, hooks = {}) {
   const { instance } = await WebAssembly.instantiate(wasmBytes, {
     $root: {
       // The world's `now: func() -> u64` import, in host milliseconds.
       now: () => BigInt(Date.now()),
+      // The world's `schedule: func(u64)` import: the component's refresh
+      // request, in ms; 0 = no periodic wake.
+      schedule: (p) => {
+        if (hooks.onSchedule) hooks.onSchedule(Number(p));
+      },
     },
   });
   const ex = instance.exports;

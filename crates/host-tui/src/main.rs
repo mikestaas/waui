@@ -8,10 +8,13 @@
 //! verification of the tree-to-UI mapping; `--click <id>` injects clicks
 //! before the interactive loop.
 //!
-//! The loop calls `on-tick` + `changes` every 250ms and rebuilds the
-//! retained tree only when the diff is non-empty; otherwise it redraws.
+//! The loop wakes the component — `on-tick` + `changes` — at the period
+//! the component requests with `schedule` (0 = never; the 50ms event poll
+//! sets the granularity) and rebuilds the retained tree only when the diff
+//! is non-empty; otherwise it redraws.
 
 use std::io::{self, stdout};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wasmtime::component::*;
 use wasmtime::{Engine, Store};
@@ -40,16 +43,37 @@ use ratatui::{
     Frame, Terminal,
 };
 
+/// The component's refresh request, shared between the world-import impl
+/// (the writer) and the loop (the reader): the period in ms, 0 = no
+/// periodic wake, and the last wake.
+#[derive(Default)]
+struct Wake {
+    rate_ms: u64,
+    last_wake_ms: u64,
+}
+
 /// The host's implementation of the world's imports.
-struct Host;
+#[derive(Clone, Default)]
+struct Host {
+    wake: Arc<Mutex<Wake>>,
+}
 
 impl AppImports for Host {
     fn now(&mut self) -> u64 {
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0)
+        now_ms()
     }
+    fn schedule(&mut self, period: u64) {
+        *self.wake.lock().unwrap() =
+            Wake { rate_ms: period, last_wake_ms: now_ms() };
+    }
+}
+
+// The host clock in ms (wall time, as the world's `now` import promises).
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 // The `widget` interface is pulled into the world (via `use widget.{node}`),
@@ -294,9 +318,11 @@ fn main() {
     App::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
         .expect("failed to link world imports");
 
-    let mut store = Store::new(&engine, Host);
+    let mut store = Store::new(&engine, Host::default());
     let app = App::instantiate(&mut store, &component, &linker)
         .expect("failed to instantiate component");
+    // The loop's handle on the component's refresh request.
+    let wake = store.data().wake.clone();
 
     for id in &clicks {
         app.call_on_click(&mut store, *id).expect("on-click() failed");
@@ -362,9 +388,7 @@ fn main() {
     let mut terminal = Terminal::new(CrosstermBackend::new(stdout))
         .expect("failed to create terminal");
 
-    let tick = Duration::from_millis(250);
     let poll = Duration::from_millis(50);
-    let mut last_tick = SystemTime::now();
     // The retained tree, as the diff protocol maintains it: a full
     // snapshot at startup, then `changes` applied after each event.
     let nodes = app.call_view(&mut store).expect("view() failed");
@@ -412,11 +436,17 @@ fn main() {
             }
         }
 
-        if SystemTime::now().duration_since(last_tick).unwrap_or(tick) >= tick
+        // The component's refresh request (0 = never): wake when its
+        // period has elapsed; each `schedule` call restarts the period.
+        let now = now_ms();
         {
-            last_tick = SystemTime::now();
-            app.call_on_tick(&mut store).expect("on-tick() failed");
-            pending = true;
+            let mut w = wake.lock().unwrap();
+            if w.rate_ms > 0 && now >= w.last_wake_ms + w.rate_ms {
+                w.last_wake_ms = now;
+                app.call_on_tick(&mut store)
+                    .expect("on-tick() failed");
+                pending = true;
+            }
         }
 
         // Apply the diff to the retained tree; rebuild only when it

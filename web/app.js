@@ -2,7 +2,7 @@
 // contract the other hosts use) and renders it as plain elements.
 //
 // It follows the diff protocol: the initial `view()` is a full snapshot,
-// and after each click or tick the host applies the component's
+// and after each click or scheduled wake the host applies the component's
 // `changes()` to a retained copy of the node list. Content-only mutations
 // (a text or button whose position in the tree is unchanged) are applied
 // in place — the existing element is restyled, no DOM rebuild, and the
@@ -10,10 +10,27 @@
 // additions, re-parenting, container changes) falls back to a full rebuild
 // from the retained tree; an empty diff does nothing.
 //
+// Time-based refresh is requested by the component: its `schedule` import
+// arms (or stops, with 0) the host's wake loop, which calls `on-tick()`
+// then `changes()`.
+//
 // This file is concatenated into the generated page by build.mjs, so it
 // relies on `createApp` from glue.js and `WAUI_WASM_BYTES` from the page.
 
-const app = await createApp(WAUI_WASM_BYTES);
+// The host's wake loop, armed (or stopped) by the component's `schedule`
+// request. `arm` may run during `createApp`, before `app` is bound, so it
+// only manages the timer; the interval callback does the calling.
+let timer = null;
+function arm(ms) {
+  if (timer) clearInterval(timer);
+  timer = ms > 0 ? setInterval(wake, ms) : null;
+}
+function wake() {
+  app.tick();
+  refresh();
+}
+
+const app = await createApp(WAUI_WASM_BYTES, { onSchedule: arm });
 
 const rootEl = document.getElementById('app');
 const badge = document.getElementById('badge');
@@ -186,12 +203,5 @@ rootEl.addEventListener('click', (e) => {
   app.click(Number(btn.dataset.id));
   refresh();
 });
-
-// The host's tick: drive time-based UIs, then apply whatever the
-// component reports (an empty diff on ticks that changed nothing).
-setInterval(() => {
-  app.tick();
-  refresh();
-}, 250);
 
 rebuild();

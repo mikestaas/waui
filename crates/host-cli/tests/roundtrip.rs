@@ -1,6 +1,8 @@
-//! Headless contract test: drive the counter through the same wasmtime
-//! host code the real hosts use, and assert on the flat node list `view()`
-//! returns, its style, and the diff channel.
+//! Headless contract test: drive the counter and the stopwatch through the
+//! same wasmtime host code the real hosts use, and assert on the flat node
+//! list `view()` returns, its style, the diff channel, and the refresh
+//! request (`schedule`: a 250ms period while the stopwatch runs, 0 while
+//! it pauses; the counter never calls it).
 //!
 //! Each scenario runs against both producer languages: the Rust component
 //! (cargo + wit-bindgen) and its AssemblyScript one (asc + the hand-rolled
@@ -17,7 +19,13 @@ wasmtime::component::bindgen!({
     path: "../../wit",
 });
 
-struct Host;
+/// Records the component's refresh requests (the world's `schedule`
+/// import), for the assertions below.
+#[derive(Default)]
+struct Host {
+    last_period: u64,
+    calls: u64,
+}
 
 impl AppImports for Host {
     fn now(&mut self) -> u64 {
@@ -25,6 +33,10 @@ impl AppImports for Host {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0)
+    }
+    fn schedule(&mut self, period: u64) {
+        self.last_period = period;
+        self.calls += 1;
     }
 }
 
@@ -36,21 +48,22 @@ fn waui_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("..")
 }
 
-fn component_path() -> PathBuf {
-    waui_root().join("target/components/demo-counter.component.wasm")
+fn component_path(demo: &str) -> PathBuf {
+    waui_root().join("target/components").join(format!("{demo}.component.wasm"))
 }
 
-fn component_path_as() -> PathBuf {
-    waui_root().join("target/components/demo-counter-as.component.wasm")
+fn component_path_as(demo: &str) -> PathBuf {
+    waui_root().join("target/components").join(format!("{demo}-as.component.wasm"))
 }
 
-/// Build the counter component and lift it, so the test is self-contained.
-fn build_component() {
+/// Build the component and lift it, so the test is self-contained. Cargo
+/// names the artifact with `_` where the crate name has `-`.
+fn build_component(demo: &str) {
     let root = waui_root();
-    let wasm =
-        root.join("target/wasm32-unknown-unknown/release/demo_counter.wasm");
-    let out =
-        root.join("target/components/demo-counter.component.wasm");
+    let wasm = root
+        .join("target/wasm32-unknown-unknown/release")
+        .join(format!("{}{}", demo.replace('-', "_"), ".wasm"));
+    let out = component_path(demo);
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent)
             .expect("failed to create target/components");
@@ -60,7 +73,7 @@ fn build_component() {
         .args([
             "build",
             "-p",
-            "demo-counter",
+            demo,
             "--release",
             "--target",
             "wasm32-unknown-unknown",
@@ -68,7 +81,7 @@ fn build_component() {
         .current_dir(&root)
         .status()
         .expect("failed to run cargo");
-    assert!(status.success(), "failed to build demo-counter");
+    assert!(status.success(), "failed to build {demo}");
 
     let status = Command::new("wasm-tools")
         .args([
@@ -82,7 +95,7 @@ fn build_component() {
         .expect("failed to run wasm-tools");
     assert!(
         status.success(),
-        "failed to lift demo-counter into a component"
+        "failed to lift {demo} into a component"
     );
 }
 
@@ -102,28 +115,37 @@ fn as_toolchain_available() -> bool {
 static RUST_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static AS_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Build the AssemblyScript counter and lift it:
+/// Build the AssemblyScript component and lift it:
 /// asc (the incremental runtime) -> the `env.abort` patch -> export rename
 /// -> component embed (the WIT) -> component new.
 /// (Callers hold `AS_BUILD_LOCK` across the build *and* the load, so a
 /// sibling test cannot lift over the file while we read it.)
-fn build_component_as() {
+fn build_component_as(demo: &str) {
     let root = waui_root();
     std::fs::create_dir_all(root.join("target/assembly"))
         .expect("failed to create target/assembly");
     std::fs::create_dir_all(root.join("target/components"))
         .expect("failed to create target/components");
 
-    let raw = root.join("target/assembly/demo-counter.raw.wasm");
-    let core = root.join("target/assembly/demo-counter.core.wasm");
-    let renamed = root.join("target/assembly/demo-counter-as.wasm");
-    let embedded = root.join("target/assembly/demo-counter-as.embedded.wasm");
-    let out = component_path_as();
+    let src = format!("assembly/{demo}/index.ts");
+    let raw = root.join("target/assembly").join(format!("{demo}.raw.wasm"));
+    let core = root.join("target/assembly").join(format!("{demo}.core.wasm"));
+    let renamed =
+        root.join("target/assembly").join(format!("{demo}-as.wasm"));
+    let embedded = root
+        .join("target/assembly")
+        .join(format!("{demo}-as.embedded.wasm"));
+    let out = component_path_as(demo);
 
     let mut steps: Vec<Command> = Vec::new();
     {
         let mut c = Command::new("npx");
-        c.args(["asc", "assembly/demo-counter/index.ts", "--outFile", raw.to_str().unwrap()]);
+        c.args([
+            "asc",
+            src.as_str(),
+            "--outFile",
+            raw.to_str().unwrap(),
+        ]);
         c.args(["-O", "--noAssert", "--runtime", "incremental", "--memoryBase", "65536", "--initialMemory", "2"]);
         steps.push(c);
     }
@@ -153,7 +175,10 @@ fn build_component_as() {
     for step in &mut steps {
         step.current_dir(&root);
         let status = step.status().expect("failed to run a build tool");
-        assert!(status.success(), "failed to build the AssemblyScript counter");
+        assert!(
+            status.success(),
+            "failed to build the AssemblyScript {demo}"
+        );
     }
 }
 
@@ -295,6 +320,10 @@ fn assert_counter_roundtrip(app: &mut App, store: &mut Store<Host>) {
         }
         _ => panic!("expected a changed node"),
     }
+
+    // The counter changes only on a click: it never requests a refresh, so
+    // a host that honors `schedule` never wakes it.
+    assert_eq!(store.data().calls, 0, "a counter never calls schedule");
 }
 
 /// A host that never calls view() still gets the whole tree from the first
@@ -321,16 +350,94 @@ fn assert_changes_bootstrap(app: &mut App, store: &mut Store<Host>) {
     );
 }
 
+/// The stopwatch's contract: the refresh request — a 250ms period while
+/// running, cancelled on pause — and the wake behavior it drives.
+fn assert_stopwatch_roundtrip(app: &mut App, store: &mut Store<Host>) {
+    use std::thread::sleep;
+    use std::time::Duration;
+    use waui::ui::widget::Color;
+
+    // Fresh: paused, reading 0 ms — and no refresh requested: a host that
+    // honors `schedule` never wakes a paused stopwatch.
+    let nodes = app.call_view(&mut *store).expect("view failed");
+    assert_eq!(text_with_id(&nodes, 2), Some("0 ms"));
+    assert_eq!(
+        store.data().calls,
+        0,
+        "a paused stopwatch requests no refresh"
+    );
+
+    // Start: the component requests the 250ms refresh.
+    app.call_on_click(&mut *store, 3).expect("on-click failed");
+    app.call_changes(&mut *store).expect("changes failed");
+    assert_eq!(
+        store.data().last_period, 250,
+        "a running stopwatch requests a 250ms refresh"
+    );
+
+    // The host-side consequence: time passing shows up, on a wake, as the
+    // one changed node — the readout.
+    sleep(Duration::from_millis(400));
+    app.call_on_tick(&mut *store).expect("on-tick failed");
+    let mutations = app.call_changes(&mut *store).expect("changes failed");
+    assert_eq!(
+        mutations.len(),
+        1,
+        "a running wake should report the readout only"
+    );
+    match &mutations[0] {
+        waui::ui::widget::Mutation::Changed(node) => {
+            if let waui::ui::widget::Node::Text(t) = node {
+                let ms = t
+                    .content
+                    .strip_suffix(" ms")
+                    .unwrap()
+                    .parse::<u64>()
+                    .unwrap();
+                assert!(
+                    ms >= 200 && ms < 2000,
+                    "unexpected elapsed time: {ms} ms"
+                );
+                assert_eq!(t.style.color, Color::Accent);
+            } else {
+                panic!("expected the text readout, got another node kind");
+            }
+        }
+        _ => panic!("expected a changed node"),
+    }
+
+    // Pause: the readout and the button change, and the refresh is
+    // cancelled...
+    app.call_on_click(&mut *store, 3).expect("on-click failed");
+    let mutations = app.call_changes(&mut *store).expect("changes failed");
+    assert_eq!(
+        mutations.len(),
+        2,
+        "pausing changes the readout and the button"
+    );
+    assert_eq!(
+        store.data().last_period, 0,
+        "a paused stopwatch cancels the refresh"
+    );
+
+    // ...and a further wake is empty (zero diff traffic).
+    app.call_on_tick(&mut *store).expect("on-tick failed");
+    assert!(
+        app.call_changes(&mut *store).expect("changes failed").is_empty(),
+        "a paused stopwatch must produce no changes"
+    );
+}
+
 #[test]
 fn counter_roundtrip() {
     let engine = Engine::default();
-    let mut store = Store::new(&engine, Host);
+    let mut store = Store::new(&engine, Host::default());
     let mut app = {
         let _guard = RUST_BUILD_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        build_component();
-        instantiate(&engine, &mut store, &component_path())
+        build_component("demo-counter");
+        instantiate(&engine, &mut store, &component_path("demo-counter"))
     };
     assert_counter_roundtrip(&mut app, &mut store);
 }
@@ -338,13 +445,13 @@ fn counter_roundtrip() {
 #[test]
 fn changes_bootstraps_without_view() {
     let engine = Engine::default();
-    let mut store = Store::new(&engine, Host);
+    let mut store = Store::new(&engine, Host::default());
     let mut app = {
         let _guard = RUST_BUILD_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        build_component();
-        instantiate(&engine, &mut store, &component_path())
+        build_component("demo-counter");
+        instantiate(&engine, &mut store, &component_path("demo-counter"))
     };
     assert_changes_bootstrap(&mut app, &mut store);
 }
@@ -358,13 +465,13 @@ fn counter_roundtrip_as() {
         return;
     }
     let engine = Engine::default();
-    let mut store = Store::new(&engine, Host);
+    let mut store = Store::new(&engine, Host::default());
     let mut app = {
         let _guard = AS_BUILD_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        build_component_as();
-        instantiate(&engine, &mut store, &component_path_as())
+        build_component_as("demo-counter");
+        instantiate(&engine, &mut store, &component_path_as("demo-counter"))
     };
     assert_counter_roundtrip(&mut app, &mut store);
 }
@@ -376,13 +483,47 @@ fn changes_bootstraps_without_view_as() {
         return;
     }
     let engine = Engine::default();
-    let mut store = Store::new(&engine, Host);
+    let mut store = Store::new(&engine, Host::default());
     let mut app = {
         let _guard = AS_BUILD_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        build_component_as();
-        instantiate(&engine, &mut store, &component_path_as())
+        build_component_as("demo-counter");
+        instantiate(&engine, &mut store, &component_path_as("demo-counter"))
     };
     assert_changes_bootstrap(&mut app, &mut store);
+}
+
+// And the stopwatch's refresh-request contract, both languages.
+
+#[test]
+fn stopwatch_roundtrip() {
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = RUST_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component("demo-stopwatch");
+        instantiate(&engine, &mut store, &component_path("demo-stopwatch"))
+    };
+    assert_stopwatch_roundtrip(&mut app, &mut store);
+}
+
+#[test]
+fn stopwatch_roundtrip_as() {
+    if !as_toolchain_available() {
+        eprintln!("skipping: AssemblyScript toolchain not installed (run `npm install`)");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = AS_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_as("demo-stopwatch");
+        instantiate(&engine, &mut store, &component_path_as("demo-stopwatch"))
+    };
+    assert_stopwatch_roundtrip(&mut app, &mut store);
 }
