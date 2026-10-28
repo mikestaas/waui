@@ -4,7 +4,7 @@ AS_COMPONENTS := demo-counter demo-stopwatch
 
 .PHONY: components components-as run-cli run-stop-cli run-tui run-stop-tui run-iced run-stop-iced \
          run-cli-as run-stop-cli-as run-tui-as run-stop-tui-as run-iced-as run-stop-iced-as \
-         web web-as web-test web-test-as test
+         web web-as web-test web-test-as fmt fmt-check test
 
 # Build the demo components and lift them into the component model.
 components:
@@ -115,6 +115,18 @@ web-test: components
 # The same selftest against the AssemblyScript core modules.
 web-test-as: components-as
 	node web/selftest.mjs target/assembly/demo-counter-as.wasm target/assembly/demo-stopwatch-as.wasm
+
+# Format the AssemblyScript (assembly/) and web (web/) code trees with
+# prettier. The scope is .prettierignore; the assemblyscript-prettier
+# plugin parses the `@external` imports that plain prettier rejects.
+fmt:
+	@test -x node_modules/.bin/prettier || { echo "prettier not installed — run: npm install"; exit 1; }
+	npx prettier --write .
+
+# `fmt` without writing: fails when any file would change.
+fmt-check:
+	@test -x node_modules/.bin/prettier || { echo "prettier not installed — run: npm install"; exit 1; }
+	npx prettier --check .
 
 test:
 	cargo test
