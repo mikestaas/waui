@@ -4,7 +4,7 @@ AS_COMPONENTS := demo-counter demo-stopwatch
 
 .PHONY: components components-as run-cli run-stop-cli run-tui run-stop-tui run-iced run-stop-iced \
          run-cli-as run-stop-cli-as run-tui-as run-stop-tui-as run-iced-as run-stop-iced-as \
-         web web-as web-test web-test-as fmt fmt-check test
+         web web-as web-test web-test-as fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model.
 components:
@@ -116,17 +116,26 @@ web-test: components
 web-test-as: components-as
 	node web/selftest.mjs target/assembly/demo-counter-as.wasm target/assembly/demo-stopwatch-as.wasm
 
-# Format the AssemblyScript (assembly/) and web (web/) code trees with
-# prettier. The scope is .prettierignore; the assemblyscript-prettier
+# Format all sources: the Rust workspace with rustfmt, and the
+# AssemblyScript (assembly/) + web (web/) trees with prettier. The
+# prettier scope is .prettierignore; the assemblyscript-prettier
 # plugin parses the `@external` imports that plain prettier rejects.
 fmt:
+	@cargo fmt
 	@test -x node_modules/.bin/prettier || { echo "prettier not installed — run: npm install"; exit 1; }
 	npx prettier --write .
 
-# `fmt` without writing: fails when any file would change.
+# `fmt` without writing: fails when any file would change. The
+# pre-commit hook (`.githooks`, `make hooks`) gates on this.
 fmt-check:
+	@cargo fmt --check
 	@test -x node_modules/.bin/prettier || { echo "prettier not installed — run: npm install"; exit 1; }
 	npx prettier --check .
+
+# Point git at the shared hooks in .githooks/ (idempotent).
+hooks:
+	git config core.hooksPath .githooks
+	@echo "git hooks path: $$(git config core.hooksPath)"
 
 test:
 	cargo test

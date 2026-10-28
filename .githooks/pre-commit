@@ -1,0 +1,11 @@
+#!/bin/sh
+# All sources must be formatter-clean: rustfmt for the Rust workspace,
+# prettier for the assembly/ and web/ trees (the check of `make fmt`).
+# On failure: run `make fmt`, re-add the reformatted files, commit again.
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+if ! make fmt-check; then
+    echo "pre-commit: formatting check failed — run \`make fmt\` and re-add the files." >&2
+    exit 1
+fi

@@ -89,6 +89,8 @@ make run-stop-iced   # stopwatch, window
 make web             # self-contained HTML pages in target/web/
 make web-test        # headless (Node) check of the web host's ABI layer
 make test            # cargo test, all crates
+make fmt             # format all sources (rustfmt + prettier)
+make hooks           # point git at .githooks (the pre-commit gate)
 
 make components-as   # build the AS demos, lift them
 make run-tui-as      # counter from the AS component
@@ -111,8 +113,10 @@ it runs from disk with no server and no network.
   against the AssemblyScript one (skipped when `node_modules` is missing).
 - `make web-test` (and `-as`): the same assertions from Node, against the core
   modules, through the same `glue.js` the browser page uses.
-- `make fmt-check`: the AssemblyScript and web trees are prettier-clean
-  (`make fmt` writes the formatting).
+- `make fmt-check`: all sources are formatter-clean (`cargo fmt --check`
+  for the Rust crates, prettier for the assembly/ and web/ trees). A
+  pre-commit hook runs it on every commit (`make hooks` installs it);
+  `make fmt` writes the formatting.
 
 ## Not implemented
 
