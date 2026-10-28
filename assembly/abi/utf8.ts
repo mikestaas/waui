@@ -32,7 +32,7 @@ export function writeUtf8(dst: i32, s: string, end: i32 = 2147483647): i32 {
     } else if (c >= 0xd800 && c < 0xdc00 && i + 1 < n) {
       if (p + 4 > end) break;
       const lo = s.charCodeAt(++i);
-      c = 0x10000 + ((c - 0xd800) << 10) | (lo - 0xdc00);
+      c = (0x10000 + ((c - 0xd800) << 10)) | (lo - 0xdc00);
       store<i8>(p++, 0xf0 | (c >> 18));
       store<i8>(p++, 0x80 | ((c >> 12) & 0x3f));
       store<i8>(p++, 0x80 | ((c >> 6) & 0x3f));

@@ -81,7 +81,9 @@ try {
     /\(import "env" "abort" \(func ((?:\$[a-zA-Z_][a-zA-Z0-9_]* )?)\(;\s*(\d+)\s*;\) \(type (\d+)\)\)\)/g;
   const entries = [...wat.matchAll(reEntry)];
   if (entries.length !== 1) {
-    console.error(`patch-env-abort: expected 1 env.abort import in the WAT, found ${entries.length}`);
+    console.error(
+      `patch-env-abort: expected 1 env.abort import in the WAT, found ${entries.length}`,
+    );
     process.exit(1);
   }
   const name = entries[0][1] ?? '';
@@ -101,7 +103,9 @@ try {
   }
   const kAbort = funcImports.findIndex((i) => i.mod === 'env' && i.field === 'abort');
   if (kAbort !== abortNum) {
-    console.error(`patch-env-abort: import order mismatch (binary says ${kAbort}, WAT says ${abortNum})`);
+    console.error(
+      `patch-env-abort: import order mismatch (binary says ${kAbort}, WAT says ${abortNum})`,
+    );
     process.exit(1);
   }
   // Defined functions: top-level `(func` lines in the WAT (the import's
@@ -115,7 +119,8 @@ try {
   // the other defined functions are untouched.
   const map = new Map();
   funcImports.forEach((i) => {
-    if (i.k === kAbort) map.set(i.k, N - 1); // the slot the new definition takes
+    if (i.k === kAbort)
+      map.set(i.k, N - 1); // the slot the new definition takes
     else map.set(i.k, i.k < kAbort ? i.k : i.k - 1);
   });
   for (let j = 0; j < M; j++) map.set(N + j, N + j); // identity
@@ -153,7 +158,10 @@ try {
   lines.splice(entryIdx, 1);
   const funcLine = `  (func${entryName ? ` ${entryName.trim()}` : ''} (;${map.get(kAbort)};) (type ${entryType}) unreachable)`;
   const isImportLine = (l) => /^\s*\(import /.test(l);
-  const lastImport = lines.map((l, i) => (isImportLine(l) ? i : -1)).filter((i) => i >= 0).pop();
+  const lastImport = lines
+    .map((l, i) => (isImportLine(l) ? i : -1))
+    .filter((i) => i >= 0)
+    .pop();
   let insertAt;
   if (lastImport === undefined) {
     insertAt = lines.findIndex((l) => /^\s*\(func /.test(l)); // first definition
@@ -201,11 +209,17 @@ try {
   const outModule = new WebAssembly.Module(outBytes);
   const outImports = WebAssembly.Module.imports(outModule);
   if (outImports.some((i) => i.module === 'env')) {
-    console.error(`patch-env-abort: module still imports from env: ${outImports.filter((i) => i.module === 'env').map((i) => i.name)}`);
+    console.error(
+      `patch-env-abort: module still imports from env: ${outImports.filter((i) => i.module === 'env').map((i) => i.name)}`,
+    );
     process.exit(1);
   }
-  const inExports = WebAssembly.Module.exports(inModule).map((e) => e.name).sort();
-  const outExports = WebAssembly.Module.exports(outModule).map((e) => e.name).sort();
+  const inExports = WebAssembly.Module.exports(inModule)
+    .map((e) => e.name)
+    .sort();
+  const outExports = WebAssembly.Module.exports(outModule)
+    .map((e) => e.name)
+    .sort();
   if (JSON.stringify(inExports) !== JSON.stringify(outExports)) {
     console.error(`patch-env-abort: export set changed: ${inExports} -> ${outExports}`);
     process.exit(1);

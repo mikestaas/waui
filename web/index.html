@@ -18,7 +18,10 @@
         place-items: center;
         background: #1a1b26;
         color: #c0caf5;
-        font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+        font:
+          15px/1.5 ui-sans-serif,
+          system-ui,
+          sans-serif;
       }
       #app {
         padding: 2rem;
@@ -105,13 +108,11 @@
     <script>
       // The component's core wasm module (the pre-lift artifact the
       // wasmtime hosts lift from), base64 so the page needs no fetch.
-      const WAUI_WASM_B64 = "__WAUI_WASM_B64__";
-      const WAUI_WASM_BYTES = Uint8Array.from(atob(WAUI_WASM_B64), (c) =>
-        c.charCodeAt(0),
-      );
+      const WAUI_WASM_B64 = '__WAUI_WASM_B64__';
+      const WAUI_WASM_BYTES = Uint8Array.from(atob(WAUI_WASM_B64), (c) => c.charCodeAt(0));
     </script>
     <script type="module">
-      __WAUI_JS__
+      __WAUI_JS__;
     </script>
   </body>
 </html>

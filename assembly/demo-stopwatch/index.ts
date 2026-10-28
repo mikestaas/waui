@@ -19,10 +19,7 @@
 // `onclick`/`ontick` are renamed to the world's hyphenated names after
 // compilation (see `../rename-exports.mjs`).
 
-import {
-  cabi_post_changes,
-  cabi_post_view,
-} from '../abi/arena';
+import { cabi_post_changes, cabi_post_view } from '../abi/arena';
 import {
   COLOR_ACCENT,
   COLOR_NEUTRAL,
@@ -32,14 +29,7 @@ import {
   SIZE_MEDIUM,
 } from '../abi/node';
 import { now, schedule } from '../abi/root';
-import {
-  Widget,
-  button,
-  column,
-  diffOf,
-  text,
-  viewOf,
-} from '../ui/tree';
+import { Widget, button, column, diffOf, text, viewOf } from '../ui/tree';
 
 // The world requires both post functions on the module itself.
 export { cabi_post_changes, cabi_post_view };
@@ -80,9 +70,7 @@ function elapsed(): i64 {
 /// label and color name the action. Both derive from the sampled state, on
 /// every build.
 function apply(e: i64, r: i32): void {
-  readout
-    .label(`${e} ms`)
-    .style(r != 0 ? COLOR_ACCENT : COLOR_NEUTRAL, SIZE_LARGE);
+  readout.label(`${e} ms`).style(r != 0 ? COLOR_ACCENT : COLOR_NEUTRAL, SIZE_LARGE);
   control
     .label(r != 0 ? 'pause' : 'start')
     .style(r != 0 ? COLOR_WARNING : COLOR_POSITIVE, SIZE_MEDIUM);
@@ -105,7 +93,8 @@ export function changes(): i32 {
   return diffOf(tree(elapsed(), running));
 }
 
-export function onclick(id: i32): void { // → `on-click` after the export rename
+export function onclick(id: i32): void {
+  // → `on-click` after the export rename
   if (id != BUTTON) return;
   const t = now();
   if (running != 0) {

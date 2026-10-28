@@ -16,8 +16,7 @@ import { createApp } from './glue.js';
 
 // Resolve paths relative to the repository root (this file lives in web/);
 // absolute paths (a non-default target) pass through.
-const rel = (p) =>
-  p.startsWith('/') ? p : fileURLToPath(new URL(`../${p}`, import.meta.url));
+const rel = (p) => (p.startsWith('/') ? p : fileURLToPath(new URL(`../${p}`, import.meta.url)));
 const [counterPath, stopwatchPath] = [
   process.argv[2] ?? 'target/wasm32-unknown-unknown/release/demo_counter.wasm',
   process.argv[3] ?? 'target/wasm32-unknown-unknown/release/demo_stopwatch.wasm',
@@ -26,14 +25,13 @@ const [counterPath, stopwatchPath] = [
 function node(n) {
   if (n.kind === 'container') return `container{id:${n.id},parent:${n.parent},dir:${n.direction}}`;
   const style = `style:${n.style.color}:${n.style.size}`;
-  if (n.kind === 'button') return `button{id:${n.id},parent:${n.parent},label:"${n.label}",${style}}`;
+  if (n.kind === 'button')
+    return `button{id:${n.id},parent:${n.parent},label:"${n.label}",${style}}`;
   return `text{id:${n.id},parent:${n.parent},content:"${n.content}",${style}}`;
 }
 
 function mutation(m) {
-  return m.kind === 'removed'
-    ? `removed{id:${m.id}}`
-    : `changed ${node(m.node)}`;
+  return m.kind === 'removed' ? `removed{id:${m.id}}` : `changed ${node(m.node)}`;
 }
 
 // ---------------------------------------------------------------- counter
@@ -75,10 +73,9 @@ function mutation(m) {
   // mutation), and view() is still the full truth.
   app.click(4);
   app.click(4);
-  assert.deepEqual(
-    app.changes().map(mutation),
-    ['changed text{id:3,parent:1,content:"-1",style:negative:large}'],
-  );
+  assert.deepEqual(app.changes().map(mutation), [
+    'changed text{id:3,parent:1,content:"-1",style:negative:large}',
+  ]);
   expect([
     'container{id:1,parent:null,dir:column}',
     'button{id:2,parent:1,label:"+",style:positive:medium}',
@@ -89,11 +86,7 @@ function mutation(m) {
   // Bootstrap rule: a host that calls changes() first, without ever
   // calling view(), still gets the whole tree (as changed nodes).
   const app2 = await createApp(readFileSync(rel(counterPath)));
-  assert.equal(
-    app2.changes().length,
-    4,
-    'first-ever changes() should export the whole tree',
-  );
+  assert.equal(app2.changes().length, 4, 'first-ever changes() should export the whole tree');
 
   // No unbounded growth: 60 more view() and 60 changes() calls must not
   // grow memory (both return guest-allocated buffers the host posts back).
@@ -127,10 +120,7 @@ function mutation(m) {
   let muts = app.changes().map(mutation);
   assert.equal(muts.length, 2);
   assert.match(muts[0], /^changed text\{.*content:"\d+ ms",style:accent:large\}$/);
-  assert.equal(
-    muts[1],
-    'changed button{id:3,parent:1,label:"pause",style:warning:medium}',
-  );
+  assert.equal(muts[1], 'changed button{id:3,parent:1,label:"pause",style:warning:medium}');
 
   // Let real time pass, tick: while running, only the readout changes.
   await new Promise((r) => setTimeout(r, 400));
@@ -146,10 +136,7 @@ function mutation(m) {
   muts = app.changes().map(mutation);
   assert.equal(muts.length, 2);
   assert.match(muts[0], /^changed text\{.*content:"\d+ ms",style:neutral:large\}$/);
-  assert.equal(
-    muts[1],
-    'changed button{id:3,parent:1,label:"start",style:positive:medium}',
-  );
+  assert.equal(muts[1], 'changed button{id:3,parent:1,label:"start",style:positive:medium}');
 
   // ...and a further tick while paused reports an *empty* diff: the
   // paused stopwatch generates zero diff traffic.

@@ -11,6 +11,7 @@
 @external('$root', 'now')
 declare function now(): i64;
 
+
 @external('$root', 'schedule')
 declare function schedule(period: i64): void;
 

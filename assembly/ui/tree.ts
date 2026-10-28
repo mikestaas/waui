@@ -172,11 +172,7 @@ export class Widget {
 }
 
 /// A text node.
-export function text(
-  content: string,
-  color: i32 = COLOR_NEUTRAL,
-  size: i32 = SIZE_MEDIUM,
-): Widget {
+export function text(content: string, color: i32 = COLOR_NEUTRAL, size: i32 = SIZE_MEDIUM): Widget {
   const w = new Widget(TAG_TEXT, content);
   w.color = color;
   w.size = size;
@@ -184,11 +180,7 @@ export function text(
 }
 
 /// A button.
-export function button(
-  label: string,
-  color: i32 = COLOR_NEUTRAL,
-  size: i32 = SIZE_MEDIUM,
-): Widget {
+export function button(label: string, color: i32 = COLOR_NEUTRAL, size: i32 = SIZE_MEDIUM): Widget {
   const w = new Widget(TAG_BUTTON, label);
   w.color = color;
   w.size = size;

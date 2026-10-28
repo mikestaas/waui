@@ -57,8 +57,13 @@ function putId(rec: i32, id: i32, parent: i32): void {
 
 /// A `text` node record at `rec` (32 bytes).
 export function emitText(
-  rec: i32, id: i32, parent: i32,
-  str: i32, len: i32, color: i32, size: i32,
+  rec: i32,
+  id: i32,
+  parent: i32,
+  str: i32,
+  len: i32,
+  color: i32,
+  size: i32,
 ): void {
   zero(rec, 32);
   store<i8>(rec + 0, TAG_TEXT);
@@ -71,8 +76,13 @@ export function emitText(
 
 /// A `button` node record at `rec` (32 bytes).
 export function emitButton(
-  rec: i32, id: i32, parent: i32,
-  str: i32, len: i32, color: i32, size: i32,
+  rec: i32,
+  id: i32,
+  parent: i32,
+  str: i32,
+  len: i32,
+  color: i32,
+  size: i32,
 ): void {
   zero(rec, 32);
   store<i8>(rec + 0, TAG_BUTTON);
@@ -96,8 +106,13 @@ export function emitContainer(rec: i32, id: i32, parent: i32, direction: i32): v
 
 /// A `changed` mutation carrying a `text` node, at `rec` (36 bytes).
 export function emitChangedText(
-  rec: i32, id: i32, parent: i32,
-  str: i32, len: i32, color: i32, size: i32,
+  rec: i32,
+  id: i32,
+  parent: i32,
+  str: i32,
+  len: i32,
+  color: i32,
+  size: i32,
 ): void {
   zero(rec, 36);
   store<i32>(rec + 0, MUT_CHANGED);
@@ -106,8 +121,13 @@ export function emitChangedText(
 
 /// A `changed` mutation carrying a `button` node, at `rec` (36 bytes).
 export function emitChangedButton(
-  rec: i32, id: i32, parent: i32,
-  str: i32, len: i32, color: i32, size: i32,
+  rec: i32,
+  id: i32,
+  parent: i32,
+  str: i32,
+  len: i32,
+  color: i32,
+  size: i32,
 ): void {
   zero(rec, 36);
   store<i32>(rec + 0, MUT_CHANGED);
