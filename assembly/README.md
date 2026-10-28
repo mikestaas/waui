@@ -57,6 +57,11 @@ target/components/<demo>-as.component.wasm
 `make components-as` runs all of it. Requires Node + `npm install` (asc) and
 wabt on the PATH (the patch step).
 
+`make fmt` formats these files and the ones in `web/` with prettier (the
+config is `.prettierrc` at the repo root); the `assemblyscript-prettier`
+plugin parses the `@external` imports that plain prettier rejects.
+`make fmt-check` checks without writing.
+
 ## The tree layer (`ui/tree`)
 
 Nodes are `Widget` **objects on the incremental runtime heap**, nested through

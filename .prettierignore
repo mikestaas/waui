@@ -1,0 +1,11 @@
+# Prettier's scope is the code in assembly/ and web/ (see .prettierrc).
+# Everything else — docs, config, the Rust workspace — is hand-formatted.
+*.md
+*.json
+*.toml
+Cargo.*
+Makefile
+AGENTS.md
+LICENSE
+crates/
+wit/

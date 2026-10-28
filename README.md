@@ -111,6 +111,8 @@ it runs from disk with no server and no network.
   against the AssemblyScript one (skipped when `node_modules` is missing).
 - `make web-test` (and `-as`): the same assertions from Node, against the core
   modules, through the same `glue.js` the browser page uses.
+- `make fmt-check`: the AssemblyScript and web trees are prettier-clean
+  (`make fmt` writes the formatting).
 
 ## Not implemented
 

@@ -4,6 +4,8 @@
   "type": "module",
   "description": "Toolchain for the AssemblyScript components (assembly/) — not part of the Rust workspace",
   "devDependencies": {
-    "assemblyscript": "0.28.20"
+    "assemblyscript": "0.28.20",
+    "assemblyscript-prettier": "^3.0.4",
+    "prettier": "^3.9.10"
   }
 }
