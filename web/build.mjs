@@ -28,7 +28,9 @@ const glueInlined = glue.replace(/^export /m, '');
 const wasm = readFileSync(wasmPath);
 const b64 = wasm.toString('base64');
 
-const name = basename(wasmPath).replace(/\.wasm$/, '').replace(/_/g, '-');
+const name = basename(wasmPath)
+  .replace(/\.wasm$/, '')
+  .replace(/_/g, '-');
 
 const page = template
   .replaceAll('__WAUI_NAME__', name)
@@ -36,4 +38,6 @@ const page = template
   .replaceAll('__WAUI_JS__', glueInlined + '\n' + app);
 
 writeFileSync(outPath, page);
-console.log(`wrote ${outPath} (${(page.length / 1024).toFixed(0)} kB, component ${(wasm.length / 1024).toFixed(0)} kB)`);
+console.log(
+  `wrote ${outPath} (${(page.length / 1024).toFixed(0)} kB, component ${(wasm.length / 1024).toFixed(0)} kB)`,
+);

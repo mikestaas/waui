@@ -15,7 +15,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 
 function readLeb(buf, pos) {
-  let value = 0, shift = 0;
+  let value = 0,
+    shift = 0;
   for (;;) {
     const b = buf[pos++];
     value |= (b & 0x7f) << shift;
@@ -96,11 +97,16 @@ for (const section of sections) {
 }
 
 if (renamed !== renames.size) {
-  console.error(`${inFile}: renamed ${renamed}/${renames.size} exports — is the module's export list as expected?`);
+  console.error(
+    `${inFile}: renamed ${renamed}/${renames.size} exports — is the module's export list as expected?`,
+  );
   process.exit(1);
 }
 
 const out = [buf.subarray(0, 8)];
-for (const { id, content } of sections) out.push(Uint8Array.of(id), Uint8Array.from(leb(content.length)), content);
+for (const { id, content } of sections)
+  out.push(Uint8Array.of(id), Uint8Array.from(leb(content.length)), content);
 writeFileSync(outFile, Buffer.concat(out.map((b) => Buffer.from(b))));
-console.log(`${inFile} -> ${outFile} (renamed: ${[...renames].map(([o, n]) => `${o}=${n}`).join(', ')})`);
+console.log(
+  `${inFile} -> ${outFile} (renamed: ${[...renames].map(([o, n]) => `${o}=${n}`).join(', ')})`,
+);

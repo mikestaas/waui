@@ -18,10 +18,7 @@
 // `onclick`/`ontick` are renamed to the world's hyphenated names after
 // compilation (see `../rename-exports.mjs`).
 
-import {
-  cabi_post_changes,
-  cabi_post_view,
-} from '../abi/arena';
+import { cabi_post_changes, cabi_post_view } from '../abi/arena';
 import {
   COLOR_NEGATIVE,
   COLOR_NEUTRAL,
@@ -29,14 +26,7 @@ import {
   SIZE_LARGE,
   SIZE_MEDIUM,
 } from '../abi/node';
-import {
-  Widget,
-  button,
-  column,
-  diffOf,
-  text,
-  viewOf,
-} from '../ui/tree';
+import { Widget, button, column, diffOf, text, viewOf } from '../ui/tree';
 
 // The world requires both post functions on the module itself.
 export { cabi_post_changes, cabi_post_view };
@@ -56,9 +46,7 @@ readout.reserve(16); // "-2147483648" is 11 bytes
 
 /// The readout's label and color, derived from `value` (negative below zero).
 function applyReadout(v: i32): void {
-  readout
-    .label(`${v}`)
-    .style(v < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL, SIZE_LARGE);
+  readout.label(`${v}`).style(v < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL, SIZE_LARGE);
 }
 
 /// The counter's whole UI, nested: the structure is rebuilt, the readout is
@@ -83,7 +71,8 @@ export function changes(): i32 {
   return diffOf(tree(value));
 }
 
-export function onclick(id: i32): void { // → `on-click` after the export rename
+export function onclick(id: i32): void {
+  // → `on-click` after the export rename
   const delta = id == INC ? 1 : id == DEC ? -1 : 0;
   // State only: the next build re-derives the readout, and the modifiers
   // mark it stale.

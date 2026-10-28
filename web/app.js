@@ -124,8 +124,7 @@ function rebuild() {
     } else if (n.kind === 'button') {
       el = document.createElement('button');
       // The component's semantic style, as token classes (see index.html).
-      el.className =
-        `waui waui-button waui-${n.style.color} waui-${n.style.size}`;
+      el.className = `waui waui-button waui-${n.style.color} waui-${n.style.size}`;
       el.textContent = n.label;
       if (n.id !== null) elements.set(n.id, el);
     } else {
