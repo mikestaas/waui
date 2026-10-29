@@ -9,6 +9,15 @@
 //! and because iced's `time::every` takes a fixed period, the host keeps a
 //! coarse 50ms clock and wakes the component only when that period has
 //! elapsed (0 = never).
+//!
+//! `--click <id>` injects clicks on the first tick after startup, so the
+//! windowed host can be driven and screenshotted without a pointer; the
+//! click takes the same path as a pointer event.
+//!
+//! `--dump <file.png>` renders one frame to a PNG and exits, headless: the
+//! window's own render path with the surface replaced by iced's software
+//! (`tiny-skia`) backend, so no window, display, or GPU is needed and the
+//! check runs in CI. `--click` applies before the frame, as in the window.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -71,6 +80,8 @@ struct State {
     retained: Retained,
     tree: Tree,
     wake: Arc<Mutex<Wake>>,
+    /// Clicks from `--click`, applied on the first tick after startup.
+    pending_clicks: Vec<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,29 +90,93 @@ enum Message {
     Tick,
 }
 
+// The default window size, and the `--dump` canvas.
+const WINDOW_WIDTH: f32 = 360.0;
+const WINDOW_HEIGHT: f32 = 340.0;
+
+/// The host's arguments: `--click <id>` flags, an optional `--dump <file>`,
+/// and the component path. A bad argument exits with usage.
+struct Args {
+    path: String,
+    clicks: Vec<u32>,
+    dump: Option<String>,
+}
+
+fn parse_args() -> Args {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut clicks = Vec::new();
+    let mut dump = None;
+    let mut path = None;
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--click" => match args.get(i + 1) {
+                Some(v) => {
+                    clicks.push(v.parse().expect("--click takes a numeric widget id"));
+                    i += 1;
+                }
+                None => {
+                    eprintln!("--click takes a numeric widget id");
+                    std::process::exit(2);
+                }
+            },
+            "--dump" => match args.get(i + 1) {
+                Some(v) => {
+                    dump = Some(v.clone());
+                    i += 1;
+                }
+                None => {
+                    eprintln!("--dump takes a file path");
+                    std::process::exit(2);
+                }
+            },
+            other if !other.starts_with('-') => path = Some(other.to_string()),
+            _ => {}
+        }
+        i += 1;
+    }
+    let path = match path {
+        Some(p) => p,
+        None => {
+            eprintln!("usage: host-iced [--click <id>] [--dump <file.png>] <component.wasm>");
+            std::process::exit(2);
+        }
+    };
+    Args { path, clicks, dump }
+}
+
 fn main() -> iced::Result {
+    let args = parse_args();
+    if let Some(file) = &args.dump {
+        // Headless: apply the injected clicks, render one frame to a PNG,
+        // and exit — no window, so it runs in CI.
+        let mut state = new_state(&args.path, args.clicks.clone());
+        apply_pending_clicks(&mut state);
+        return render_dump(&state, file);
+    }
     iced::application(boot, update, view)
         // Match the static web host: its palette (theme.rs), its centered
         // content, and a modest default window size.
         .theme(theme::theme())
         .style(|_, _| theme::style())
         .title("waui")
-        .window_size(iced::Size::new(360.0, 340.0))
+        .window_size(iced::Size::new(WINDOW_WIDTH, WINDOW_HEIGHT))
         .subscription(subscription)
         .run()
 }
 
+// Parsed again here because iced's boot takes no parameters; the result
+// matches `main`'s parse of the same arguments.
 fn boot() -> State {
-    let path = match std::env::args().nth(1) {
-        Some(p) => p,
-        None => {
-            eprintln!("usage: host-iced <component.wasm>");
-            std::process::exit(2);
-        }
-    };
+    let args = parse_args();
+    new_state(&args.path, args.clicks)
+}
 
+/// Instantiate the component and build the initial retained node list and
+/// widget tree from its `view()` snapshot.
+fn new_state(path: &str, clicks: Vec<u32>) -> State {
     let engine = Engine::default();
-    let component = Component::from_file(&engine, &path).expect("failed to load component");
+    let component = Component::from_file(&engine, path).expect("failed to load component");
 
     let mut linker = Linker::new(&engine);
     App::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
@@ -124,20 +199,113 @@ fn boot() -> State {
         retained,
         tree,
         wake,
+        pending_clicks: clicks,
     }
+}
+
+/// Apply the `--click` injections and the component's resulting diff,
+/// rebuilding the tree when the diff is non-empty. The windowed host does
+/// this on the first tick; the dump path does it before rendering.
+fn apply_pending_clicks(state: &mut State) {
+    if state.pending_clicks.is_empty() {
+        return;
+    }
+    for id in state.pending_clicks.drain(..) {
+        state
+            .app
+            .call_on_click(&mut state.store, id)
+            .expect("on-click() failed");
+    }
+    let mutations = state
+        .app
+        .call_changes(&mut state.store)
+        .expect("changes() failed");
+    if state.retained.apply(&mutations) {
+        state.tree = build_tree(state.retained.nodes());
+    }
+}
+
+/// Render the current view to a PNG file, headless: no window, no display,
+/// no GPU.
+///
+/// The render is the window's own path with the surface replaced by iced's
+/// `Headless` renderer (the software `tiny-skia` backend): the same
+/// `UserInterface` layout and draw, then `screenshot` rasterizes the
+/// recorded layers into a pixel buffer.
+///
+/// Text renders with the bundled Fira Sans (the `fira-sans` feature)
+/// rather than a system font: a CI machine may have none, and the dump
+/// must be stable to be a useful check. The window keeps the system font;
+/// only this renderer's default changes.
+fn render_dump(state: &State, file: &str) -> iced::Result {
+    use iced_runtime::core::renderer::Headless;
+
+    // The executor blocks on the renderer's creation (synchronous with the
+    // tiny-skia backend; no GPU is touched).
+    use iced::executor::Executor;
+    let executor = iced::executor::Default::new().expect("failed to create an executor");
+    let mut renderer = executor
+        .block_on(iced::Renderer::new(
+            iced::Font::with_name("Fira Sans"),
+            16.0.into(),
+            Some("tiny-skia"),
+        ))
+        .expect("no headless renderer");
+
+    let size = iced::Size::new(WINDOW_WIDTH, WINDOW_HEIGHT);
+
+    // Layout (text shaping runs through the renderer) and draw, the same
+    // path the window's event loop uses.
+    let mut ui = iced_runtime::user_interface::UserInterface::build(
+        view(state),
+        size,
+        iced_runtime::user_interface::Cache::new(),
+        &mut renderer,
+    );
+    let style = theme::style();
+    ui.draw(
+        &mut renderer,
+        &theme::theme(),
+        &iced_runtime::core::renderer::Style {
+            text_color: style.text_color,
+        },
+        iced::mouse::Cursor::Unavailable,
+    );
+
+    // Rasterize the layers at the window's logical size; the buffer is
+    // unpremultiplied RGBA.
+    let width = WINDOW_WIDTH as u32;
+    let height = WINDOW_HEIGHT as u32;
+    let rgba = renderer.screenshot(iced::Size::new(width, height), 1.0, style.background_color);
+
+    let png = std::fs::File::create(file).expect("failed to create the dump file");
+    let mut writer = std::io::BufWriter::new(png);
+    let mut encoder = png::Encoder::new(&mut writer, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut frame = encoder
+        .write_header()
+        .expect("failed to write the PNG header");
+    frame
+        .write_image_data(&rgba)
+        .expect("failed to write the PNG");
+    Ok(())
 }
 
 fn update(state: &mut State, message: Message) {
     // A click always wakes the component. A tick wakes it only when its
     // requested period has elapsed (0 = never); iced's own clock is coarse
     // (50ms), so the gate, not the timer, sets the cadence.
-    let woke = match message {
+    // `--click` injections take the same path as pointer clicks.
+    let mut woke = !state.pending_clicks.is_empty();
+    apply_pending_clicks(state);
+    match message {
         Message::Click(id) => {
             state
                 .app
                 .call_on_click(&mut state.store, id)
                 .expect("on-click() failed");
-            true
+            woke = true;
         }
         Message::Tick => {
             let mut w = state.wake.lock().unwrap();
@@ -151,9 +319,9 @@ fn update(state: &mut State, message: Message) {
                     .call_on_tick(&mut state.store)
                     .expect("on-tick() failed");
             }
-            due
+            woke |= due;
         }
-    };
+    }
     if woke {
         // The diff channel: rebuild only when the component reports
         // something changed (an empty diff skips the rebuild).
@@ -171,14 +339,14 @@ fn view(state: &State) -> iced::Element<'_, Message> {
     use iced::alignment;
     use iced::widget;
     use iced::Length;
-    // Like the web page, fill the window and center the tree, with some
-    // room (the page's `#app` padding).
+    // Like the web page, fill the window and center the tree, with the
+    // page's `#app` padding (2rem).
     widget::container(map_tree(&state.tree))
         .width(Length::Fill)
         .height(Length::Fill)
         .align_x(alignment::Horizontal::Center)
         .align_y(alignment::Vertical::Center)
-        .padding(24.0)
+        .padding(32.0)
         .into()
 }
 
@@ -213,6 +381,7 @@ fn size_pt(s: WSize) -> f32 {
 
 /// Map the tree onto iced widgets.
 fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
+    use iced::alignment;
     use iced::widget;
     match node {
         Tree::Text(content, style) => {
@@ -224,21 +393,35 @@ fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
         }
         Tree::Button(id, label, style) => {
             // The label carries the component's style; the button chrome
-            // stays with iced's theme (a host concern, like the TUI's
-            // focus ring).
+            // matches the web page (theme.rs) — a host concern, like the
+            // TUI's focus ring. The page's 6px/16px padding.
             let mut label = widget::text(label.as_str()).size(size_pt(style.size));
             if let Some(color) = iced_color(style.color) {
                 label = label.color(color);
             }
+            let mut button = widget::button(label)
+                .padding(iced::Padding {
+                    top: 6.0,
+                    right: 16.0,
+                    bottom: 6.0,
+                    left: 16.0,
+                })
+                .style(theme::button_style);
             // A button with no id is display-only.
-            match id {
-                Some(id) => widget::button(label).on_press(Message::Click(*id)).into(),
-                None => widget::button(label).into(),
+            if let Some(id) = id {
+                button = button.on_press(Message::Click(*id));
             }
+            button.into()
         }
-        Tree::Row(children) => widget::row(children.iter().map(map_tree)).spacing(8).into(),
+        // The web page centers a column's children (align-items: center)
+        // and a row's; iced's default is start (top/left).
+        Tree::Row(children) => widget::row(children.iter().map(map_tree))
+            .spacing(8)
+            .align_y(alignment::Vertical::Center)
+            .into(),
         Tree::Column(children) => widget::column(children.iter().map(map_tree))
             .spacing(8)
+            .align_x(alignment::Horizontal::Center)
             .into(),
     }
 }

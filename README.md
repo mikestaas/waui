@@ -59,8 +59,8 @@ error-prone, so component authors write a nested tree and project it:
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
 | `wit/`                   | the WIT contract (`widget` + `app`)                                                                   |
 | `crates/host-shared`     | wasmtime host core: the bindings, the list→tree rebuild, the retained tree diffs apply against        |
-| `crates/host-iced`       | windowed host (iced); style → palette colors + point sizes; applies diffs, skips rebuild on empty diff |
-| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, a host-local focus ring; style → ANSI colors + weight |
+| `crates/host-iced`       | windowed host (iced); style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG (CI) |
+| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame (CI) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks via stdin; ignores `style`, the diff channel, and `schedule`         |
 | `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm)             |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests    |
@@ -111,6 +111,15 @@ it runs from disk with no server and no network.
   asserts on the node content, the style, the diff channel, and the refresh
   request (`schedule`). It runs against the Rust component and, as `*_as`,
   against the AssemblyScript one (skipped when `node_modules` is missing).
+- The hosts' headless render checks, also under `cargo test`: `host-tui`
+  `tests/dump.rs` runs the binary with `--dump` (one frame into ratatui's
+  test backend) and asserts on the layout, the semantic colors, and the
+  focus ring; `host-iced` `tests/dump.rs` runs it with `--dump` (one frame
+  through iced's software `tiny-skia` renderer into a PNG) and asserts on the
+  background, the button chrome, the semantic colors, and the centered
+  layout. Each runs against the Rust component and, as `*_as`, the
+  AssemblyScript one (skipped when `node_modules` is missing). The iced
+  render is headless — no window, display, or GPU — so it runs in CI.
 - `make web-test` (and `-as`): the same assertions from Node, against the core
   modules, through the same `glue.js` the browser page uses.
 - `make fmt-check`: all sources are formatter-clean (`cargo fmt --check`

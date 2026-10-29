@@ -7,5 +7,11 @@ edition = "2021"
 wasmtime = { workspace = true }
 # The `smol` executor provides `iced::time::every`, which the host needs
 # for its 50ms clock that gates the component's requested refresh.
-iced = { workspace = true, features = ["smol"] }
+# `fira-sans` bundles a font: the headless `--dump` render must draw text
+# deterministically, and a CI machine may have no system fonts.
+iced = { workspace = true, features = ["smol", "fira-sans"] }
 host-shared = { path = "../host-shared" }
+# The window's layout+draw path, reused by the headless `--dump` render.
+iced_runtime = "0.14"
+# PNG encoding for the `--dump` output.
+png = "0.17"
