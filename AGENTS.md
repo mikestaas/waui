@@ -20,3 +20,12 @@ Before calling a change done: `make components-as`, `make components`,
 `make web-test-as`, `make web-test`, `cargo test`, and a `host-cli` smoke run
 on the built components. The web selftest is the byte-parity gate between
 the Rust and AssemblyScript demos; its assertions must not be edited to fit.
+
+## Multiple sessions
+
+- Multiple sessions run at once. A session that needs its own checkout
+  takes a git worktree, not a scratch directory: a worktree is a real
+  checkout that shares the repo's history, so `make`, the tests, and the
+  git tooling work unchanged.
+- Commit work once it is done and verified. Don't leave finished work
+  uncommitted.
