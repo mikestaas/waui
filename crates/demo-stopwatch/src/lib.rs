@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
-use component_ui::{Color, Direction, Size, Style, Tree};
+use component_ui::{ui, Color, Direction, Size, Style, Tree};
 use waui::ui::widget as wit;
 
 const NOT_RUNNING: u64 = 0;
@@ -48,38 +48,29 @@ fn elapsed() -> u64 {
 /// The readout takes the host's accent color while running; the button's
 /// label and color name the action.
 fn readout(elapsed: u64, running: bool) -> Tree {
-    Tree::text(
-        format!("{elapsed} ms"),
-        Style::new(
-            if running {
-                Color::Accent
-            } else {
-                Color::Neutral
-            },
-            Size::Large,
-        ),
-    )
-    .id(2)
+    ui! {
+        text content = format!("{elapsed} ms"), id = 2,
+            color = if running { Color::Accent } else { Color::Neutral },
+            size = Size::Large,
+    }
 }
 
 fn button(running: bool) -> Tree {
-    Tree::button(
-        if running { "pause" } else { "start" },
-        Style::new(
-            if running {
-                Color::Warning
-            } else {
-                Color::Positive
-            },
-            Size::Medium,
-        ),
-    )
-    .id(3)
+    ui! {
+        button label = if running { "pause" } else { "start" }, id = 3,
+            color = if running { Color::Warning } else { Color::Positive },
+            size = Size::Medium,
+    }
 }
 
 /// The stopwatch's whole UI, nested.
 fn tree(elapsed: u64, running: bool) -> Tree {
-    Tree::column(vec![readout(elapsed, running), button(running)]).id(1)
+    ui! {
+        column id = 1, {
+            readout(elapsed, running),
+            button(running),
+        }
+    }
 }
 
 /// Project the ergonomic tree's tokens onto this crate's generated types:

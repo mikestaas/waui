@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
-use component_ui::{Color, Direction, Size, Style, Tree};
+use component_ui::{ui, Color, Direction, Size, Style, Tree};
 use waui::ui::widget as wit;
 
 static VALUE: AtomicI32 = AtomicI32::new(0);
@@ -31,28 +31,22 @@ static VALUE: AtomicI32 = AtomicI32::new(0);
 /// The readout is the only node that depends on `VALUE`; its color is
 /// state (negative below zero).
 fn readout(value: i32) -> Tree {
-    Tree::text(
-        value.to_string(),
-        Style::new(
-            if value < 0 {
-                Color::Negative
-            } else {
-                Color::Neutral
-            },
-            Size::Large,
-        ),
-    )
-    .id(3)
+    ui! {
+        text content = value.to_string(), id = 3,
+            color = if value < 0 { Color::Negative } else { Color::Neutral },
+            size = Size::Large,
+    }
 }
 
 /// The counter's whole UI, nested.
 fn tree(value: i32) -> Tree {
-    Tree::column(vec![
-        Tree::button("+", Style::new(Color::Positive, Size::Medium)).id(2),
-        readout(value),
-        Tree::button("-", Style::new(Color::Negative, Size::Medium)).id(4),
-    ])
-    .id(1)
+    ui! {
+        column id = 1, {
+            button label = "+", id = 2, color = Color::Positive, size = Size::Medium,
+            readout(value),
+            button label = "-", id = 4, color = Color::Negative, size = Size::Medium,
+        }
+    }
 }
 
 /// Project the ergonomic tree's tokens onto this crate's generated types:
