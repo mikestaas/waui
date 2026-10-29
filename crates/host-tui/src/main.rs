@@ -203,12 +203,16 @@ fn sgr_fg(c: Color) -> Option<&'static str> {
     })
 }
 
+/// The hint bar's text. Its length sets the `--dump` buffer's minimum
+/// width, so the verification frame shows the bar whole.
+const HINT: &str = " waui (tui)   up/down or j/k: focus   enter/space: click   q: quit ";
+
 /// Draw one full frame: a hint bar, then the tree centered below it.
 fn draw(frame: &mut Frame, tree: &Tree, focus: Option<u32>) {
     let area = frame.area();
     let bars: [Rect; 2] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
     frame.render_widget(
-        Paragraph::new(" waui (tui)   up/down or j/k: focus   enter/space: click   q: quit ")
+        Paragraph::new(HINT)
             .style(Style::default().fg(Color::DarkGray))
             .alignment(Alignment::Left),
         bars[0],
@@ -312,9 +316,12 @@ fn main() {
 
     if dump {
         // Headless: render one frame into an in-memory buffer and print it.
+        // The buffer fits the tree and the hint bar (a narrow tree would
+        // otherwise clip the bar, which spans the full buffer width).
         let nodes = app.call_view(&mut store).expect("view() failed");
         let tree = build_tree(&nodes);
-        let (w, h) = (width_of(&tree).max(10) + 2, height_of(&tree) + 3);
+        let w = (width_of(&tree).max(10) + 2).max((HINT.chars().count() + 2) as u16);
+        let h = height_of(&tree) + 3;
         let mut terminal =
             Terminal::new(TestBackend::new(w, h)).expect("failed to create terminal");
         let mut focus_ids = Vec::new();
