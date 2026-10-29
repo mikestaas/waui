@@ -13,6 +13,10 @@
 //! is crate-local, so a component passes a projection that builds *its own*
 //! generated `Node` — written once per component.
 //!
+//! Trees are usually written with the [`ui`] macro, a JSX-like literal:
+//! `ui! { column id = 1, { button label = "+", ... } }` builds the same
+//! nested [`Tree`] the builders do.
+//!
 //! **Identity.** A node's `id` (optional, mirroring the WIT) is its handle:
 //! what `on-click` targets and what the `changes` diff channel keys on. A
 //! node that is never clicked, diffed, or removed may omit its id. But a
@@ -38,12 +42,24 @@ pub enum Color {
     Warning,
 }
 
+impl Default for Color {
+    fn default() -> Self {
+        Color::Neutral
+    }
+}
+
 /// A semantic size, mirroring `waui:ui/widget`'s `size` enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Size {
     Small,
     Medium,
     Large,
+}
+
+impl Default for Size {
+    fn default() -> Self {
+        Size::Medium
+    }
 }
 
 /// Per-node styling: a color and a size.
@@ -64,6 +80,12 @@ pub enum Direction {
 impl Style {
     pub fn new(color: Color, size: Size) -> Self {
         Self { color, size }
+    }
+}
+
+impl Default for Style {
+    fn default() -> Self {
+        Self::new(Color::Neutral, Size::Medium)
     }
 }
 
@@ -139,6 +161,16 @@ impl Tree {
         Self::Container(Container {
             id: None,
             direction: Direction::Column,
+            children,
+        })
+    }
+
+    /// A container with an explicit direction (id-less until
+    /// [`id`](Self::id) is called; required if it has children).
+    pub fn container(direction: Direction, children: Vec<Tree>) -> Self {
+        Self::Container(Container {
+            id: None,
+            direction,
             children,
         })
     }
@@ -651,4 +683,336 @@ mod tests {
         let (out, _) = diff_with(&new, Some(&last), proj);
         assert_eq!(out, Vec::<M>::new());
     }
+}
+
+// ------------------------------------------------------------------ the macro
+
+/// A JSX-like widget tree.
+///
+/// ```
+/// # use component_ui::{Color, Size, Tree};
+/// let tree = component_ui::ui! {
+///     column id = 1, {
+///         button label = "+", id = 2, color = Color::Positive, size = Size::Medium,
+///         text content = "0", id = 3, size = Size::Large,
+///         button label = "-", id = 4, color = Color::Negative, size = Size::Medium,
+///     }
+/// };
+/// assert_eq!(tree.node_id(), Some(1));
+/// ```
+///
+/// Tags: `text` (`content`), `button` (`label`), `row`, `column`,
+/// `container` (`direction`). Attributes in any order: `id`, `color`,
+/// `size`, `style`; an unstated color or size is [`Color::Neutral`] /
+/// [`Size::Medium`]. Containers take a `{ ... }` children block; children
+/// are tags or bare expressions, comma-separated. A bare expression whose
+/// first token is a tag name (a `Tree` named `text`, `row`, ...) is the
+/// expression.
+#[macro_export]
+macro_rules! ui {
+    ( $( $t:tt )* ) => {
+        $crate::__ui_kids!(top () $( $t )* )
+    };
+}
+
+/// Expand a stream of children (the `ui!` content or a block's interior).
+///
+/// The ctx is `top` (exactly one item; the result is the bare `Tree`) or
+/// `kids` (a list; the result is `Vec<Tree>`). The acc is a parenthesized
+/// group holding the expanded items so far, each followed by a comma.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_kids {
+    // The stream is exhausted: the acc is the whole list. Each item is
+    // followed by its comma; a `,*` repeat parses `:expr` restrictively.
+    ( kids ( $( $a:expr , )* ) ) => {
+        { vec![ $( $a ),* ] }
+    };
+    ( top ( ) ) => {
+        compile_error!("`ui!` needs a root widget")
+    };
+    ( top ( $a:expr , ) ) => {
+        $a
+    };
+    ( top ( $a:expr , $b:tt $( $c:tt )* ) ) => {
+        compile_error!("`ui!` takes a single root widget")
+    };
+    // A separator comma with no child after it (a stray or trailing one):
+    // skip it and continue.
+    ( $ctx:tt $acc:tt , $( $r:tt )* ) => {
+        $crate::__ui_kids!($ctx $acc $( $r )* )
+    };
+    // A child whose second token is an attribute key or a children block:
+    // a tagged widget. The first token is spliced as a fragment into
+    // `__ui_tag`, which matches it by value against the tag names.
+    ( $ctx:tt $acc:tt $t0:tt content $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 content $( $r )* )
+    };
+    ( $ctx:tt $acc:tt $t0:tt label $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 label $( $r )* )
+    };
+    ( $ctx:tt $acc:tt $t0:tt id $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 id $( $r )* )
+    };
+    ( $ctx:tt $acc:tt $t0:tt color $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 color $( $r )* )
+    };
+    ( $ctx:tt $acc:tt $t0:tt size $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 size $( $r )* )
+    };
+    ( $ctx:tt $acc:tt $t0:tt style $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 style $( $r )* )
+    };
+    ( $ctx:tt $acc:tt $t0:tt direction $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 direction $( $r )* )
+    };
+    ( $ctx:tt $acc:tt $t0:tt { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 { $( $c )* } $( $r )* )
+    };
+    // A child whose second token is a comma and third a children block:
+    // the tolerated `column, { ... }` form. Containers route to the tag
+    // machinery; leaf names (or any non-container) are expression children.
+    ( $ctx:tt $acc:tt $t0:tt , { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_cmb!($ctx $acc $t0 , { $( $c )* } $( $r )* )
+    };
+    // Anything else is a bare expression child. The first token is the
+    // caller's own; a `Tree` named after a tag resolves here, not in the
+    // tag machinery.
+    ( $ctx:tt $acc:tt $t0:tt $( $r:tt )* ) => {
+        $crate::__ui_expr!($ctx $acc () $t0 $( $r )* )
+    };
+}
+
+/// The comma-block shape: a `column, { ... }` children list.
+///
+/// Container names match by value and route to the container machinery
+/// (the comma is stripped there); anything else is an expression child
+/// followed by a block child, so the first token is re-emitted as the
+/// caller's own.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_cmb {
+    ( $ctx:tt $acc:tt row , { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_cont!(row $ctx $acc ( some $crate::Direction::Row) () , { $( $c )* } $( $r )* )
+    };
+    ( $ctx:tt $acc:tt column , { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_cont!(column $ctx $acc ( some $crate::Direction::Column) () , { $( $c )* } $( $r )* )
+    };
+    ( $ctx:tt $acc:tt container , { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_cont!(container $ctx $acc () () , { $( $c )* } $( $r )* )
+    };
+    ( $ctx:tt $acc:tt $t0:tt , { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_expr!($ctx $acc () $t0 , { $( $c )* } $( $r )* )
+    };
+}
+
+/// Dispatch a tagged child on its first token, matched by value.
+///
+/// The tag literals in the patterns select the builder; they are only ever
+/// used to pick a builder or a `$crate` path, never as a caller expression,
+/// so their def-site hygiene is fine. A first token that is not a tag name
+/// is a bare expression child.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_tag {
+    ( $ctx:tt $acc:tt text $t1:tt $( $r:tt )* ) => {
+        $crate::__ui_leaf!(text $ctx $acc () () () () () $t1 $( $r )* )
+    };
+    ( $ctx:tt $acc:tt button $t1:tt $( $r:tt )* ) => {
+        $crate::__ui_leaf!(button $ctx $acc () () () () () $t1 $( $r )* )
+    };
+    ( $ctx:tt $acc:tt row $t1:tt $( $r:tt )* ) => {
+        $crate::__ui_cont!(row $ctx $acc ( some $crate::Direction::Row) () $t1 $( $r )* )
+    };
+    ( $ctx:tt $acc:tt column $t1:tt $( $r:tt )* ) => {
+        $crate::__ui_cont!(column $ctx $acc ( some $crate::Direction::Column) () $t1 $( $r )* )
+    };
+    ( $ctx:tt $acc:tt container $t1:tt $( $r:tt )* ) => {
+        $crate::__ui_cont!(container $ctx $acc () () $t1 $( $r )* )
+    };
+    ( $ctx:tt $acc:tt $t0:tt $t1:tt $( $r:tt )* ) => {
+        $crate::__ui_expr!($ctx $acc () $t0 $t1 $( $r )* )
+    };
+}
+
+/// A slot holding an attribute value: `()` or `( some <expr>)`.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_opt {
+    ( () ) => {
+        None
+    };
+    ( ( some $v:expr ) ) => {
+        Some($v)
+    };
+}
+
+/// Accumulate a bare expression child, then continue the list.
+///
+/// The acc is a group of the finished items (each followed by its comma, or
+/// empty); the cur is a group of the current child's tokens. A single
+/// expression carries no top-level comma (delimiters fold into groups), so
+/// a top-level comma always ends the child.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_expr {
+    // A top-level comma: the child ends; its tokens join the acc.
+    ( $ctx:tt ( $( $a:tt )* ) ( $( $c:tt )* ) , $( $r:tt )* ) => {
+        $crate::__ui_kids!($ctx ( $( $a )* $( $c )* , ) $( $r )* )
+    };
+    // End of stream: the last child ends too.
+    ( $ctx:tt ( $( $a:tt )* ) ( $( $c:tt )* ) ) => {
+        $crate::__ui_kids!($ctx ( $( $a )* $( $c )* , ) )
+    };
+    // The next token continues the child.
+    ( $ctx:tt ( $( $a:tt )* ) ( $( $c:tt )* ) $t0:tt $( $r:tt )* ) => {
+        $crate::__ui_expr!($ctx ( $( $a )* ) ( $( $c )* $t0 ) $( $r )* )
+    };
+}
+
+/// A leaf node: `text` / `button`. Slot order: label, id, color, size,
+/// style. The label must be present (a `content` / `label` attribute).
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_leaf {
+    // Attribute peels: each key consumes `key = <expr>,` and restates its
+    // slot. The keys are literal in the pattern, so an unknown key or a
+    // `label` on a `text` falls through to the terminals and fails there.
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt id = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l ( some $v) $c $s $st $( $r )* )
+    };
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt color = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i ( some $v) $s $st $( $r )* )
+    };
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt size = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i $c ( some $v) $st $( $r )* )
+    };
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt style = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i $c $s ( some $v) $( $r )* )
+    };
+    ( text $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt content = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(text $ctx $acc ( some $v) $i $c $s $st $( $r )* )
+    };
+    ( button $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt label = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(button $ctx $acc ( some $v) $i $c $s $st $( $r )* )
+    };
+    // Terminals: the label slot must be present (bound here, unwrapped);
+    // the rest are optional.
+    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt ) => {
+        $crate::__ui_leafnode!($kind $i $c $s $st $l)
+    };
+    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt , ) => {
+        $crate::__ui_leafnode!($kind $i $c $s $st $l)
+    };
+    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt , $x:tt $( $y:tt )* ) => {
+        compile_error!("`ui!` takes a single root widget")
+    };
+    ( $kind:tt kids ( $( $x:tt )* ) ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $( $r:tt )* ) => {
+        // The acc holds finished items only (each followed by its comma, or
+        // empty); a bare `*` re-emits the trailing comma, a `,*` would
+        // double it.
+        $crate::__ui_kids!(kids ( $( $x )* $crate::__ui_leafnode!($kind $i $c $s $st $l) , ) $( $r )* )
+    };
+    // A label-less leaf: whatever follows, the required `content` /
+    // `label` attribute never appeared.
+    ( $kind:tt $ctx:tt $acc:tt () $i:tt $c:tt $s:tt $st:tt $( $r:tt )* ) => {
+        compile_error!("`text` needs a `content = ...` attribute; `button` needs a `label = ...` attribute")
+    };
+}
+
+/// The node a leaf peels into. `$l` is the unwrapped label expression; the
+/// remaining slots are still `()` / `( some ...)` groups.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_leafnode {
+    ( $kind:tt $i:tt $c:tt $s:tt $st:tt $l:expr ) => {{
+        let style = $crate::__ui_opt!($st).unwrap_or_else(|| {
+            $crate::Style::new(
+                $crate::__ui_opt!($c).unwrap_or_default(),
+                $crate::__ui_opt!($s).unwrap_or_default(),
+            )
+        });
+        let mut node = $crate::__ui_leafbuild!($kind, $l, style);
+        if let Some(id) = $crate::__ui_opt!($i) {
+            node.set_id(id);
+        }
+        node
+    }};
+}
+
+/// The builder call, once per tag.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_leafbuild {
+    ( text, $l:expr, $style:expr ) => {
+        $crate::Tree::text($l, $style)
+    };
+    ( button, $l:expr, $style:expr ) => {
+        $crate::Tree::button($l, $style)
+    };
+}
+
+/// A container: `row` / `column` / `container`. Slot order: direction, id.
+/// `row` / `column` preset the direction (a `direction` attribute is a
+/// compile error on them); `container` requires one.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_cont {
+    ( $tag:tt $ctx:tt $acc:tt $d:tt $i:tt id = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_cont!($tag $ctx $acc $d ( some $v) $( $r )* )
+    };
+    ( container $ctx:tt $acc:tt $d:tt $i:tt direction = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_cont!(container $ctx $acc ( some $v) $i $( $r )* )
+    };
+    // A separator comma with no attributes (a `column, { ... }`): strip it
+    // and retry; a comma-less block matches the terminals below.
+    ( $tag:tt $ctx:tt $acc:tt $d:tt $i:tt , { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_cont!($tag $ctx $acc $d $i { $( $c )* } $( $r )* )
+    };
+    // Terminals: the children block. `row` / `column` keep their preset
+    // direction; `container` must have been given one. The children are
+    // rewrapped in a group: a `:tt` repetition ends where an `:expr` begins
+    // only at a delimiter.
+    ( $tag:tt top $acc:tt ( some $d:expr ) $i:tt { $( $c:tt )* } ) => {
+        $crate::__ui_contnode!($tag $i ( $( $c )* ) $d)
+    };
+    ( $tag:tt top $acc:tt ( some $d:expr ) $i:tt { $( $c:tt )* } , ) => {
+        $crate::__ui_contnode!($tag $i ( $( $c )* ) $d)
+    };
+    ( $tag:tt top $acc:tt ( some $d:expr ) $i:tt { $( $c:tt )* } , $x:tt $( $y:tt )* ) => {
+        compile_error!("`ui!` takes a single root widget")
+    };
+    ( $tag:tt top $acc:tt () $i:tt { $( $c:tt )* } $( $r:tt )* ) => {
+        compile_error!("a `container` needs a `direction = ...` attribute (or use `row` / `column`)")
+    };
+    // An empty acc matches with zero repetitions: one arm serves both. Each
+    // acc item ends in its comma; the `:expr` binding consumes them.
+    ( $tag:tt kids ( $( $a:expr , )* ) ( some $d:expr ) $i:tt { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_kids!(kids ( $( $a , )* $crate::__ui_contnode!($tag $i ( $( $c )* ) $d) , ) $( $r )* )
+    };
+    ( $tag:tt kids $acc:tt () $i:tt { $( $c:tt )* } $( $r:tt )* ) => {
+        compile_error!("a `container` needs a `direction = ...` attribute (or use `row` / `column`)")
+    };
+    // `direction` on a preset container: a compile error, not an attribute.
+    ( row $ctx:tt $acc:tt $d:tt $i:tt direction = $v:expr , $( $r:tt )* ) => {
+        compile_error!("a `row` does not take a `direction` attribute (it is preset); use `container`")
+    };
+    ( column $ctx:tt $acc:tt $d:tt $i:tt direction = $v:expr , $( $r:tt )* ) => {
+        compile_error!("a `column` does not take a `direction` attribute (it is preset); use `container`")
+    };
+}
+
+/// The node a container peels into.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_contnode {
+    ( $tag:tt $i:tt ( $( $c:tt )* ) $d:expr ) => {
+        {
+            let mut node = $crate::Tree::container($d, $crate::__ui_kids!(kids () $( $c )* ));
+            if let Some(id) = $crate::__ui_opt!($i) {
+                node.set_id(id);
+            }
+            node
+        }
+    };
 }
