@@ -39,10 +39,7 @@
 // record — kind, parent, label, style, or direction — differs from it, plus
 // every id it no longer contains, as `removed`. Before the first export it
 // reports every id'd node (the WIT bootstrap rule). This is the contract's
-// add, remove, and re-parent. The stale mark (`.label`/`.style` set it when
-// the value changes) is the authoring signal, cleared on each export; a demo
-// keeps its state-dependent nodes in module globals so it survives between
-// exports (the conservative GC retains them).
+// add, remove, and re-parent.
 //
 // This module provides the tree, the pool, and the projection
 // (`viewOf`, `diffOf`, `count`).
@@ -112,10 +109,6 @@ export class Widget {
   labelSrc: string = '';
   /// The label buffer's requested capacity (consumed at first allocation).
   labelCap: i32 = 0;
-  /// Stale: set by `.label`/`.style` when the value changes, cleared by
-  /// `diffOf`/`viewOf`. Only a node the demo holds persistently keeps it
-  /// between exports; a rebuilt node starts clean.
-  dirty: i32 = 0;
   // Materialized by `lower` (valid from projection on):
   labelPtr: i32 = 0; // the partition's base (0 = no label)
   labelLen: i32 = 0; // UTF-8 bytes, clamped to the partition
@@ -123,7 +116,6 @@ export class Widget {
   constructor(kind: i32, label: string = '', children: Widget[] = []) {
     this.kind = kind;
     this.children = children;
-    // Direct assignment, not `label()`: a fresh node starts clean.
     this.labelSrc = label;
   }
 
@@ -136,14 +128,9 @@ export class Widget {
     return this;
   }
 
-  /// Replace the label (UTF-16 in; UTF-8 in the pool at projection) and mark
-  /// the node stale when it changes. AS compares strings by content, so an
-  /// identical re-derivation does not re-mark.
+  /// Replace the label (UTF-16 in; UTF-8 in the pool at projection).
   label(s: string): this {
-    if (s != this.labelSrc) {
-      this.labelSrc = s;
-      this.dirty = 1;
-    }
+    this.labelSrc = s;
     return this;
   }
 
@@ -155,21 +142,10 @@ export class Widget {
     return this;
   }
 
-  /// Set the style (text/buttons only) and mark the node stale when it
-  /// changes.
+  /// Set the style (text/buttons only).
   style(colorV: i32, sizeV: i32): this {
-    if (colorV != this.color || sizeV != this.size) {
-      this.color = colorV;
-      this.size = sizeV;
-      this.dirty = 1;
-    }
-    return this;
-  }
-
-  /// Clear the stale mark, for chaining. `diffOf` calls this on every node
-  /// it projects.
-  markClean(): this {
-    this.dirty = 0;
+    this.color = colorV;
+    this.size = sizeV;
     return this;
   }
 }
@@ -279,13 +255,6 @@ export function count(w: Widget): i32 {
   const c = w.children;
   for (let i = 0; i < c.length; i++) n += count(c[i]);
   return n;
-}
-
-/// Clear the stale marks of a tree (depth-first pre-order).
-function markAllClean(w: Widget): void {
-  w.markClean();
-  const c = w.children;
-  for (let i = 0; i < c.length; i++) markAllClean(c[i]);
 }
 
 /// Flatten the tree into records (depth-first pre-order, every node), for the
@@ -445,10 +414,9 @@ function lowerRemoved(last: FlatRec[], newRecs: FlatRec[], buf: i32, off: i32): 
 /// Project the whole tree as a `view()` result: every node as a 32-byte node
 /// record in depth-first pre-order, behind a list descriptor. The full
 /// snapshot becomes the reference the next diff compares against (the Rust
-/// crate's `note_view`); the stale marks are cleared and `everExported` set.
+/// crate's `note_view`); `everExported` is set.
 export function viewOf(root: Widget): i32 {
   everExported = 1;
-  markAllClean(root);
   const recs = new Array<FlatRec>();
   flatten(root, 0, recs);
   lastExport = recs;
@@ -463,8 +431,7 @@ export function viewOf(root: Widget): i32 {
 /// rule); otherwise, every id'd node whose record differs is `changed` (in
 /// depth-first pre-order), then every id in the last export that is no longer
 /// in the tree is `removed` (in the last export's pre-order). The new tree
-/// becomes the next reference (the Rust crate's `diff`); the stale marks are
-/// cleared either way.
+/// becomes the next reference (the Rust crate's `diff`).
 export function diffOf(root: Widget): i32 {
   const first = everExported == 0;
   const last = lastExport; // the reference, captured before it is replaced
@@ -477,7 +444,6 @@ export function diffOf(root: Widget): i32 {
   const n = nChanged + nRemoved;
 
   lastExport = newRecs; // the new tree is the next reference
-  markAllClean(root);
 
   if (n == 0) return makeList(0, 0); // an empty list's ptr is 0
   const buf = arenaAlloc(n * 36);

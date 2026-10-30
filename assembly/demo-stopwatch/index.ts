@@ -8,9 +8,8 @@
 // The diff is state-dependent, as in the Rust original: while running, the
 // readout's value changes with the clock, so each `changes` reports it;
 // while paused, nothing does. The readout and the button are the
-// state-dependent nodes: persistent objects, derived on every build, marked
-// stale by their modifiers when the value changes. The handlers hold no
-// diff state; the running toggle also requests the refresh.
+// state-dependent nodes: persistent objects, derived on every build. The
+// handlers hold no diff state; the running toggle also requests the refresh.
 //
 // The UI is a nested tree in `../ui/tree`, rebuilt from state per export;
 // the elapsed reading is sampled once, so one exported list never mixes two
@@ -49,9 +48,9 @@ var start: i64 = 0;
 var frozen: i64 = 0;
 var running: i32 = 0;
 
-/// The two state-dependent nodes. Module globals, so their dirty marks
-/// survive between exports (the conservative GC keeps them for the module's
-/// lifetime); the box is local to the call.
+/// The two state-dependent nodes. Module globals, so they survive between
+/// exports (the conservative GC keeps them for the module's lifetime); the
+/// box is local to the call.
 var readout = text('', COLOR_NEUTRAL, SIZE_LARGE).id(READOUT);
 var control = button('start', COLOR_POSITIVE, SIZE_MEDIUM).id(BUTTON);
 readout.reserve(24); // "18446744073709551615 ms" is 23 bytes
@@ -89,7 +88,7 @@ export function view(): i32 {
 }
 
 export function changes(): i32 {
-  // Same one sample; the layer diffs and clears the marks.
+  // Same one sample; the layer diffs.
   return diffOf(tree(elapsed(), running));
 }
 

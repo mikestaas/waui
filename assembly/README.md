@@ -96,10 +96,10 @@ API:
 
 - constructors: `text(content, color, size)`, `button(label, color, size)`,
   `row(children)`, `column(children)`
-- chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`,
-  `.markClean()` (AssemblyScript cannot name a field and a method alike the
-  way Rust can, so the id's storage is `_id`; set it with `.id()`)
-- plain fields: `children`, `dirty` (the stale mark, set by the modifiers)
+- chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`
+  (the id's storage is `_id`, set with `.id()`: AssemblyScript cannot name a
+  field and a method alike the way Rust can)
+- plain fields: `children`
 - projection: `viewOf(root)`, `diffOf(root)`, `count(w)`
 
 Behavior:
@@ -108,8 +108,8 @@ Behavior:
   Rust demos do; the structural `Widget` objects are local to the call and the
   conservative GC reclaims them when the export returns. The state-dependent
   nodes (the counter's readout; the stopwatch's readout and button) are the
-  exception: module globals, kept for the module's lifetime, so their dirty
-  marks survive between exports. A few bytes per node, never growing.
+  exception: module globals, kept for the module's lifetime. A few bytes per
+  node, never growing.
 - **Labels** live in the static **label pool** (raw linear memory; the GC
   never scans it). The label is kept as UTF-16 source; the UTF-8 pool write
   happens at projection, keyed by the node's id. A partition is
@@ -129,10 +129,7 @@ Behavior:
   pre-order). `viewOf` records the full snapshot as the next reference, so a
   diff after a view sees nothing. Before the first export, `diffOf` reports
   every id'd node (the WIT bootstrap rule). This expresses the contract's
-  add, remove, and re-parent, as the Rust diff does. The stale mark (set by
-  `label(s)`/`style(color, size)` when the value changes) is the authoring
-  signal, cleared on each export; a demo keeps its state-dependent nodes in
-  module globals so it survives between exports.
+  add, remove, and re-parent, as the Rust diff does.
 
 The diff is checked by a standalone module (`make ui-test`): it drives
 `viewOf`/`diffOf` through the structural cases and decodes the result from
@@ -174,10 +171,9 @@ it.
   `has(key) ? get(key) : …`.
 - **The conservative GC keeps anything a module global references** for the
   module's lifetime. That is how the pool registry keeps partitions stable
-  across rebuilds, and how the demos' persistent state-dependent nodes keep
-  their dirty marks: park only the leaves. A whole tree parked in a global
-  would pin its whole subtree forever, so the structure stays local to the
-  call.
+  across rebuilds, and how the demos' persistent state-dependent nodes
+  survive: park only the leaves. A whole tree parked in a global would pin
+  its whole subtree forever, so the structure stays local to the call.
 - **Precedence is JavaScript's**: `!=` binds tighter than `&` (so
   `d & BIT != 0` tests the constant — parenthesize), and `<` binds tighter
   than `?:` (so an unparenthesized `… != 0 ? 36 : 32` parses as a ternary *as*
@@ -185,7 +181,7 @@ it.
   locals first, as `lower` does.
 - **String `==` compares contents** (unlike JavaScript's reference semantics
   for constructed strings): two independently built strings with the same
-  content are equal. The label setter's change detection relies on this.
+  content are equal. The diff's label comparison relies on this.
 - **No `undefined`** (use `null`), **no flow narrowing** (a nullable variable
   assigned inside an `if` is still nullable after it; end branches in scalars).
 - **`static` is a class-field keyword** at module scope; module globals are
