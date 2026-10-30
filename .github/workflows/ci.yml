@@ -5,6 +5,7 @@
 #   make fmt-check                    the pre-commit formatter gate, backstopped
 #   cargo test                        unit tests, the wasmtime roundtrip (Rust and
 #                                     AS components), the headless --dump renders
+#   make ui-test                      the AssemblyScript tree/diff unit tests
 #   make web-test / web-test-as       the Node selftest: the Rust/AS byte-parity gate
 #   host-cli smoke                    one view, then quit, on both built components
 #
@@ -79,6 +80,13 @@ jobs:
 
       - name: Test (unit, roundtrip, headless dumps)
         run: cargo test
+
+      # The AS twin of the Rust `component-ui` unit tests: the tree layer's
+      # diff channel, driven through the structural cases (add, remove,
+      # re-parent, id-less) that the demos do not exercise. Needs the npm
+      # toolchain (asc) and wabt, both set up above.
+      - name: UI tree tests (AssemblyScript)
+        run: make ui-test
 
       - name: Web selftest (Rust and AS)
         run: |
