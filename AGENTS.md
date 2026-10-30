@@ -17,9 +17,10 @@
 ## Verification
 
 Before calling a change done: `make components-as`, `make components`,
-`make web-test-as`, `make web-test`, `cargo test`, and a `host-cli` smoke run
-on the built components. The web selftest is the byte-parity gate between
-the Rust and AssemblyScript demos; its assertions must not be edited to fit.
+`make web-test-as`, `make web-test`, `cargo test`, `make ui-test`, and
+a `host-cli` smoke run on the built components. The web selftest is the
+byte-parity gate between the Rust and AssemblyScript demos; its assertions
+must not be edited to fit.
 
 ## Multiple sessions
 
