@@ -129,7 +129,16 @@ it runs from disk with no server and no network.
 
 ## Not implemented
 
-Component-directed focus, text input, images (a `resource`), multi-component
-hosts, and structural change in the AssemblyScript demos' diff: the mark
-diff tracks value change, while the Rust `component-ui` diff also expresses
-add, remove, and re-parent.
+- **A structural demo.** The contract's diff expresses add, remove, and
+  re-parent, and the unit tests cover both sides in isolation, but no demo
+  drives them through a real component: both demos mutate values in place
+  only.
+- **Text input and component-directed focus.** The only event channel is
+  `on-click`, so nothing can take keyboard text. A contract change touching
+  every host, the AS ABI, and the parity tests.
+- **Images, as a WIT `resource`.** Substantial ABI work, worst on the
+  hand-rolled AS side.
+- **Multi-component hosts.** Host-side only.
+- **Structural change in the AssemblyScript layer.** The mark diff tracks
+  value change only; the Rust `component-ui` diff also expresses add,
+  remove, and re-parent.
