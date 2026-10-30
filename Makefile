@@ -4,7 +4,7 @@ AS_COMPONENTS := demo-counter demo-stopwatch
 
 .PHONY: components components-as run-cli run-stop-cli run-tui run-stop-tui run-iced run-stop-iced \
          run-cli-as run-stop-cli-as run-tui-as run-stop-tui-as run-iced-as run-stop-iced-as \
-         web web-as web-test web-test-as fmt fmt-check hooks test
+         web web-as web-test web-test-as ui-test fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model.
 components:
@@ -115,6 +115,18 @@ web-test: components
 # The same selftest against the AssemblyScript core modules.
 web-test-as: components-as
 	node web/selftest.mjs target/assembly/demo-counter-as.wasm target/assembly/demo-stopwatch-as.wasm
+
+# The tree layer's diff channel, as a standalone module run via Node: the
+# structural cases (add, remove, re-parent) plus the bootstrap and id-less
+# rules — the AS twin of the Rust `component-ui` unit tests. Needs node +
+# `npm install` (asc) and wabt (the patch step).
+ui-test:
+	@test -x node_modules/.bin/asc || { echo "ui-test needs node/npm — run: npm install"; exit 1; }
+	@mkdir -p target/assembly
+	npx asc assembly/ui/tree.test.ts --outFile target/assembly/tree-test.raw.wasm \
+		-O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2 || exit 1; \
+	node assembly/patch-env-abort.mjs target/assembly/tree-test.raw.wasm target/assembly/tree-test.core.wasm || exit 1; \
+	node assembly/ui/tree.test.mjs target/assembly/tree-test.core.wasm
 
 # Format all sources: the Rust workspace with rustfmt, and the
 # AssemblyScript (assembly/) + web (web/) trees with prettier. The

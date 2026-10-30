@@ -120,17 +120,23 @@ Behavior:
   an id gets a fresh partition per build — a changing label with no stable id
   grows the pool until it is exhausted, which then renders an empty label
   rather than corrupting memory.
-- **The diff is a stale mark on the node, set by the modifiers.**
-  `label(s)` and `style(color, size)` mark a node stale when the value
-  changes (identical values do not re-mark); the demos' handlers mutate
-  state only, and the next build re-derives the state-dependent nodes.
-  `changes` calls `diffOf(root)`: the stale nodes in depth-first pre-order,
-  parent from the structure, as `changed` mutations, marks cleared. `viewOf`
-  clears the marks too. Before the first export, `diffOf` reports the whole
-  tree (the WIT bootstrap rule). The Rust `component-ui` is immutable, so it
-  retains the last export and compares; that diff also expresses node
-  add/remove/re-parent, which the mark diff does not. For these demos the
-  exported stream is the same.
+- **The diff is a record comparison against the retained last export** (the
+  AS twin of the Rust `component-ui`'s retained `LAST_EXPORTED`). The last
+  export is kept as a flat list of records; `changes` calls `diffOf(root)`,
+  which reports every id'd node whose record — kind, parent, label, style, or
+  direction — differs from it as `changed` (in depth-first pre-order), and
+  every id it no longer contains as `removed` (in the last export's
+  pre-order). `viewOf` records the full snapshot as the next reference, so a
+  diff after a view sees nothing. Before the first export, `diffOf` reports
+  every id'd node (the WIT bootstrap rule). This expresses the contract's
+  add, remove, and re-parent, as the Rust diff does. The stale mark (set by
+  `label(s)`/`style(color, size)` when the value changes) is the authoring
+  signal, cleared on each export; a demo keeps its state-dependent nodes in
+  module globals so it survives between exports.
+
+The diff is checked by a standalone module (`make ui-test`): it drives
+`viewOf`/`diffOf` through the structural cases and decodes the result from
+the arena, the AS twin of the Rust `component-ui` unit tests.
 
 ## Memory layout
 
@@ -144,8 +150,9 @@ Every byte of a result comes from the arena, so one pointer reset in
 `cabi_post_*` is the whole free. The counter's pool holds 40 bytes after its
 first build (16 + 12 + 12); the module stays at its 2 initial pages across
 hundreds of rebuilds — the selftest's leak check allows <4 pages of growth
-over 120 calls. The demos' persistent state-dependent nodes add a constant
-few hundred bytes of retained heap, never growing.
+over 120 calls. The demos' persistent state-dependent nodes and the retained
+last-export snapshot (the diff's reference, replaced on every export) add a
+constant few hundred bytes of retained heap, never growing.
 
 ## The ABI layer (`abi/`)
 

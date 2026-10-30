@@ -49,9 +49,10 @@ error-prone, so component authors write a nested tree and project it:
   dependency-free; `lower` is generic over the output type because each
   `wit-bindgen generate!` is crate-local, so each demo writes one small
   projection onto its own generated `Node`.
-- AssemblyScript: `assembly/ui/tree` — the same shape in AS: the diff is a
-  stale mark on the node, set by its `label()`/`style()` modifiers when the
-  value changes (see [`assembly/README.md`](assembly/README.md)).
+- AssemblyScript: `assembly/ui/tree` — the same shape in AS: chainable
+  `.id()`/`.label()`/`.style()` builders and the same diff (a record
+  comparison against the retained last export). See
+  [`assembly/README.md`](assembly/README.md).
 
 ## Layout
 
@@ -96,6 +97,7 @@ make components-as   # build the AS demos, lift them
 make run-tui-as      # counter from the AS component
 make web-as          # HTML pages for the AS components
 make web-test-as     # the web selftest against the AS modules
+make ui-test         # the tree layer's structural diff, run via Node
 ```
 
 `make web` inlines the wasm module as base64 into one HTML file per component;
@@ -122,6 +124,9 @@ it runs from disk with no server and no network.
   render is headless — no window, display, or GPU — so it runs in CI.
 - `make web-test` (and `-as`): the same assertions from Node, against the core
   modules, through the same `glue.js` the browser page uses.
+- `make ui-test`: the tree layer's diff channel, as a standalone module run
+  via Node: the structural cases (add, remove, re-parent) plus the bootstrap
+  and id-less rules — the AS twin of the `component-ui` unit tests.
 - `make fmt-check`: all sources are formatter-clean (`cargo fmt --check`
   for the Rust crates, prettier for the assembly/ and web/ trees). A
   pre-commit hook runs it on every commit (`make hooks` installs it);
@@ -139,6 +144,3 @@ it runs from disk with no server and no network.
 - **Images, as a WIT `resource`.** Substantial ABI work, worst on the
   hand-rolled AS side.
 - **Multi-component hosts.** Host-side only.
-- **Structural change in the AssemblyScript layer.** The mark diff tracks
-  value change only; the Rust `component-ui` diff also expresses add,
-  remove, and re-parent.
