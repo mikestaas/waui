@@ -1,0 +1,91 @@
+# The CI gate: the AGENTS.md verification list, run on every push to main
+# and on pull requests.
+#
+#   make components / components-as   build + lift the demos (Rust, AssemblyScript)
+#   make fmt-check                    the pre-commit formatter gate, backstopped
+#   cargo test                        unit tests, the wasmtime roundtrip (Rust and
+#                                     AS components), the headless --dump renders
+#   make web-test / web-test-as       the Node selftest: the Rust/AS byte-parity gate
+#   host-cli smoke                    one view, then quit, on both built components
+#
+# Everything runs headless: the iced render is a tiny-skia software frame, the
+# tui render goes to ratatui's TestBackend, the roundtrip is plain wasmtime.
+# No display, no window, no GPU.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Stable Rust + the wasm32 target (rust-toolchain.toml pins both).
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      # Cargo registry + target/ cache: the wasmtime/iced/ratatui builds
+      # are the expensive part.
+      - uses: Swatinem/rust-cache@v2
+
+      # Node 22 for the npm toolchain (asc for the AS demos, prettier for
+      # fmt-check); node_modules cached on the lockfile.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
+      # wabt (wasm2wat/wat2wasm) for the AS build's env.abort patch; the
+      # rest is the iced link set on Linux (winit pulls x11-dl, xkbcommon-dl,
+      # wayland-sys), needed at build time even though the --dump render is
+      # headless.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wabt pkg-config libxkbcommon-dev libssl-dev \
+            libwayland-dev libx11-dev libxkbcommon-x11-dev
+
+      # Prebuilt wasm-tools for the component new / component embed lifts.
+      - uses: bytecodealliance/actions/wasm-tools/setup@v1
+        with:
+          version: 1.261.0
+
+      - name: npm toolchain
+        run: npm ci
+
+      - name: Formatter gate
+        run: make fmt-check
+
+      - name: Build the components
+        run: |
+          make components
+          make components-as
+
+      - name: Test (unit, roundtrip, headless dumps)
+        run: cargo test
+
+      - name: Web selftest (Rust and AS)
+        run: |
+          make web-test
+          make web-test-as
+
+      - name: host-cli smoke (one view, then quit)
+        run: |
+          printf 'q\n' | cargo run -p host-cli -- target/components/demo-counter.component.wasm
+          printf 'q\n' | cargo run -p host-cli -- target/components/demo-stopwatch.component.wasm
