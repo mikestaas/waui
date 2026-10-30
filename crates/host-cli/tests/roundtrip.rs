@@ -298,14 +298,14 @@ fn assert_counter_roundtrip(app: &mut App, store: &mut Store<Host>) {
     assert_eq!(style_of(&nodes, 3).unwrap().color, Color::Negative);
 
     // The diff channel: the component reports only what it changed. A
-    // `view()` call above reset its dirty state, so the next click is the
+    // `view()` call above reset its diff reference, so the next click is the
     // only pending change.
     app.call_on_click(&mut *store, 4).expect("on-click failed"); // 0 -> ...-2
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
         mutations.len(),
         1,
-        "one click should dirty exactly one node"
+        "one click should change exactly one node"
     );
     match &mutations[0] {
         waui::ui::widget::Mutation::Changed(node) => {
