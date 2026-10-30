@@ -33,14 +33,16 @@
 // overwrites it in place, clamped to fit. A labeled node without an id gets
 // a fresh partition per build.
 //
-// The diff channel is a stale mark on the node: `.label(s)` and `.style(c, s)`
-// set it when the value changes, and `diffOf(root)` projects the stale nodes
-// as `changed` mutations (the parent from the tree structure), clearing the
-// marks. Before the first export it reports the whole tree (the WIT bootstrap
-// rule). A demo keeps its state-dependent nodes in module globals so the mark
-// survives between exports (the conservative GC retains them). The Rust
-// `component-ui` is immutable, so it diffs by retaining the last export; the
-// emitted stream matches the Rust demos'.
+// The diff channel is a record comparison against the last export, the AS
+// twin of the Rust crate's retained `LAST_EXPORTED`: the last export is kept
+// as a flat list of records, and `diffOf(root)` reports every id'd node whose
+// record — kind, parent, label, style, or direction — differs from it, plus
+// every id it no longer contains, as `removed`. Before the first export it
+// reports every id'd node (the WIT bootstrap rule). This is the contract's
+// add, remove, and re-parent. The stale mark (`.label`/`.style` set it when
+// the value changes) is the authoring signal, cleared on each export; a demo
+// keeps its state-dependent nodes in module globals so it survives between
+// exports (the conservative GC retains them).
 //
 // This module provides the tree, the pool, and the projection
 // (`viewOf`, `diffOf`, `count`).
@@ -57,6 +59,7 @@ import {
   TAG_TEXT,
   emitButton,
   emitContainer,
+  emitRemoved,
   emitText,
   makeList,
 } from '../abi/node';
@@ -253,6 +256,23 @@ function materializeLabel(w: Widget): void {
 /// bootstrap `diffOf`); the WIT bootstrap rule keys off it.
 var everExported: i32 = 0;
 
+/// One node of the last export, as a flat record — the AS twin of the Rust
+/// crate's `Flat`. Retained across exports for the diff's record comparison.
+class FlatRec {
+  kind: i32 = 0;
+  _id: i32 = 0;
+  parent: i32 = 0;
+  color: i32 = COLOR_NEUTRAL;
+  size: i32 = SIZE_MEDIUM;
+  direction: i32 = DIRECTION_ROW;
+  label: string = '';
+}
+
+/// The last export, as a flat list of records in depth-first pre-order — the
+/// AS twin of the Rust crate's `LAST_EXPORTED`. Replaced on every export; the
+/// conservative GC reclaims the previous one.
+var lastExport: FlatRec[] = [];
+
 /// Count the nodes of a tree (depth-first pre-order), for sizing the arena.
 export function count(w: Widget): i32 {
   let n = 1;
@@ -261,19 +281,84 @@ export function count(w: Widget): i32 {
   return n;
 }
 
-/// Count the stale nodes of a tree (depth-first pre-order).
-function dirtyCount(w: Widget): i32 {
-  let n = w.dirty;
-  const c = w.children;
-  for (let i = 0; i < c.length; i++) n += dirtyCount(c[i]);
-  return n;
-}
-
 /// Clear the stale marks of a tree (depth-first pre-order).
 function markAllClean(w: Widget): void {
   w.markClean();
   const c = w.children;
   for (let i = 0; i < c.length; i++) markAllClean(c[i]);
+}
+
+/// Flatten the tree into records (depth-first pre-order, every node), for the
+/// retained last export.
+function flatten(w: Widget, parent: i32, out: FlatRec[]): void {
+  const r = new FlatRec();
+  r.kind = w.kind;
+  r._id = w._id;
+  r.parent = parent;
+  r.color = w.color;
+  r.size = w.size;
+  r.direction = w.direction;
+  r.label = w.labelSrc;
+  out.push(r);
+  const id = w._id;
+  const c = w.children;
+  for (let i = 0; i < c.length; i++) {
+    flatten(c[i], id, out);
+  }
+}
+
+/// Whether `id` is among the records of `recs`.
+function presentIn(recs: FlatRec[], id: i32): i32 {
+  for (let i = 0; i < recs.length; i++) {
+    if (recs[i]._id == id) return 1;
+  }
+  return 0;
+}
+
+/// Whether `w` (with `parent`) is reported `changed`: id'd and, in bootstrap,
+/// any; otherwise its record differs from the last export, or its id is new.
+/// An id-less node is unaddressable (the WIT identity rule) and never is.
+function isChanged(w: Widget, parent: i32, first: i32, last: FlatRec[]): i32 {
+  const id = w._id;
+  if (id == 0) return 0; // id-less: unaddressable, never reported
+  if (first != 0) return 1; // bootstrap: every id'd node
+  for (let i = 0; i < last.length; i++) {
+    const r = last[i];
+    if (r._id != id) continue;
+    // Same id: changed only if the record differs. A container's record is
+    // its direction (the WIT container carries no style); a leaf's is its
+    // label and style. AS compares strings by content.
+    let differs = w.kind != r.kind || parent != r.parent;
+    if (w.kind == TAG_CONTAINER) {
+      differs = differs || w.direction != r.direction;
+    } else {
+      differs = differs || w.color != r.color || w.size != r.size || w.labelSrc != r.label;
+    }
+    return differs ? 1 : 0;
+  }
+  return 1; // id absent from the last export: a new node
+}
+
+/// Count the `changed` nodes of a tree (depth-first pre-order).
+function countChanged(w: Widget, parent: i32, first: i32, last: FlatRec[]): i32 {
+  let n = isChanged(w, parent, first, last);
+  const id = w._id;
+  const c = w.children;
+  for (let i = 0; i < c.length; i++) {
+    n += countChanged(c[i], id, first, last);
+  }
+  return n;
+}
+
+/// Count the ids in `last` that are no longer in `newRecs` (the removals).
+function countRemoved(last: FlatRec[], newRecs: FlatRec[]): i32 {
+  let n = 0;
+  for (let i = 0; i < last.length; i++) {
+    const id = last[i]._id;
+    if (id == 0) continue; // id-less: never removed
+    if (presentIn(newRecs, id) == 0) n += 1;
+  }
+  return n;
 }
 
 /// Emit one record for `w` at `buf + off * stride`. With `isMutation`, the
@@ -318,51 +403,87 @@ function lower(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32
   return next;
 }
 
-/// Emit the stale nodes of a tree in depth-first pre-order, each with the
-/// parent stated from the structure, and clear their marks. Non-stale nodes
-/// are skipped but descended into: a stale child sits under its unmarked
-/// parent. Returns the next offset.
-function lowerDirty(w: Widget, parent: i32, buf: i32, off: i32): i32 {
-  const id = w._id;
+/// Emit the `changed` nodes of a tree in depth-first pre-order, each with the
+/// parent from the structure. Non-changed nodes are skipped but descended
+/// into: a changed child sits under its unchanged parent. Returns the next
+/// offset.
+function lowerChanged(
+  w: Widget,
+  parent: i32,
+  buf: i32,
+  off: i32,
+  first: i32,
+  last: FlatRec[],
+): i32 {
   let next = off;
-  if (w.dirty != 0) {
+  if (isChanged(w, parent, first, last) != 0) {
     next = emitNode(w, parent, buf, off, 1);
-    w.markClean();
   }
+  const id = w._id;
   const c = w.children;
   for (let i = 0; i < c.length; i++) {
-    next = lowerDirty(c[i], id, buf, next);
+    next = lowerChanged(c[i], id, buf, next, first, last);
+  }
+  return next;
+}
+
+/// Emit the `removed` mutations: the ids in `last` no longer in `newRecs`, in
+/// the last export's pre-order. Returns the next offset.
+function lowerRemoved(last: FlatRec[], newRecs: FlatRec[], buf: i32, off: i32): i32 {
+  let next = off;
+  for (let i = 0; i < last.length; i++) {
+    const id = last[i]._id;
+    if (id == 0) continue; // id-less: never removed
+    if (presentIn(newRecs, id) == 0) {
+      emitRemoved(buf + next * 36, id);
+      next += 1;
+    }
   }
   return next;
 }
 
 /// Project the whole tree as a `view()` result: every node as a 32-byte node
-/// record in depth-first pre-order, behind a list descriptor. Clears the
-/// stale marks and sets `everExported`.
+/// record in depth-first pre-order, behind a list descriptor. The full
+/// snapshot becomes the reference the next diff compares against (the Rust
+/// crate's `note_view`); the stale marks are cleared and `everExported` set.
 export function viewOf(root: Widget): i32 {
   everExported = 1;
   markAllClean(root);
+  const recs = new Array<FlatRec>();
+  flatten(root, 0, recs);
+  lastExport = recs;
   const n = count(root);
   const buf = arenaAlloc(n * 32);
   lower(root, 0, buf, 0, 0);
   return makeList(buf, n);
 }
 
-/// Project the diff channel for the demo's rebuilt tree: every node as
-/// `changed` before the first export, otherwise the stale nodes, in
-/// depth-first pre-order, each with the parent from the structure. The marks
-/// are cleared either way.
+/// Project the diff channel: the record comparison against the last export.
+/// Before the first export, every id'd node is `changed` (the WIT bootstrap
+/// rule); otherwise, every id'd node whose record differs is `changed` (in
+/// depth-first pre-order), then every id in the last export that is no longer
+/// in the tree is `removed` (in the last export's pre-order). The new tree
+/// becomes the next reference (the Rust crate's `diff`); the stale marks are
+/// cleared either way.
 export function diffOf(root: Widget): i32 {
   const first = everExported == 0;
-  const n = first ? count(root) : dirtyCount(root);
+  const last = lastExport; // the reference, captured before it is replaced
+  const newRecs = new Array<FlatRec>();
+  flatten(root, 0, newRecs);
   if (first) everExported = 1;
+
+  const nChanged = countChanged(root, 0, first, last);
+  const nRemoved = first != 0 ? 0 : countRemoved(last, newRecs);
+  const n = nChanged + nRemoved;
+
+  lastExport = newRecs; // the new tree is the next reference
+  markAllClean(root);
+
   if (n == 0) return makeList(0, 0); // an empty list's ptr is 0
   const buf = arenaAlloc(n * 36);
-  if (first) {
-    lower(root, 0, buf, 0, 1);
-    markAllClean(root);
-  } else {
-    lowerDirty(root, 0, buf, 0);
+  let off = lowerChanged(root, 0, buf, 0, first, last);
+  if (first == 0) {
+    lowerRemoved(last, newRecs, buf, off);
   }
   return makeList(buf, n);
 }
