@@ -13,50 +13,66 @@ import {
   COLOR_NEGATIVE,
   COLOR_NEUTRAL,
   COLOR_POSITIVE,
-  DIRECTION_COLUMN,
   MUT_CHANGED,
   MUT_REMOVED,
   SIZE_LARGE,
   SIZE_MEDIUM,
-  TAG_BUTTON,
   TAG_CONTAINER,
-  TAG_TEXT,
 } from '../abi/node';
-import { button, column, diffOf, row, text, viewOf, Widget } from './tree';
+import { diffOf, h, viewOf, Widget } from './tree';
+
+// The trees are written in JSX; `../jsx.mjs` lowers them to `h` calls before
+// `asc` compiles this module, so the structural cases below exercise the
+// factory as well as the diff channel.
 
 // The counter's shape at value v: a box (1) with the "+" button (2), the
 // readout (3; its color is state), and the "-" button (4).
 function counter(v: i32): Widget {
-  return column([
-    button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(2),
-    text(`${v}`, v < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL, SIZE_LARGE).id(3),
-    button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(4),
-  ]).id(1);
+  return (
+    <column id={1}>
+      <button id={2} label="+" color={COLOR_POSITIVE} size={SIZE_MEDIUM} />
+      <text
+        id={3}
+        label={`${v}`}
+        color={v < 0 ? COLOR_NEGATIVE : COLOR_NEUTRAL}
+        size={SIZE_LARGE}
+      />
+      <button id={4} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />
+    </column>
+  );
 }
 
 // The counter without the readout (for the removal case).
 function slim(): Widget {
-  return column([
-    button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(2),
-    button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(4),
-  ]).id(1);
+  return (
+    <column id={1}>
+      <button id={2} label="+" color={COLOR_POSITIVE} size={SIZE_MEDIUM} />
+      <button id={4} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />
+    </column>
+  );
 }
 
 // The counter with the readout re-parented under a new row (5).
 function reparented(): Widget {
-  return column([
-    button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(2),
-    row([text('1', COLOR_NEUTRAL, SIZE_LARGE).id(3)]).id(5),
-    button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(4),
-  ]).id(1);
+  return (
+    <column id={1}>
+      <button id={2} label="+" color={COLOR_POSITIVE} size={SIZE_MEDIUM} />
+      <row id={5}>
+        <text id={3} label="1" color={COLOR_NEUTRAL} size={SIZE_LARGE} />
+      </row>
+      <button id={4} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />
+    </column>
+  );
 }
 
 // A box with an id'd readout and an id-less sibling.
 function withIdless(label: string): Widget {
-  return column([
-    text('a', COLOR_NEUTRAL, SIZE_LARGE).id(3),
-    text(label, COLOR_NEUTRAL, SIZE_LARGE),
-  ]).id(1);
+  return (
+    <column id={1}>
+      <text id={3} label="a" color={COLOR_NEUTRAL} size={SIZE_LARGE} />
+      <text label={label} color={COLOR_NEUTRAL} size={SIZE_LARGE} />
+    </column>
+  );
 }
 
 // ------------------------------------------------------------------ decoding
@@ -78,23 +94,25 @@ function readUtf8(ptr: i32, len: i32): string {
   let s = '';
   let i = 0;
   while (i < len) {
-    const c = (<u32>load<i8>(ptr + i)) & 0xff;
+    // The `as` cast, not the `<u32>` angle form: this is a `.tsx` file,
+    // where the parser reads `<u32>` as a JSX tag.
+    const c = (load<i8>(ptr + i) as u32) & 0xff;
     if (c < 0x80) {
-      s += String.fromCharCode(<i32>c);
+      s += String.fromCharCode(c as i32);
       i += 1;
     } else if (c < 0xe0) {
-      const c2 = (<u32>load<i8>(ptr + i + 1)) & 0x3f;
-      s += String.fromCharCode(<i32>(((c & 0x1f) << 6) | c2));
+      const c2 = (load<i8>(ptr + i + 1) as u32) & 0x3f;
+      s += String.fromCharCode((((c & 0x1f) << 6) | c2) as i32);
       i += 2;
     } else if (c < 0xf0) {
-      const c2 = (<u32>load<i8>(ptr + i + 1)) & 0x3f;
-      const c3 = (<u32>load<i8>(ptr + i + 2)) & 0x3f;
-      s += String.fromCharCode(<i32>(((c & 0x0f) << 12) | (c2 << 6) | c3));
+      const c2 = (load<i8>(ptr + i + 1) as u32) & 0x3f;
+      const c3 = (load<i8>(ptr + i + 2) as u32) & 0x3f;
+      s += String.fromCharCode((((c & 0x0f) << 12) | (c2 << 6) | c3) as i32);
       i += 3;
     } else {
-      const c2 = (<u32>load<i8>(ptr + i + 1)) & 0x3f;
-      const c3 = (<u32>load<i8>(ptr + i + 2)) & 0x3f;
-      const c4 = (<u32>load<i8>(ptr + i + 3)) & 0x3f;
+      const c2 = (load<i8>(ptr + i + 1) as u32) & 0x3f;
+      const c3 = (load<i8>(ptr + i + 2) as u32) & 0x3f;
+      const c4 = (load<i8>(ptr + i + 3) as u32) & 0x3f;
       const cp = ((c & 0x07) << 18) | (c2 << 12) | (c3 << 6) | c4;
       const v = cp - 0x10000;
       s += String.fromCharCode(0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff));

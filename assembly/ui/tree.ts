@@ -7,14 +7,15 @@
 // the same shape as the Rust `Tree::column(vec![...])`. Tree size is limited
 // only by the heap. The readout is state-dependent, so it is a persistent
 // object (a module global in the demos); the buttons are rebuilt with the
-// column:
+// column. In a `.tsx` source the structure is JSX (lowered to `h` calls by
+// `../jsx.mjs`):
 //
 //   var readout = text('', COLOR_NEUTRAL, SIZE_LARGE).id(3);
-//   column([
-//     button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(2),
-//     readout,
-//     button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(4),
-//   ]).id(1);
+//   <column id={1}>
+//     <button id={2} label="+" color={COLOR_POSITIVE} size={SIZE_MEDIUM} />
+//     {readout}
+//     <button id={4} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />
+//   </column>
 //
 // The heap costs one import: the incremental runtime pulls in `env.abort`
 // (its OOM path), which `../patch-env-abort.mjs` replaces with an in-module
@@ -41,8 +42,8 @@
 // reports every id'd node (the WIT bootstrap rule). This is the contract's
 // add, remove, and re-parent.
 //
-// This module provides the tree, the pool, and the projection
-// (`viewOf`, `diffOf`, `count`).
+// This module provides the tree, the pool, the JSX factory (`h`), and the
+// projection (`viewOf`, `diffOf`, `count`).
 
 import { arenaAlloc, RESULT_END } from '../abi/arena';
 import {
@@ -177,6 +178,55 @@ export function row(children: Widget[]): Widget {
 export function column(children: Widget[]): Widget {
   const w = new Widget(TAG_CONTAINER, '', children);
   w.direction = DIRECTION_COLUMN;
+  return w;
+}
+
+// ------------------------------------------------------------------ the JSX
+
+/// The props bag of a JSX element. Each field is one attribute the factory
+/// understands; an attribute absent from the element takes the field's
+/// default. AssemblyScript coerces the element's object literal to this
+/// class, so a typo'd attribute name is a compile error.
+export class Props {
+  id: i32 = 0;
+  label: string = '';
+  color: i32 = COLOR_NEUTRAL;
+  size: i32 = SIZE_MEDIUM;
+  reserve: i32 = 0;
+  direction: i32 = DIRECTION_ROW; // honored only by `container`
+}
+
+/// The JSX factory that `../jsx.mjs` emits calls to (its `pragma`). The tag
+/// picks the constructor, the props bag (null when the element has no
+/// attributes) is applied on top, and the rest arguments are the element's
+/// children, in order.
+export function h(tag: string, props: Props | null, ...children: Widget[]): Widget {
+  let w: Widget;
+  if (tag == 'text') {
+    w = text('');
+  } else if (tag == 'button') {
+    w = button('');
+  } else if (tag == 'row') {
+    w = row(children);
+  } else if (tag == 'column') {
+    w = column(children);
+  } else if (tag == 'container') {
+    w = new Widget(TAG_CONTAINER, '', children);
+  } else {
+    throw new Error('unknown tag: ' + tag);
+  }
+  if (props != null) {
+    if (props.id != 0) w = w.id(props.id);
+    if (props.label.length != 0) w = w.label(props.label);
+    if (props.color != COLOR_NEUTRAL || props.size != SIZE_MEDIUM) {
+      w = w.style(props.color, props.size);
+    }
+    if (props.reserve != 0) w = w.reserve(props.reserve);
+    // Only `container` takes its direction from the props: `row`/`column`
+    // fix it in their constructor, and applying the props default here would
+    // silently flip them.
+    if (tag == 'container') w.direction = props.direction;
+  }
   return w;
 }
 

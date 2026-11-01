@@ -12,7 +12,10 @@ hand-rolled against the WIT (`abi/`), and the lift is typed by an explicit
 ## Build pipeline
 
 ```
-assembly/<demo>/index.ts
+assembly/<demo>/index.tsx
+  │  node assembly/jsx.mjs   (babel: JSX → h() calls; asc has no JSX parser)
+  ▼
+assembly/<demo>/index.gen.ts
   │  asc  -O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2
   ▼
 target/assembly/<demo>.raw.wasm        exports onclick/ontick; imports env.abort
@@ -27,8 +30,13 @@ target/assembly/<demo>-as.wasm         (the web host runs this one)
 target/components/<demo>-as.component.wasm
 ```
 
-- **`asc`** compiles the sources. In 0.28.20 only two runtime names resolve
-  against the installed package: `stub` (no runtime, no heap) and
+- **`jsx.mjs`** lowers the JSX to calls on the tree layer's `h` factory
+  (`@babel/plugin-transform-react-jsx`, classic runtime). The `typescript`
+  parser plugin keeps the `i32`/`i64` annotations, so the output is plain
+  AssemblyScript. The generated `index.gen.ts` is written in place (git- and
+  prettier-ignored) so the source's relative imports resolve unchanged.
+- **`asc`** compiles the generated sources. In 0.28.20 only two runtime names
+  resolve against the installed package: `stub` (no runtime, no heap) and
   `incremental` (in-module TLSF allocator + conservative GC, one import:
   `env.abort`, its OOM path). `static` and `full` fail with "runtime not
   found". The tree needs a heap, so `incremental` is the one that works.
@@ -54,8 +62,8 @@ target/components/<demo>-as.component.wasm
   through `glue.js`; the wasmtime hosts run the lifted component through
   `host-shared`.
 
-`make components-as` runs all of it. Requires Node + `npm install` (asc) and
-wabt on the PATH (the patch step).
+`make components-as` runs all of it. Requires Node + `npm install` (asc,
+babel) and wabt on the PATH (the patch step).
 
 `make fmt` formats these files and the ones in `web/` with prettier (the
 config is `.prettierrc` at the repo root); the `assemblyscript-prettier`
@@ -71,7 +79,7 @@ their `children` arrays — the same shape as the Rust
 The counter's shape: the box and both buttons are static, the readout is the
 only state-dependent node, so it is a persistent object.
 
-```ts
+```tsx
 var readout = text('', COLOR_NEUTRAL, SIZE_LARGE).id(READOUT);
 readout.reserve(16); // "-2147483648" is 11 bytes
 
@@ -84,13 +92,19 @@ function applyReadout(v: i32): void {
 
 function tree(v: i32): Widget {
   applyReadout(v);
-  return column([
-    button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(INC),
-    readout, // the persistent leaf, embedded by reference
-    button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(DEC),
-  ]).id(BOX);
+  return (
+    <column id={BOX}>
+      <button id={INC} label="+" color={COLOR_POSITIVE} size={SIZE_MEDIUM} />
+      {readout}
+      <button id={DEC} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />
+    </column>
+  );
 }
 ```
+
+The structure is JSX (lowered to `h` calls by `../jsx.mjs`); the persistent
+state-dependent nodes are still created with the builders, outside the
+element. `{readout}` embeds the persistent leaf by reference.
 
 API:
 
@@ -100,6 +114,10 @@ API:
   (the id's storage is `_id`, set with `.id()`: AssemblyScript cannot name a
   field and a method alike the way Rust can)
 - plain fields: `children`
+- JSX: `h(tag, props, ...children)` — the factory `../jsx.mjs` emits; `tag`
+  is `text`/`button`/`row`/`column`/`container`, `props` is the `Props` class
+  (a bag of `id`, `label`, `color`, `size`, `reserve`, `direction` — the last
+  honored only by `container`), null when the element has no attributes
 - projection: `viewOf(root)`, `diffOf(root)`, `count(w)`
 
 Behavior:
@@ -164,8 +182,12 @@ AS strings are UTF-16; the ABI's are UTF-8 bytes, converted at write time.
 The demos' output is byte-identical to the Rust demos' — the selftest asserts
 it.
 
-## Things that will bite you (asc 0.28.20)
+## Things that will bite you (asc 0.28.20; the `.tsx` sources)
 
+- **In a `.tsx` source, `<u32>x` is a JSX tag, not a cast.** The
+  angle-bracket type-assertion form is reserved for JSX in `.tsx`, so use the
+  `as` form (`x as u32`) there. A generic *call* like `load<i8>(…)` is fine —
+  only a `<type>` leading an expression is ambiguous.
 - **`Map.get` on an absent key throws** (the stdlib cannot represent
   `undefined`), and a throw in wasm is an `abort` trap. Always
   `has(key) ? get(key) : …`.

@@ -15,8 +15,10 @@
 // the elapsed reading is sampled once, so one exported list never mixes two
 // clock readings.
 //
-// `onclick`/`ontick` are renamed to the world's hyphenated names after
-// compilation (see `../rename-exports.mjs`).
+// The tree is written in JSX; `../jsx.mjs` lowers it to `h` calls before
+// `asc` compiles it (asc's parser has no JSX). `onclick`/`ontick` are
+// renamed to the world's hyphenated names after compilation (see
+// `../rename-exports.mjs`).
 
 import { cabi_post_changes, cabi_post_view } from '../abi/arena';
 import {
@@ -28,7 +30,7 @@ import {
   SIZE_MEDIUM,
 } from '../abi/node';
 import { now, schedule } from '../abi/root';
-import { Widget, button, column, diffOf, text, viewOf } from '../ui/tree';
+import { Widget, button, diffOf, h, text, viewOf } from '../ui/tree';
 
 // The world requires both post functions on the module itself.
 export { cabi_post_changes, cabi_post_view };
@@ -79,7 +81,12 @@ function apply(e: i64, r: i32): void {
 /// and the button are the persistent leaves.
 function tree(e: i64, r: i32): Widget {
   apply(e, r);
-  return column([readout, control]).id(BOX);
+  return (
+    <column id={BOX}>
+      {readout}
+      {control}
+    </column>
+  );
 }
 
 export function view(): i32 {

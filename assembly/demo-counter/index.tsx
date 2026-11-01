@@ -15,8 +15,10 @@
 //   changes:  the changed readout (the whole tree on first contact)
 //   on-tick:  nothing (a counter has no clock)
 //
-// `onclick`/`ontick` are renamed to the world's hyphenated names after
-// compilation (see `../rename-exports.mjs`).
+// The tree is written in JSX; `../jsx.mjs` lowers it to `h` calls before
+// `asc` compiles it (asc's parser has no JSX). `onclick`/`ontick` are
+// renamed to the world's hyphenated names after compilation (see
+// `../rename-exports.mjs`).
 
 import { cabi_post_changes, cabi_post_view } from '../abi/arena';
 import {
@@ -26,7 +28,7 @@ import {
   SIZE_LARGE,
   SIZE_MEDIUM,
 } from '../abi/node';
-import { Widget, button, column, diffOf, text, viewOf } from '../ui/tree';
+import { Widget, diffOf, h, text, viewOf } from '../ui/tree';
 
 // The world requires both post functions on the module itself.
 export { cabi_post_changes, cabi_post_view };
@@ -53,11 +55,13 @@ function applyReadout(v: i32): void {
 /// the persistent leaf.
 function tree(v: i32): Widget {
   applyReadout(v);
-  return column([
-    button('+', COLOR_POSITIVE, SIZE_MEDIUM).id(INC),
-    readout,
-    button('-', COLOR_NEGATIVE, SIZE_MEDIUM).id(DEC),
-  ]).id(BOX);
+  return (
+    <column id={BOX}>
+      <button id={INC} label="+" color={COLOR_POSITIVE} size={SIZE_MEDIUM} />
+      {readout}
+      <button id={DEC} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />
+    </column>
+  );
 }
 
 export function view(): i32 {

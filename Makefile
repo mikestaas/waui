@@ -24,20 +24,23 @@ components:
 # the WIT in `wit/` is embedded into the module (`component embed`) and the
 # result lifted (`component new`).
 #
-#   asc (incremental runtime — the ui/tree object tree needs a heap)
+#   jsx (babel lowers the .tsx JSX to h() calls — asc has no JSX parser)
+#   → asc (incremental runtime — the ui/tree object tree needs a heap)
 #   → patch-env-abort (the runtime's one import becomes an in-module
 #     unreachable, so the module stays import-free)
 #   → rename exports (world names with hyphens are not AS identifiers)
 #   → component embed wit/ → component new
 #
-# Needs node + `npm install` (asc) and wabt on the PATH (the patch step).
+# Needs node + `npm install` (asc, babel) and wabt on the PATH (the patch step).
 components-as:
 	@command -v node >/dev/null 2>&1 || { echo "components-as needs node/npm — run: npm install"; exit 1; }
 	@test -x node_modules/.bin/asc || { echo "assemblyscript not installed — run: npm install"; exit 1; }
+	@test -d node_modules/@babel/core || { echo "babel not installed — run: npm install"; exit 1; }
 	@mkdir -p target/assembly target/components
 	@for c in $(AS_COMPONENTS); do \
 		echo "==> building $$c (assemblyscript)"; \
-		npx asc assembly/$$c/index.ts --outFile target/assembly/$$c.raw.wasm \
+		node assembly/jsx.mjs assembly/$$c/index.tsx assembly/$$c/index.gen.ts || exit 1; \
+		npx asc assembly/$$c/index.gen.ts --outFile target/assembly/$$c.raw.wasm \
 			-O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2 || exit 1; \
 		node assembly/patch-env-abort.mjs target/assembly/$$c.raw.wasm target/assembly/$$c.core.wasm || exit 1; \
 		node assembly/rename-exports.mjs target/assembly/$$c.core.wasm target/assembly/$$c-as.wasm \
@@ -118,12 +121,15 @@ web-test-as: components-as
 
 # The tree layer's diff channel, as a standalone module run via Node: the
 # structural cases (add, remove, re-parent) plus the bootstrap and id-less
-# rules — the AS twin of the Rust `component-ui` unit tests. Needs node +
-# `npm install` (asc) and wabt (the patch step).
+# rules — the AS twin of the Rust `component-ui` unit tests. The trees are
+# written in JSX (lowered by assembly/jsx.mjs, as in the demos). Needs node +
+# `npm install` (asc, babel) and wabt (the patch step).
 ui-test:
 	@test -x node_modules/.bin/asc || { echo "ui-test needs node/npm — run: npm install"; exit 1; }
+	@test -d node_modules/@babel/core || { echo "babel not installed — run: npm install"; exit 1; }
 	@mkdir -p target/assembly
-	npx asc assembly/ui/tree.test.ts --outFile target/assembly/tree-test.raw.wasm \
+	node assembly/jsx.mjs assembly/ui/tree.test.tsx assembly/ui/tree.test.gen.ts || exit 1; \
+	npx asc assembly/ui/tree.test.gen.ts --outFile target/assembly/tree-test.raw.wasm \
 		-O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2 || exit 1; \
 	node assembly/patch-env-abort.mjs target/assembly/tree-test.raw.wasm target/assembly/tree-test.core.wasm || exit 1; \
 	node assembly/ui/tree.test.mjs target/assembly/tree-test.core.wasm

@@ -101,10 +101,11 @@ fn build_component(demo: &str) {
     assert!(status.success(), "failed to lift {demo} into a component");
 }
 
-// The AssemblyScript build needs node + the local npm toolchain (asc);
+// The AssemblyScript build needs node + the local npm toolchain (asc, babel);
 // without it the AS tests skip rather than fail.
 fn as_toolchain_available() -> bool {
     waui_root().join("node_modules/.bin/asc").exists()
+        && waui_root().join("node_modules/@babel/core").exists()
         && Command::new("node")
             .arg("--version")
             .output()
@@ -119,7 +120,8 @@ static RUST_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 static AS_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Build the AssemblyScript component and lift it:
-/// asc (the incremental runtime) -> the `env.abort` patch -> export rename
+/// jsx (babel lowers the `.tsx` to `h()` calls — asc has no JSX parser)
+/// -> asc (the incremental runtime) -> the `env.abort` patch -> export rename
 /// -> component embed (the WIT) -> component new.
 /// (Callers hold `AS_BUILD_LOCK` across the build *and* the load, so a
 /// sibling test cannot lift over the file while we read it.)
@@ -130,7 +132,8 @@ fn build_component_as(demo: &str) {
     std::fs::create_dir_all(root.join("target/components"))
         .expect("failed to create target/components");
 
-    let src = format!("assembly/{demo}/index.ts");
+    let src = format!("assembly/{demo}/index.tsx");
+    let gen = format!("assembly/{demo}/index.gen.ts");
     let raw = root
         .join("target/assembly")
         .join(format!("{demo}.raw.wasm"));
@@ -145,8 +148,13 @@ fn build_component_as(demo: &str) {
 
     let mut steps: Vec<Command> = Vec::new();
     {
+        let mut c = Command::new("node");
+        c.args(["assembly/jsx.mjs", src.as_str(), gen.as_str()]);
+        steps.push(c);
+    }
+    {
         let mut c = Command::new("npx");
-        c.args(["asc", src.as_str(), "--outFile", raw.to_str().unwrap()]);
+        c.args(["asc", gen.as_str(), "--outFile", raw.to_str().unwrap()]);
         c.args([
             "-O",
             "--noAssert",

@@ -1,4 +1,4 @@
-// Node harness for `assembly/ui/tree.test.ts`: instantiates the core module
+// Node harness for `assembly/ui/tree.test.tsx`: instantiates the core module
 // (import-free after the `env.abort` patch) and runs its structural-diff
 // scenarios. `run()` returns 0 on success, or the first failing scenario's
 // index.
