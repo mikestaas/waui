@@ -46,9 +46,16 @@
 //   bytes [30..32]  padding
 //
 // The 36-byte mutation (a variant with a node- or u32-sized payload):
-//   bytes [0..4]    tag word: 0 = changed, 1 = removed
+//   bytes [0]       tag: 0 = changed, 1 = removed (one byte, like the node
+//                   tag — the canonical ABI sizes a variant's discriminant
+//                   to the case count: u8 for 256 or fewer cases)
+//   bytes [1..4]    padding
 //   changed   : the 32-byte node above, starting at byte 4
 //   removed   : the node id, u32 at byte 4
+//
+// The tag is read as a single byte, not a word: the padding bytes are not
+// written by the producer, so a word read would pick up stale heap data and
+// misread a `removed` (tag 1) as a `changed`.
 //
 // Note: a WIT enum lowers to a single byte in the canonical ABI when it has
 // 256 or fewer variants (wasmtime's generated bindings assert SIZE32 = 1),
@@ -129,7 +136,9 @@ export async function createApp(wasmBytes, hooks = {}) {
     /// { kind: 'changed', node } or { kind: 'removed', id }.
     changes: () =>
       readList(ex.changes, ex.cabi_post_changes, 36, (i32, u8, o) => {
-        return i32[o >> 2] === 1
+        // The tag is one byte (see the layout note above); the padding after
+        // it is unwritten, so it must not be read as part of the tag.
+        return u8[o] === 1
           ? { kind: 'removed', id: i32[(o + 4) >> 2] }
           : { kind: 'changed', node: decodeNode(i32, u8, o + 4) };
       }),
