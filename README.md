@@ -68,7 +68,9 @@ error-prone, so component authors write a nested tree and project it:
 |                          | a refresh (the host never wakes it)                                                                   |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one    |
 |                          | mutation                                                                                               |
-| `assembly/`              | the same two demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`), no bindings |
+| `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component;   |
+|                          | the "add" cycles preset labels (the contract has no text input)                                         |
+| `assembly/`              | the same three demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`), no bindings |
 
 The three wasmtime hosts load the same component file. The web host runs the
 *pre-lift* core module instead (browsers instantiate core wasm, not components)
@@ -87,6 +89,9 @@ make run-tui         # counter, TUI host
 make run-iced        # counter, window
 make run-stop-tui    # stopwatch, TUI host
 make run-stop-iced   # stopwatch, window
+make run-todo-cli    # todo, ASCII terminal host
+make run-todo-tui    # todo, TUI host
+make run-todo-iced   # todo, window
 make web             # self-contained HTML pages in target/web/
 make web-test        # headless (Node) check of the web host's ABI layer
 make test            # cargo test, all crates
@@ -95,6 +100,7 @@ make hooks           # point git at .githooks (the pre-commit gate)
 
 make components-as   # build the AS demos, lift them
 make run-tui-as      # counter from the AS component
+make run-todo-tui-as # todo from the AS component
 make web-as          # HTML pages for the AS components
 make web-test-as     # the web selftest against the AS modules
 make ui-test         # the tree layer's structural diff, run via Node
@@ -108,11 +114,12 @@ it runs from disk with no server and no network.
 - `cargo test`: `component-ui` unit tests (lowering pre-order and parent
   links), `host-shared` tests (diff application: in-place replace, subtree
   removal, re-parenting, insertion, id-less skip), and the round-trip test
-  (`crates/host-cli/tests/roundtrip.rs`), which drives the counter and the
-  stopwatch through the same wasmtime host code the real hosts use and
-  asserts on the node content, the style, the diff channel, and the refresh
-  request (`schedule`). It runs against the Rust component and, as `*_as`,
-  against the AssemblyScript one (skipped when `node_modules` is missing).
+  (`crates/host-cli/tests/roundtrip.rs`), which drives the counter, the
+  stopwatch, and the todo through the same wasmtime host code the real hosts
+  use and asserts on the node content, the style, the diff channel (the
+  todo's is structural: add, remove, re-parent), and the refresh request
+  (`schedule`). It runs against the Rust component and, as `*_as`, against
+  the AssemblyScript one (skipped when `node_modules` is missing).
 - The hosts' headless render checks, also under `cargo test`: `host-tui`
   `tests/dump.rs` runs the binary with `--dump` (one frame into ratatui's
   test backend) and asserts on the layout, the semantic colors, and the
@@ -134,10 +141,6 @@ it runs from disk with no server and no network.
 
 ## Not implemented
 
-- **A structural demo.** The contract's diff expresses add, remove, and
-  re-parent, and the unit tests cover both sides in isolation, but no demo
-  drives them through a real component: both demos mutate values in place
-  only.
 - **Text input and component-directed focus.** The only event channel is
   `on-click`, so nothing can take keyboard text. A contract change touching
   every host, the AS ABI, and the parity tests.

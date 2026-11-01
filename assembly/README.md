@@ -1,8 +1,9 @@
 # AssemblyScript components
 
-The two demos in AssemblyScript: the same components as
-[`crates/demo-counter`](../crates/demo-counter/) and
-[`crates/demo-stopwatch`](../crates/demo-stopwatch/), the same
+The three demos in AssemblyScript: the same components as
+[`crates/demo-counter`](../crates/demo-counter/),
+[`crates/demo-stopwatch`](../crates/demo-stopwatch/), and
+[`crates/demo-todo`](../crates/demo-todo/), the same
 [`waui:ui/app`](../wit/app.wit) world, the same four hosts.
 
 There is no `wit-bindgen` for AssemblyScript, so the canonical ABI is
@@ -49,8 +50,9 @@ target/components/<demo>-as.component.wasm
   `call` sites in a way `WebAssembly.validate` cannot catch.) It round-trips
   through WAT (wabt's `wasm2wat`/`wat2wasm`) and checks the result: valid,
   no `env` imports, same export set. Both old and new bodies trap on OOM, so
-  behavior is unchanged. After the patch: the counter is import-free; the
-  stopwatch keeps only the world's own `$root.now` and `$root.schedule`.
+  behavior is unchanged. After the patch: the counter and the todo are
+  import-free; the stopwatch keeps only the world's own `$root.now` and
+  `$root.schedule`.
 - **`rename-exports.mjs`** rewrites two export names: the world spells them
   `on-click`/`on-tick` (hyphens, which WIT uses verbatim as wasm export
   names), and AssemblyScript identifiers cannot contain hyphens, so the demos
@@ -125,9 +127,10 @@ Behavior:
 - The demos rebuild the tree's *structure* from state on every export, as the
   Rust demos do; the structural `Widget` objects are local to the call and the
   conservative GC reclaims them when the export returns. The state-dependent
-  nodes (the counter's readout; the stopwatch's readout and button) are the
-  exception: module globals, kept for the module's lifetime. A few bytes per
-  node, never growing.
+  nodes (the counter's readout; the stopwatch's readout and button; the todo's
+  two lists, count, and footer buttons) are the exception: module globals, kept
+  for the module's lifetime. A few bytes each; the todo's lists grow one object
+  per add.
 - **Labels** live in the static **label pool** (raw linear memory; the GC
   never scans it). The label is kept as UTF-16 source; the UTF-8 pool write
   happens at projection, keyed by the node's id. A partition is
@@ -167,7 +170,8 @@ first build (16 + 12 + 12); the module stays at its 2 initial pages across
 hundreds of rebuilds — the selftest's leak check allows <4 pages of growth
 over 120 calls. The demos' persistent state-dependent nodes and the retained
 last-export snapshot (the diff's reference, replaced on every export) add a
-constant few hundred bytes of retained heap, never growing.
+small amount of retained heap: constant for the counter and stopwatch, growing
+with the number of todos for the todo — all within the leak check's allowance.
 
 ## The ABI layer (`abi/`)
 

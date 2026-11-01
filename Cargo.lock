@@ -1100,6 +1100,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo-todo"
+version = "0.0.1"
+dependencies = [
+ "component-ui",
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"

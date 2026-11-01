@@ -7,7 +7,7 @@
 #                                     AS components), the headless --dump renders
 #   make ui-test                      the AssemblyScript tree/diff unit tests
 #   make web-test / web-test-as       the Node selftest: the Rust/AS byte-parity gate
-#   host-cli smoke                    one view, then quit, on both built components
+#   host-cli smoke                    one view, then quit, on each built component
 #
 # Everything runs headless: the iced render is a tiny-skia software frame, the
 # tui render goes to ratatui's TestBackend, the roundtrip is plain wasmtime.
@@ -97,3 +97,4 @@ jobs:
         run: |
           printf 'q\n' | cargo run -p host-cli -- target/components/demo-counter.component.wasm
           printf 'q\n' | cargo run -p host-cli -- target/components/demo-stopwatch.component.wasm
+          printf 'q\n' | cargo run -p host-cli -- target/components/demo-todo.component.wasm

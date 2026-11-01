@@ -1,9 +1,10 @@
 WASM_TARGET   ?= wasm32-unknown-unknown
-COMPONENTS    := demo-counter demo-stopwatch
-AS_COMPONENTS := demo-counter demo-stopwatch
+COMPONENTS    := demo-counter demo-stopwatch demo-todo
+AS_COMPONENTS := demo-counter demo-stopwatch demo-todo
 
-.PHONY: components components-as run-cli run-stop-cli run-tui run-stop-tui run-iced run-stop-iced \
-         run-cli-as run-stop-cli-as run-tui-as run-stop-tui-as run-iced-as run-stop-iced-as \
+.PHONY: components components-as run-cli run-stop-cli run-todo-cli run-tui run-stop-tui run-todo-tui \
+         run-iced run-stop-iced run-todo-iced run-cli-as run-stop-cli-as run-todo-cli-as \
+         run-tui-as run-stop-tui-as run-todo-tui-as run-iced-as run-stop-iced-as run-todo-iced-as \
          web web-as web-test web-test-as ui-test fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model.
@@ -59,17 +60,26 @@ run-cli-as: components-as
 run-stop-cli-as: components-as
 	cargo run -p host-cli -- target/components/demo-stopwatch-as.component.wasm
 
+run-todo-cli-as: components-as
+	cargo run -p host-cli -- target/components/demo-todo-as.component.wasm
+
 run-tui-as: components-as
 	cargo run -p host-tui -- target/components/demo-counter-as.component.wasm
 
 run-stop-tui-as: components-as
 	cargo run -p host-tui -- target/components/demo-stopwatch-as.component.wasm
 
+run-todo-tui-as: components-as
+	cargo run -p host-tui -- target/components/demo-todo-as.component.wasm
+
 run-iced-as: components-as
 	cargo run -p host-iced -- target/components/demo-counter-as.component.wasm
 
 run-stop-iced-as: components-as
 	cargo run -p host-iced -- target/components/demo-stopwatch-as.component.wasm
+
+run-todo-iced-as: components-as
+	cargo run -p host-iced -- target/components/demo-todo-as.component.wasm
 
 # Terminal hosts: one component, two different renderers.
 run-cli: components
@@ -78,11 +88,17 @@ run-cli: components
 run-stop-cli: components
 	cargo run -p host-cli -- target/components/demo-stopwatch.component.wasm
 
+run-todo-cli: components
+	cargo run -p host-cli -- target/components/demo-todo.component.wasm
+
 run-tui: components
 	cargo run -p host-tui -- target/components/demo-counter.component.wasm
 
 run-stop-tui: components
 	cargo run -p host-tui -- target/components/demo-stopwatch.component.wasm
+
+run-todo-tui: components
+	cargo run -p host-tui -- target/components/demo-todo.component.wasm
 
 # Windowed hosts (iced).
 run-iced: components
@@ -90,6 +106,9 @@ run-iced: components
 
 run-stop-iced: components
 	cargo run -p host-iced -- target/components/demo-stopwatch.component.wasm
+
+run-todo-iced: components
+	cargo run -p host-iced -- target/components/demo-todo.component.wasm
 
 # Web host: one self-contained HTML page per component (the wasm module
 # inlined as base64). The page runs straight from disk — no server, no npm.
@@ -117,7 +136,8 @@ web-test: components
 
 # The same selftest against the AssemblyScript core modules.
 web-test-as: components-as
-	node web/selftest.mjs target/assembly/demo-counter-as.wasm target/assembly/demo-stopwatch-as.wasm
+	node web/selftest.mjs target/assembly/demo-counter-as.wasm target/assembly/demo-stopwatch-as.wasm \
+		target/assembly/demo-todo-as.wasm
 
 # The tree layer's diff channel, as a standalone module run via Node: the
 # structural cases (add, remove, re-parent) plus the bootstrap and id-less

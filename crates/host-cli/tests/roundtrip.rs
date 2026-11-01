@@ -1,8 +1,9 @@
-//! Headless contract test: drive the counter and the stopwatch through the
-//! same wasmtime host code the real hosts use, and assert on the flat node
-//! list `view()` returns, its style, the diff channel, and the refresh
-//! request (`schedule`: a 250ms period while the stopwatch runs, 0 while
-//! it pauses; the counter never calls it).
+//! Headless contract test: drive the counter, the stopwatch, and the todo
+//! through the same wasmtime host code the real hosts use, and assert on the
+//! flat node list `view()` returns, its style, the diff channel (the todo's
+//! is structural: add, remove, re-parent), and the refresh request
+//! (`schedule`: a 250ms period while the stopwatch runs, 0 while it pauses;
+//! the counter and the todo never call it).
 //!
 //! Each scenario runs against both producer languages: the Rust component
 //! (cargo + wit-bindgen) and its AssemblyScript one (asc + the hand-rolled
@@ -539,6 +540,261 @@ fn changes_bootstraps_without_view_as() {
         instantiate(&engine, &mut store, &component_path_as("demo-counter"))
     };
     assert_changes_bootstrap(&mut app, &mut store);
+}
+
+/// The todo's contract: the structural diff — add (a new row and its
+/// children), remove (a row and its children), and re-parent (a moved row's
+/// children keep their ids, new parent) — plus the count. Language-agnostic:
+/// it runs against whichever producer language built the component.
+fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
+    use waui::ui::widget::{Color, Size};
+
+    // Seeded: two active (newest first), one done, "2 left".
+    let nodes = app.call_view(&mut *store).expect("view failed");
+    assert_eq!(text_with_id(&nodes, 2), Some("todos"));
+    assert_eq!(style_of(&nodes, 2).unwrap().color, Color::Accent);
+    assert_eq!(style_of(&nodes, 2).unwrap().size, Size::Large);
+    assert_eq!(text_with_id(&nodes, 6), Some("2 left"));
+    assert_eq!(style_of(&nodes, 6).unwrap().size, Size::Small);
+    // The rows: the moved-to-done row's id is 500+4i, the active's 100+4i;
+    // the children keep their ids in both columns.
+    assert_eq!(text_with_id(&nodes, 106), Some("walk the dog"));
+    assert_eq!(style_of(&nodes, 106).unwrap().color, Color::Neutral);
+    assert_eq!(text_with_id(&nodes, 102), Some("buy milk"));
+    assert_eq!(text_with_id(&nodes, 110), Some("water plants"));
+    assert_eq!(style_of(&nodes, 110).unwrap().color, Color::Warning);
+    assert_eq!(style_of(&nodes, 109).unwrap().color, Color::Positive);
+    assert_eq!(style_of(&nodes, 111).unwrap().color, Color::Negative);
+    assert_eq!(nodes.len(), 20, "the seeded tree has 20 id'd nodes");
+
+    // Add: five mutations — the new row and its three children, plus the
+    // count. The row lands at the top of the active column.
+    app.call_on_click(&mut *store, 7).expect("on-click failed");
+    let mutations = app.call_changes(&mut *store).expect("changes failed");
+    assert_eq!(
+        mutations.iter().map(mutation_id).collect::<Vec<_>>(),
+        vec![112, 113, 114, 115, 6],
+        "add: the new row, its children, and the count"
+    );
+    let nodes = app.call_view(&mut *store).expect("view failed");
+    assert_eq!(text_with_id(&nodes, 114), Some("write code"));
+    assert_eq!(text_with_id(&nodes, 6), Some("3 left"));
+
+    // Toggle: the row is re-added under a new id (504), its children are
+    // re-parented (same id, new parent), the count changes, and the old row
+    // is removed. Six mutations.
+    app.call_on_click(&mut *store, 105)
+        .expect("on-click failed");
+    let mutations = app.call_changes(&mut *store).expect("changes failed");
+    assert_eq!(
+        mutations.iter().map(mutation_id).collect::<Vec<_>>(),
+        vec![504, 105, 106, 107, 6, 104],
+        "toggle: the moved row, its re-parented children, the count, the old row"
+    );
+    let nodes = app.call_view(&mut *store).expect("view failed");
+    // The moved row is at the top of the done column, newest first.
+    assert_eq!(
+        nodes.iter().map(node_id).collect::<Vec<_>>(),
+        vec![
+            Some(1),
+            Some(2),
+            Some(3),
+            Some(112),
+            Some(113),
+            Some(114),
+            Some(115),
+            Some(100),
+            Some(101),
+            Some(102),
+            Some(103),
+            Some(4),
+            Some(504),
+            Some(105),
+            Some(106),
+            Some(107),
+            Some(508),
+            Some(109),
+            Some(110),
+            Some(111),
+            Some(5),
+            Some(6),
+            Some(7),
+            Some(8)
+        ],
+        "view() must be what the diff application yields"
+    );
+    // The move changed the row's style with its column.
+    assert_eq!(style_of(&nodes, 105).unwrap().color, Color::Positive);
+    assert_eq!(style_of(&nodes, 106).unwrap().color, Color::Warning);
+    assert_eq!(text_with_id(&nodes, 6), Some("2 left"));
+
+    // Delete: the count, then the row and its children. Five mutations.
+    app.call_on_click(&mut *store, 103)
+        .expect("on-click failed");
+    let mutations = app.call_changes(&mut *store).expect("changes failed");
+    assert_eq!(
+        mutations.iter().map(mutation_id).collect::<Vec<_>>(),
+        vec![6, 100, 101, 102, 103],
+        "delete: the count and the row's subtree"
+    );
+
+    // Clear done: only the removed rows — the count (the active list) is
+    // unchanged, so it is not reported.
+    app.call_on_click(&mut *store, 8).expect("on-click failed");
+    let mutations = app.call_changes(&mut *store).expect("changes failed");
+    assert_eq!(
+        mutations.iter().map(mutation_id).collect::<Vec<_>>(),
+        vec![504, 105, 106, 107, 508, 109, 110, 111],
+        "clear done: the done rows and their children, nothing else"
+    );
+
+    // No-op events: an unknown click, a tick.
+    app.call_on_click(&mut *store, 99).expect("on-click failed");
+    assert!(
+        app.call_changes(&mut *store)
+            .expect("changes failed")
+            .is_empty(),
+        "an unknown click must produce no changes"
+    );
+    app.call_on_tick(&mut *store).expect("on-tick failed");
+    assert!(
+        app.call_changes(&mut *store)
+            .expect("changes failed")
+            .is_empty(),
+        "a no-op tick must produce no changes"
+    );
+
+    // The todo changes only on a click: it never requests a refresh, so a
+    // host that honors `schedule` never wakes it.
+    assert_eq!(store.data().calls, 0, "a todo list never calls schedule");
+}
+
+/// A mutation's id: the node's id for a `changed`, the removed id for a
+/// `removed`.
+fn mutation_id(m: &waui::ui::widget::Mutation) -> u32 {
+    match m {
+        waui::ui::widget::Mutation::Changed(node) => {
+            node_id(node).expect("a reported node has an id")
+        }
+        waui::ui::widget::Mutation::Removed(id) => *id,
+    }
+}
+
+/// A one-line rendering of a mutation, for failure messages.
+fn mutation_summary(m: &waui::ui::widget::Mutation) -> String {
+    match m {
+        waui::ui::widget::Mutation::Changed(node) => {
+            let id = node_id(node).unwrap_or(0);
+            match node {
+                waui::ui::widget::Node::Text(t) => {
+                    format!("changed text {id} {t:?}")
+                }
+                waui::ui::widget::Node::Button(b) => {
+                    format!("changed button {id} {b:?}")
+                }
+                waui::ui::widget::Node::Container(c) => {
+                    format!("changed container {id} parent {:?} {c:?}", c.parent)
+                }
+            }
+        }
+        waui::ui::widget::Mutation::Removed(id) => format!("removed {id}"),
+    }
+}
+
+/// The todo's bootstrap rule: a host that never calls view() still gets the
+/// whole tree from the first changes() call.
+fn assert_todo_bootstrap(app: &mut App, store: &mut Store<Host>) {
+    let mutations = app.call_changes(&mut *store).expect("changes failed");
+    assert_eq!(
+        mutations.len(),
+        20,
+        "first-ever changes() should export the whole tree: {}",
+        mutations
+            .iter()
+            .map(mutation_summary)
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    assert!(
+        mutations
+            .iter()
+            .all(|m| matches!(m, waui::ui::widget::Mutation::Changed(_))),
+        "bootstrap mutations should all be `changed`"
+    );
+
+    // A second call, with nothing changed, is empty.
+    assert!(
+        app.call_changes(&mut *store)
+            .expect("changes failed")
+            .is_empty(),
+        "second changes() with no events should be empty"
+    );
+}
+
+// And the todo's structural diff, both languages.
+
+#[test]
+fn todo_roundtrip() {
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = RUST_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component("demo-todo");
+        instantiate(&engine, &mut store, &component_path("demo-todo"))
+    };
+    assert_todo_roundtrip(&mut app, &mut store);
+}
+
+#[test]
+fn todo_bootstrap() {
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = RUST_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component("demo-todo");
+        instantiate(&engine, &mut store, &component_path("demo-todo"))
+    };
+    assert_todo_bootstrap(&mut app, &mut store);
+}
+
+#[test]
+fn todo_roundtrip_as() {
+    if !as_toolchain_available() {
+        eprintln!("skipping: AssemblyScript toolchain not installed (run `npm install`)");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = AS_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_as("demo-todo");
+        instantiate(&engine, &mut store, &component_path_as("demo-todo"))
+    };
+    assert_todo_roundtrip(&mut app, &mut store);
+}
+
+#[test]
+fn todo_bootstrap_as() {
+    if !as_toolchain_available() {
+        eprintln!("skipping: AssemblyScript toolchain not installed (run `npm install`)");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = AS_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_as("demo-todo");
+        instantiate(&engine, &mut store, &component_path_as("demo-todo"))
+    };
+    assert_todo_bootstrap(&mut app, &mut store);
 }
 
 // And the stopwatch's refresh-request contract, both languages.

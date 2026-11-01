@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/demo-counter",
     "crates/demo-stopwatch",
+    "crates/demo-todo",
     "crates/host-cli",
     "crates/host-iced",
     "crates/host-tui",
