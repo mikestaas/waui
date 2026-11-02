@@ -1,9 +1,9 @@
 // A standalone check of the tree layer's diff channel — the AS twin of the
 // Rust `component-ui` unit tests. Compiled to a core module and run via Node
 // (`make ui-test`); `run()` drives `viewOf`/`diffOf` through the structural
-// cases (bootstrap, value change, add, remove, re-parent, id-less), decodes
-// the diff from the arena, and returns 0 on success (the first failing
-// scenario's index otherwise).
+// cases (bootstrap, value change, add, remove, re-parent, id-less, the
+// `kids` attribute), decodes the diff from the arena, and returns 0 on
+// success (the first failing scenario's index otherwise).
 //
 // It is import-free after `../patch-env-abort.mjs` (the incremental runtime's
 // one import is its OOM path), so Node instantiates it directly.
@@ -73,6 +73,16 @@ function withIdless(label: string): Widget {
       <text label={label} color={COLOR_NEUTRAL} size={SIZE_LARGE} />
     </column>
   );
+}
+
+// A column whose rows come in through the `kids` attribute (a dynamic list,
+// the factory's spliced-children path).
+function spliced(n: i32): Widget {
+  const kids: Widget[] = new Array<Widget>();
+  for (let i = 0; i < n; i++) {
+    kids.push(<text id={10 + i} label={`r${i}`} color={COLOR_NEUTRAL} size={SIZE_LARGE} />);
+  }
+  return <column id={1} kids={kids} />;
 }
 
 // ------------------------------------------------------------------ decoding
@@ -258,6 +268,19 @@ export function run(): i32 {
   viewOf(withIdless('x')); // the reference: box, readout (3), id-less "x"
   arenaReset();
   if (scenario(withIdless('y'), (m) => (m.length == 0 ? 0 : 7)) != 0) return 7;
+
+  // 8. The `kids` attribute: the spliced children lower like their
+  //    constructor-built twins, and the diff sees them.
+  viewOf(spliced(2)); // the reference: the column (1), the rows (10, 11)
+  arenaReset();
+  {
+    const r = scenario(spliced(3), (m) => {
+      if (m.length != 1) return 8;
+      const c = changed(m, 12);
+      return c != null && c.parent == 1 && c.label == 'r2' ? 0 : 8;
+    });
+    if (r != 0) return 8;
+  }
 
   return 0;
 }

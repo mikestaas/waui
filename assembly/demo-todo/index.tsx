@@ -29,12 +29,13 @@
 // moved node just after its parent, the top of the column, so the lists
 // keep that order and view() and the retained list agree.
 //
-// The columns' rows are built with the tree layer's constructors (the list
-// is dynamic; the JSX factory takes one widget per child, not a spliced
-// array); the static shell is JSX, as in the other demos. `../jsx.mjs`
-// lowers it to `h` calls before `asc` compiles it (asc's parser has no
-// JSX). `onclick`/`ontick` are renamed to the world's hyphenated names
-// after compilation (see `../rename-exports.mjs`).
+// The whole UI is JSX, as in the other demos; the columns' rows come in
+// through the `kids` attribute (a dynamic list — the factory takes one
+// widget per child, and AssemblyScript has no union types for a
+// widget-or-list argument). `../jsx.mjs` lowers it to `h` calls before
+// `asc` compiles it (asc's parser has no JSX). `onclick`/`ontick` are
+// renamed to the world's hyphenated names after compilation (see
+// `../rename-exports.mjs`).
 
 import { cabi_post_changes, cabi_post_view } from '../abi/arena';
 import {
@@ -47,7 +48,7 @@ import {
   SIZE_MEDIUM,
   SIZE_SMALL,
 } from '../abi/node';
-import { Widget, button, column, diffOf, h, row, text, viewOf } from '../ui/tree';
+import { button, diffOf, h, text, viewOf, Widget } from '../ui/tree';
 
 // The world requires both post functions on the module itself.
 export { cabi_post_changes, cabi_post_view };
@@ -131,16 +132,25 @@ function applyCount(n: i32): void {
 function todoRow(t: Todo): Widget {
   const base = t.idx * 4;
   const isDone = t.done != 0;
-  const check = button(isDone ? '✓' : '○', isDone ? COLOR_POSITIVE : COLOR_NEUTRAL, SIZE_MEDIUM)
-    .id(101 + base)
-    .reserve(8);
-  const label = text(t.label, isDone ? COLOR_WARNING : COLOR_NEUTRAL, SIZE_MEDIUM)
-    .id(102 + base)
-    .reserve(16);
-  const del = button('✕', COLOR_NEGATIVE, SIZE_MEDIUM)
-    .id(103 + base)
-    .reserve(8);
-  return row([check, label, del]).id(base + (isDone ? 500 : 100));
+  return (
+    <row id={base + (isDone ? 500 : 100)}>
+      <button
+        id={101 + base}
+        label={isDone ? '✓' : '○'}
+        color={isDone ? COLOR_POSITIVE : COLOR_NEUTRAL}
+        size={SIZE_MEDIUM}
+        reserve={8}
+      />
+      <text
+        id={102 + base}
+        label={t.label}
+        color={isDone ? COLOR_WARNING : COLOR_NEUTRAL}
+        size={SIZE_MEDIUM}
+        reserve={16}
+      />
+      <button id={103 + base} label="✕" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} reserve={8} />
+    </row>
+  );
 }
 
 /// A list's rows, in the list's order (newest first).
@@ -160,18 +170,20 @@ function withFront(list: Todo[], t: Todo): Todo[] {
 }
 
 /// The todo list's whole UI, nested: the structure is rebuilt, the count
-/// and the footer's buttons are the persistent leaves.
+/// and the footer's buttons are the persistent leaves. The columns' rows
+/// come in through the `kids` attribute (a dynamic list).
 function tree(): Widget {
   applyCount(active.length);
-  const activeCol = column(rows(active)).id(ACTIVE_COL);
-  const doneCol = column(rows(done)).id(DONE_COL);
-  const footer = row([count, addBtn, clearBtn]).id(FOOTER);
   return (
     <column id={BOX}>
       <text id={HEADER} label="todos" color={COLOR_ACCENT} size={SIZE_LARGE} />
-      {activeCol}
-      {doneCol}
-      {footer}
+      <column id={ACTIVE_COL} kids={rows(active)} />
+      <column id={DONE_COL} kids={rows(done)} />
+      <row id={FOOTER}>
+        {count}
+        {addBtn}
+        {clearBtn}
+      </row>
     </column>
   );
 }

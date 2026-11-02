@@ -54,6 +54,11 @@ error-prone, so component authors write a nested tree and project it:
   comparison against the retained last export). See
   [`assembly/README.md`](assembly/README.md).
 
+The demos author their trees with these layers: Rust in the `ui!` macro (a
+JSX-like literal; a list of trees is spliced into a container's children),
+AssemblyScript in JSX (lowered to `h` calls; a dynamic list of children
+comes in through the `kids` attribute).
+
 ## Layout
 
 | path                     | what it is                                                                                          |

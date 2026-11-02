@@ -15,7 +15,9 @@
 //!
 //! Trees are usually written with the [`ui`] macro, a JSX-like literal:
 //! `ui! { column id = 1, { button label = "+", ... } }` builds the same
-//! nested [`Tree`] the builders do.
+//! nested [`Tree`] the builders do. A child that is a list of trees is
+//! spliced into the container's children (the JSX array idiom), so a
+//! variable number of rows is part of the literal.
 //!
 //! **Identity.** A node's `id` (optional, mirroring the WIT) is its handle:
 //! what `on-click` targets and what the `changes` diff channel keys on. A
@@ -561,6 +563,89 @@ mod tests {
         }
     }
 
+    // The `ui!` macro: the shapes the demos write with it.
+
+    #[test]
+    fn macro_builds_the_counter_shape() {
+        let tree = ui! {
+            column id = 1, {
+                button label = "+", id = 2, color = Color::Positive, size = Size::Medium,
+                text content = "0", id = 3, size = Size::Large,
+                button label = "-", id = 4, color = Color::Negative, size = Size::Medium,
+            }
+        };
+        assert_eq!(
+            ids(&lower(&tree, to_flat)),
+            vec![
+                (Some(1), None),
+                (Some(2), Some(1)),
+                (Some(3), Some(1)),
+                (Some(4), Some(1))
+            ]
+        );
+    }
+
+    #[test]
+    fn macro_takes_a_single_tree_expression_child() {
+        let leaf = Tree::text("x", style(Color::Neutral, Size::Small)).id(2);
+        let tree = ui! {
+            column id = 1, {
+                leaf,
+            }
+        };
+        assert_eq!(
+            ids(&lower(&tree, to_flat)),
+            vec![(Some(1), None), (Some(2), Some(1))]
+        );
+    }
+
+    #[test]
+    fn macro_splices_a_list_child() {
+        let rows: Vec<Tree> = (0..3)
+            .map(|i| Tree::text(format!("r{i}"), style(Color::Neutral, Size::Small)).id(10 + i))
+            .collect();
+        let tree = ui! {
+            column id = 1, {
+                text content = "head", id = 2, size = Size::Small,
+                rows,
+                text content = "tail", id = 3, size = Size::Small,
+            }
+        };
+        assert_eq!(
+            ids(&lower(&tree, to_flat)),
+            vec![
+                (Some(1), None),
+                (Some(2), Some(1)),
+                (Some(10), Some(1)),
+                (Some(11), Some(1)),
+                (Some(12), Some(1)),
+                (Some(3), Some(1))
+            ]
+        );
+    }
+
+    #[test]
+    fn macro_splices_an_iterator_child() {
+        // The todo demo's shape: a column whose children are a `map`, not a
+        // collected `Vec`.
+        let labels = ["a", "b", "c"];
+        let tree = ui! {
+            column id = 1, {
+                column id = 2, { labels.iter().enumerate().map(|(i, l)| Tree::text(*l, style(Color::Neutral, Size::Small)).id(100 + i as u32)) }
+            }
+        };
+        assert_eq!(
+            ids(&lower(&tree, to_flat)),
+            vec![
+                (Some(1), None),
+                (Some(2), Some(1)),
+                (Some(100), Some(2)),
+                (Some(101), Some(2)),
+                (Some(102), Some(2))
+            ]
+        );
+    }
+
     // The diff tests drive `diff_with` with an explicit reference rather
     // than the component-facing `diff`: tests run in parallel in one process
     // and share `LAST_EXPORTED`, but the core is pure.
@@ -687,6 +772,39 @@ mod tests {
 
 // ------------------------------------------------------------------ the macro
 
+/// One child of a [`ui!`] container: a single node, or a list of nodes
+/// spliced into the children (the JSX array idiom: a list child is not a
+/// node).
+#[derive(Debug)]
+pub enum Kid {
+    Tree(Tree),
+    Trees(Vec<Tree>),
+}
+
+impl From<Tree> for Kid {
+    fn from(tree: Tree) -> Self {
+        Kid::Tree(tree)
+    }
+}
+
+/// Any iterator of trees (a `Vec<Tree>`, a `map`, ...) is a list child.
+/// A `Tree` is not an iterator, so the two `From`s do not overlap.
+impl<T: IntoIterator<Item = Tree>> From<T> for Kid {
+    fn from(t: T) -> Self {
+        Kid::Trees(t.into_iter().collect())
+    }
+}
+
+/// The children of a [`ui!`] container, normalized to a list: a single
+/// node becomes a one-element list, a list of nodes is spliced as is.
+/// The macro expansion calls this for every child.
+pub fn kid(c: impl Into<Kid>) -> Vec<Tree> {
+    match c.into() {
+        Kid::Tree(tree) => vec![tree],
+        Kid::Trees(trees) => trees,
+    }
+}
+
 /// A JSX-like widget tree.
 ///
 /// ```
@@ -707,7 +825,9 @@ mod tests {
 /// [`Size::Medium`]. Containers take a `{ ... }` children block; children
 /// are tags or bare expressions, comma-separated. A bare expression whose
 /// first token is a tag name (a `Tree` named `text`, `row`, ...) is the
-/// expression.
+/// expression. A bare expression that is a list of trees (a `Vec<Tree>`,
+/// an iterator) is spliced into the children — the JSX array idiom — while
+/// one that is a single [`Tree`] is one child.
 #[macro_export]
 macro_rules! ui {
     ( $( $t:tt )* ) => {
@@ -719,14 +839,21 @@ macro_rules! ui {
 ///
 /// The ctx is `top` (exactly one item; the result is the bare `Tree`) or
 /// `kids` (a list; the result is `Vec<Tree>`). The acc is a parenthesized
-/// group holding the expanded items so far, each followed by a comma.
+/// group holding the expanded items so far, each followed by a comma. Each
+/// item is a `Vec<Tree>`: a single node wrapped by [`kid`] (a one-element
+/// list) or a list of nodes spliced (see [`kid`]).
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ui_kids {
     // The stream is exhausted: the acc is the whole list. Each item is
     // followed by its comma; a `,*` repeat parses `:expr` restrictively.
+    // A spliced list child extends the list; a single node adds one.
     ( kids ( $( $a:expr , )* ) ) => {
-        { vec![ $( $a ),* ] }
+        {
+            let mut kids = Vec::new();
+            $( kids.extend($a); )*
+            kids
+        }
     };
     ( top ( ) ) => {
         compile_error!("`ui!` needs a root widget")
@@ -852,21 +979,37 @@ macro_rules! __ui_opt {
 /// The acc is a group of the finished items (each followed by its comma, or
 /// empty); the cur is a group of the current child's tokens. A single
 /// expression carries no top-level comma (delimiters fold into groups), so
-/// a top-level comma always ends the child.
+/// a top-level comma always ends the child. A finished child is normalized
+/// by `__ui_wrap`: in `kids` context it becomes a `kid` call (a single node
+/// or a spliced list), at `top` it is the root itself.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ui_expr {
     // A top-level comma: the child ends; its tokens join the acc.
     ( $ctx:tt ( $( $a:tt )* ) ( $( $c:tt )* ) , $( $r:tt )* ) => {
-        $crate::__ui_kids!($ctx ( $( $a )* $( $c )* , ) $( $r )* )
+        $crate::__ui_kids!($ctx ( $( $a )* $crate::__ui_wrap!($ctx $( $c )*) , ) $( $r )* )
     };
     // End of stream: the last child ends too.
     ( $ctx:tt ( $( $a:tt )* ) ( $( $c:tt )* ) ) => {
-        $crate::__ui_kids!($ctx ( $( $a )* $( $c )* , ) )
+        $crate::__ui_kids!($ctx ( $( $a )* $crate::__ui_wrap!($ctx $( $c )*) , ) )
     };
     // The next token continues the child.
     ( $ctx:tt ( $( $a:tt )* ) ( $( $c:tt )* ) $t0:tt $( $r:tt )* ) => {
         $crate::__ui_expr!($ctx ( $( $a )* ) ( $( $c )* $t0 ) $( $r )* )
+    };
+}
+
+/// Normalize a finished child for the children list: in `kids` context,
+/// wrap it in [`kid`] (a single node becomes a one-element list, a list of
+/// nodes is spliced); at `top`, the single root is the child itself.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_wrap {
+    ( top $e:expr ) => {
+        $e
+    };
+    ( kids $e:expr ) => {
+        $crate::kid($e)
     };
 }
 
@@ -911,7 +1054,7 @@ macro_rules! __ui_leaf {
         // The acc holds finished items only (each followed by its comma, or
         // empty); a bare `*` re-emits the trailing comma, a `,*` would
         // double it.
-        $crate::__ui_kids!(kids ( $( $x )* $crate::__ui_leafnode!($kind $i $c $s $st $l) , ) $( $r )* )
+        $crate::__ui_kids!(kids ( $( $x )* $crate::__ui_wrap!(kids $crate::__ui_leafnode!($kind $i $c $s $st $l)) , ) $( $r )* )
     };
     // A label-less leaf: whatever follows, the required `content` /
     // `label` attribute never appeared.
@@ -988,7 +1131,7 @@ macro_rules! __ui_cont {
     // An empty acc matches with zero repetitions: one arm serves both. Each
     // acc item ends in its comma; the `:expr` binding consumes them.
     ( $tag:tt kids ( $( $a:expr , )* ) ( some $d:expr ) $i:tt { $( $c:tt )* } $( $r:tt )* ) => {
-        $crate::__ui_kids!(kids ( $( $a , )* $crate::__ui_contnode!($tag $i ( $( $c )* ) $d) , ) $( $r )* )
+        $crate::__ui_kids!(kids ( $( $a , )* $crate::__ui_wrap!(kids $crate::__ui_contnode!($tag $i ( $( $c )* ) $d)) , ) $( $r )* )
     };
     ( $tag:tt kids $acc:tt () $i:tt { $( $c:tt )* } $( $r:tt )* ) => {
         compile_error!("a `container` needs a `direction = ...` attribute (or use `row` / `column`)")

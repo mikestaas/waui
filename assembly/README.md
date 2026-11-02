@@ -119,7 +119,10 @@ API:
 - JSX: `h(tag, props, ...children)` — the factory `../jsx.mjs` emits; `tag`
   is `text`/`button`/`row`/`column`/`container`, `props` is the `Props` class
   (a bag of `id`, `label`, `color`, `size`, `reserve`, `direction` — the last
-  honored only by `container`), null when the element has no attributes
+  honored only by `container` — and `kids`, a `Widget[]` that replaces the
+  element's children: a dynamic list, since a rest argument is one widget
+  and AssemblyScript has no union types for a widget-or-list argument),
+  null when the element has no attributes
 - projection: `viewOf(root)`, `diffOf(root)`, `count(w)`
 
 Behavior:

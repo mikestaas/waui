@@ -17,6 +17,11 @@
 //     <button id={4} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />
 //   </column>
 //
+// A dynamic list of children (a variable number of rows) comes in through
+// the `kids` attribute: `<column id={3} kids={rows} />`. The factory's rest
+// arguments take one widget per child, and AssemblyScript has no union
+// types, so they cannot take a widget-or-list argument.
+//
 // The heap costs one import: the incremental runtime pulls in `env.abort`
 // (its OOM path), which `../patch-env-abort.mjs` replaces with an in-module
 // `unreachable` after compilation, so the lifted component is import-free.
@@ -194,24 +199,37 @@ export class Props {
   size: i32 = SIZE_MEDIUM;
   reserve: i32 = 0;
   direction: i32 = DIRECTION_ROW; // honored only by `container`
+  // Replaces the element's children: a dynamic list of rows. A rest
+  // argument is one widget, and AssemblyScript has no union types, so a
+  // widget-or-list argument is not expressible — the list comes in through
+  // the props instead. Null unless the element has the attribute.
+  kids: Widget[] | null = null;
 }
 
 /// The JSX factory that `../jsx.mjs` emits calls to (its `pragma`). The tag
 /// picks the constructor, the props bag (null when the element has no
 /// attributes) is applied on top, and the rest arguments are the element's
-/// children, in order.
+/// children, in order — unless the `kids` attribute names a list of its own,
+/// which replaces them.
 export function h(tag: string, props: Props | null, ...children: Widget[]): Widget {
+  // The children: the rest arguments, or the `kids` list. Both at once is
+  // an authoring error: an element's children are one or the other.
+  let kids: Widget[] | null = props != null ? props.kids : null;
+  if (kids != null && children.length != 0) {
+    throw new Error('a `kids` attribute and child elements are mutually exclusive');
+  }
+  if (kids == null) kids = children;
   let w: Widget;
   if (tag == 'text') {
     w = text('');
   } else if (tag == 'button') {
     w = button('');
   } else if (tag == 'row') {
-    w = row(children);
+    w = row(kids);
   } else if (tag == 'column') {
-    w = column(children);
+    w = column(kids);
   } else if (tag == 'container') {
-    w = new Widget(TAG_CONTAINER, '', children);
+    w = new Widget(TAG_CONTAINER, '', kids);
   } else {
     throw new Error('unknown tag: ' + tag);
   }

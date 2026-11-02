@@ -102,60 +102,41 @@ fn snapshot() -> (Vec<Todo>, Vec<Todo>) {
 /// id changes with the column (100+4i / 500+4i); the children's do not.
 fn row(t: &Todo) -> Tree {
     let base = t.idx * 4;
-    let row_id = base + if t.done { 500 } else { 100 };
-    let check = Tree::button(
-        if t.done { "✓" } else { "○" },
-        Style::new(
-            if t.done {
-                Color::Positive
-            } else {
-                Color::Neutral
-            },
-            Size::Medium,
-        ),
-    )
-    .id(101 + base);
-    let label = Tree::text(
-        t.label,
-        Style::new(
-            if t.done {
-                Color::Warning
-            } else {
-                Color::Neutral
-            },
-            Size::Medium,
-        ),
-    )
-    .id(102 + base);
-    let delete = Tree::button("✕", Style::new(Color::Negative, Size::Medium)).id(103 + base);
-    Tree::row(vec![check, label, delete]).id(row_id)
+    ui! {
+        row id = base + if t.done { 500 } else { 100 }, {
+            button label = if t.done { "✓" } else { "○" },
+                   id = 101 + base,
+                   color = if t.done { Color::Positive } else { Color::Neutral },
+                   size = Size::Medium,
+            text content = t.label,
+                 id = 102 + base,
+                 color = if t.done { Color::Warning } else { Color::Neutral },
+                 size = Size::Medium,
+            button label = "✕", id = 103 + base, color = Color::Negative, size = Size::Medium,
+        }
+    }
 }
 
 /// The footer: the count, the add button, and the clear button.
 fn footer(left: usize) -> Tree {
-    Tree::row(vec![
-        Tree::text(
-            format!("{left} left"),
-            Style::new(Color::Neutral, Size::Small),
-        )
-        .id(6),
-        Tree::button("add", Style::new(Color::Positive, Size::Medium)).id(7),
-        Tree::button("clear done", Style::new(Color::Negative, Size::Medium)).id(8),
-    ])
-    .id(5)
+    ui! {
+        row id = 5, {
+            text content = format!("{left} left"), id = 6, size = Size::Small,
+            button label = "add", id = 7, color = Color::Positive, size = Size::Medium,
+            button label = "clear done", id = 8, color = Color::Negative, size = Size::Medium,
+        }
+    }
 }
 
-/// The todo list's whole UI, nested.
+/// The todo list's whole UI, nested. The columns' rows are spliced into the
+/// columns' children (a list child, not one child per row).
 fn tree(active: &[Todo], done: &[Todo]) -> Tree {
-    let active_col = Tree::column(active.iter().map(row).collect()).id(3);
-    let done_col = Tree::column(done.iter().map(row).collect()).id(4);
-    let footer = footer(active.len());
     ui! {
         column id = 1, {
             text content = "todos", id = 2, color = Color::Accent, size = Size::Large,
-            active_col,
-            done_col,
-            footer,
+            column id = 3, { active.iter().map(row) }
+            column id = 4, { done.iter().map(row) }
+            footer(active.len()),
         }
     }
 }
