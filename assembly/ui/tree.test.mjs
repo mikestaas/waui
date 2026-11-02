@@ -32,11 +32,12 @@ if (code !== 0) {
     'addition',
     'reparent',
     'idless',
+    'spliced',
   ];
   console.error(`tree.test: scenario ${code} (${names[code - 1]}) failed`);
   process.exit(1);
 }
 
 console.log(
-  'tree.test: all scenarios passed (bootstrap, unchanged, value, add, remove, reparent, idless)',
+  'tree.test: all scenarios passed (bootstrap, unchanged, value, add, remove, reparent, idless, spliced)',
 );

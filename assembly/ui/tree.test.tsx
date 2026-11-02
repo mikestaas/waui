@@ -1,8 +1,8 @@
 // A standalone check of the tree layer's diff channel — the AS twin of the
 // Rust `component-ui` unit tests. Compiled to a core module and run via Node
 // (`make ui-test`); `run()` drives `viewOf`/`diffOf` through the structural
-// cases (bootstrap, value change, add, remove, re-parent, id-less, the
-// `kids` attribute), decodes the diff from the arena, and returns 0 on
+// cases (bootstrap, value change, add, remove, re-parent, id-less, a
+// spliced list child), decodes the diff from the arena, and returns 0 on
 // success (the first failing scenario's index otherwise).
 //
 // It is import-free after `../patch-env-abort.mjs` (the incremental runtime's
@@ -75,14 +75,14 @@ function withIdless(label: string): Widget {
   );
 }
 
-// A column whose rows come in through the `kids` attribute (a dynamic list,
-// the factory's spliced-children path).
+// A column whose rows are a child of its own (a dynamic list, the factory's
+// spliced-children path).
 function spliced(n: i32): Widget {
   const kids: Widget[] = new Array<Widget>();
   for (let i = 0; i < n; i++) {
     kids.push(<text id={10 + i} label={`r${i}`} color={COLOR_NEUTRAL} size={SIZE_LARGE} />);
   }
-  return <column id={1} kids={kids} />;
+  return <column id={1}>{kids}</column>;
 }
 
 // ------------------------------------------------------------------ decoding
@@ -269,8 +269,8 @@ export function run(): i32 {
   arenaReset();
   if (scenario(withIdless('y'), (m) => (m.length == 0 ? 0 : 7)) != 0) return 7;
 
-  // 8. The `kids` attribute: the spliced children lower like their
-  //    constructor-built twins, and the diff sees them.
+  // 8. The spliced list child: the rows lower like their constructor-built
+  //    twins, and the diff sees them.
   viewOf(spliced(2)); // the reference: the column (1), the rows (10, 11)
   arenaReset();
   {

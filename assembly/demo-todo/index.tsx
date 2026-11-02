@@ -29,13 +29,11 @@
 // moved node just after its parent, the top of the column, so the lists
 // keep that order and view() and the retained list agree.
 //
-// The whole UI is JSX, as in the other demos; the columns' rows come in
-// through the `kids` attribute (a dynamic list — the factory takes one
-// widget per child, and AssemblyScript has no union types for a
-// widget-or-list argument). `../jsx.mjs` lowers it to `h` calls before
-// `asc` compiles it (asc's parser has no JSX). `onclick`/`ontick` are
-// renamed to the world's hyphenated names after compilation (see
-// `../rename-exports.mjs`).
+// The whole UI is JSX, as in the other demos; the columns' rows are a child
+// of their own (a dynamic list the factory splices in, like its single-
+// widget siblings). `../jsx.mjs` lowers it to `h` calls before `asc` compiles
+// it (asc's parser has no JSX). `onclick`/`ontick` are renamed to the world's
+// hyphenated names after compilation (see `../rename-exports.mjs`).
 
 import { cabi_post_changes, cabi_post_view } from '../abi/arena';
 import {
@@ -170,15 +168,15 @@ function withFront(list: Todo[], t: Todo): Todo[] {
 }
 
 /// The todo list's whole UI, nested: the structure is rebuilt, the count
-/// and the footer's buttons are the persistent leaves. The columns' rows
-/// come in through the `kids` attribute (a dynamic list).
+/// and the footer's buttons are the persistent leaves. The columns' rows are
+/// a child of each (a dynamic list the factory splices in).
 function tree(): Widget {
   applyCount(active.length);
   return (
     <column id={BOX}>
       <text id={HEADER} label="todos" color={COLOR_ACCENT} size={SIZE_LARGE} />
-      <column id={ACTIVE_COL} kids={rows(active)} />
-      <column id={DONE_COL} kids={rows(done)} />
+      <column id={ACTIVE_COL}>{rows(active)}</column>
+      <column id={DONE_COL}>{rows(done)}</column>
       <row id={FOOTER}>
         {count}
         {addBtn}

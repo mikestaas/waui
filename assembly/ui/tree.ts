@@ -17,10 +17,12 @@
 //     <button id={4} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />
 //   </column>
 //
-// A dynamic list of children (a variable number of rows) comes in through
-// the `kids` attribute: `<column id={3} kids={rows} />`. The factory's rest
-// arguments take one widget per child, and AssemblyScript has no union
-// types, so they cannot take a widget-or-list argument.
+// A dynamic list of children (a variable number of rows) is a child of its
+// own: `<column id={3}>{rows}</column>`. The factory's rest arguments each
+// take a widget or a list of widgets and normalize it — a widget is kept, a
+// list is spliced in — so the list reads like its single-widget siblings.
+// AssemblyScript has no union types, so the rest is Object[] and the factory
+// discriminates each child.
 //
 // The heap costs one import: the incremental runtime pulls in `env.abort`
 // (its OOM path), which `../patch-env-abort.mjs` replaces with an in-module
@@ -199,26 +201,39 @@ export class Props {
   size: i32 = SIZE_MEDIUM;
   reserve: i32 = 0;
   direction: i32 = DIRECTION_ROW; // honored only by `container`
-  // Replaces the element's children: a dynamic list of rows. A rest
-  // argument is one widget, and AssemblyScript has no union types, so a
-  // widget-or-list argument is not expressible — the list comes in through
-  // the props instead. Null unless the element has the attribute.
-  kids: Widget[] | null = null;
 }
 
 /// The JSX factory that `../jsx.mjs` emits calls to (its `pragma`). The tag
 /// picks the constructor, the props bag (null when the element has no
 /// attributes) is applied on top, and the rest arguments are the element's
-/// children, in order — unless the `kids` attribute names a list of its own,
-/// which replaces them.
-export function h(tag: string, props: Props | null, ...children: Widget[]): Widget {
-  // The children: the rest arguments, or the `kids` list. Both at once is
-  // an authoring error: an element's children are one or the other.
-  let kids: Widget[] | null = props != null ? props.kids : null;
-  if (kids != null && children.length != 0) {
-    throw new Error('a `kids` attribute and child elements are mutually exclusive');
+/// children, in order. Each child is a widget or a list of widgets: a widget
+/// is kept, a list is spliced into the children (the JSX array idiom).
+/// AssemblyScript has no union types, so the rest is Object[] and the factory
+/// discriminates each child with `instanceof`.
+export function h(tag: string, props: Props | null, ...children: Object[]): Widget {
+  // The children, normalized to a list. The common case — every child a
+  // widget — reuses the rest array as is (a Widget and a Widget[] are both
+  // object references, so the cast is safe); a spliced list child copies
+  // into a fresh array.
+  let allWidgets = true;
+  for (let i = 0; i < children.length; i++) {
+    if (!(children[i] instanceof Widget)) {
+      allWidgets = false;
+      break;
+    }
   }
-  if (kids == null) kids = children;
+  let kids: Widget[] = allWidgets ? changetype<Widget[]>(children) : new Array<Widget>();
+  if (!allWidgets) {
+    for (let i = 0; i < children.length; i++) {
+      const c = children[i];
+      if (c instanceof Widget) {
+        kids.push(c as Widget);
+      } else {
+        const list = c as Widget[];
+        for (let j = 0; j < list.length; j++) kids.push(list[j]);
+      }
+    }
+  }
   let w: Widget;
   if (tag == 'text') {
     w = text('');
