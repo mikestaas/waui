@@ -8,13 +8,13 @@ package waui:ui;
 /// itself, the tree is a `list` whose nodes carry a `parent` id, and the
 /// host rebuilds the tree.
 ///
-/// **Identity.** A node's `id` is its handle: what `on-click` targets and
-/// what the `changes` diff channel keys on. A node that is never clicked,
-/// diffed, or removed may omit its `id`. But a node must *have* an id if it
-/// has children (they name it in their `parent` field) or if its own fate
-/// matters — a `removed(id)` needs an id to delete by, and an id-less node
-/// is *unaddressable*: a component must not report it in a `changes` diff,
-/// and a host may ignore such a mutation.
+/// **Identity.** A node's `id` is its handle: what `on-click` and `on-text`
+/// target, and what the `changes` diff channel keys on. A node that is never
+/// clicked, edited, diffed, or removed may omit its `id`. But a node must
+/// *have* an id if it has children (they name it in their `parent` field) or
+/// if its own fate matters — a `removed(id)` needs an id to delete by, and
+/// an id-less node is *unaddressable*: a component must not report it in a
+/// `changes` diff, and a host may ignore such a mutation.
 interface widget {
   /// A semantic color. Each host maps these onto its own palette (ANSI
   /// colors, theme colors, CSS variables); a host that cannot express a
@@ -62,6 +62,19 @@ interface widget {
     style: style,
   }
 
+  /// A single-line text input. The host renders it as an editable field and
+  /// reports the user's edits through the `app` world's `on-text` (the host
+  /// sends its whole current buffer on every edit). `content` is the text as
+  /// the component last saw it: the component is the source of truth for the
+  /// buffer (it may echo, transform, or ignore an edit) and reports the
+  /// result in its tree.
+  record input {
+    id: option<u32>,
+    parent: option<u32>,
+    content: string,
+    style: style,
+  }
+
   /// A horizontal or vertical container.
   ///
   /// (Named `container` rather than `box`: the latter would clash with
@@ -89,6 +102,7 @@ interface widget {
     text(text),
     button(button),
     container(container),
+    input(input),
   }
 
   /// One entry of a `changes` diff (see the `app` world): what is new for

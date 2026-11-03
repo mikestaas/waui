@@ -30,8 +30,11 @@
 //
 // Page 0 (see `abi/arena`):
 //
-//   [0 ......... RESULT_END)   result arena, reset by cabi_post_*
-//   [RESULT_END . 64 KiB)      label pool, one partition per stable id
+//   [0 ......... RESULT_END)          result arena, reset by cabi_post_*
+//   [RESULT_END . HOST_SCRATCH_BASE)  label pool, one partition per stable
+//                                      id
+//   [HOST_SCRATCH_BASE . 64 KiB)      the host's scratch region (the
+//                                      web host's `on-text` buffer)
 //
 // A projected record carries a *pointer* into a node's label bytes, and the
 // host keeps the result, so the bytes must outlive the tree (which is
@@ -52,7 +55,7 @@
 // This module provides the tree, the pool, the JSX factory (`h`), and the
 // projection (`viewOf`, `diffOf`, `count`).
 
-import { arenaAlloc, RESULT_END } from '../abi/arena';
+import { arenaAlloc, HOST_SCRATCH_BASE, RESULT_END } from '../abi/arena';
 import {
   COLOR_NEUTRAL,
   DIRECTION_COLUMN,
@@ -61,9 +64,11 @@ import {
   SIZE_MEDIUM,
   TAG_BUTTON,
   TAG_CONTAINER,
+  TAG_INPUT,
   TAG_TEXT,
   emitButton,
   emitContainer,
+  emitInput,
   emitRemoved,
   emitText,
   makeList,
@@ -81,16 +86,18 @@ class PoolBuf {
 // Node id → its label partition. A module global, so the conservative GC
 // keeps every partition for the module's lifetime: stable across rebuilds.
 var pool = new Map<i32, PoolBuf>();
-var poolCur = RESULT_END; // bump cursor, RESULT_END → the 64 KiB page edge
+// Bump cursor, RESULT_END → the scratch base (the pool's edge).
+var poolCur = RESULT_END;
 
 /// Bump-allocate `n` bytes from the pool, 4-byte aligned. Returns -1 when
-/// the request is not positive or the region would overflow the page — the
-/// caller then renders an empty label rather than walk into anything.
+/// the request is not positive or the region would overflow the pool (into
+/// the host's scratch region) — the caller then renders an empty label
+/// rather than walk into anything.
 function poolAlloc(n: i32): i32 {
   if (n <= 0) return -1;
   const p = poolCur;
   const end = p + ((n + 3) & ~3);
-  if (end > 65536 || end <= p) return -1;
+  if (end > HOST_SCRATCH_BASE || end <= p) return -1;
   poolCur = end;
   return p;
 }
@@ -106,7 +113,7 @@ export class Widget {
   _id: i32 = 0;
   /// One of the `abi/node` TAG_* values.
   kind: i32;
-  /// The style (text/buttons only).
+  /// The style (text, button, and input only).
   color: i32 = COLOR_NEUTRAL;
   size: i32 = SIZE_MEDIUM;
   /// Containers only.
@@ -169,6 +176,18 @@ export function text(content: string, color: i32 = COLOR_NEUTRAL, size: i32 = SI
 /// A button.
 export function button(label: string, color: i32 = COLOR_NEUTRAL, size: i32 = SIZE_MEDIUM): Widget {
   const w = new Widget(TAG_BUTTON, label);
+  w.color = color;
+  w.size = size;
+  return w;
+}
+
+/// A single-line text input.
+export function input(
+  content: string,
+  color: i32 = COLOR_NEUTRAL,
+  size: i32 = SIZE_MEDIUM,
+): Widget {
+  const w = new Widget(TAG_INPUT, content);
   w.color = color;
   w.size = size;
   return w;
@@ -239,6 +258,8 @@ export function h(tag: string, props: Props | null, ...children: Object[]): Widg
     w = text('');
   } else if (tag == 'button') {
     w = button('');
+  } else if (tag == 'input') {
+    w = input('');
   } else if (tag == 'row') {
     w = row(kids);
   } else if (tag == 'column') {
@@ -437,6 +458,8 @@ function emitNode(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): 
     emitText(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size);
   } else if (kind == TAG_BUTTON) {
     emitButton(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size);
+  } else if (kind == TAG_INPUT) {
+    emitInput(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size);
   } else {
     emitContainer(node, id, parent, w.direction);
   }

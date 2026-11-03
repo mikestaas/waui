@@ -109,6 +109,15 @@ pub struct Button {
     pub style: Style,
 }
 
+/// A single-line text input.
+#[derive(Debug, Clone)]
+pub struct Input {
+    /// This node's id (see the crate docs, *Identity*).
+    pub id: Option<u32>,
+    pub content: String,
+    pub style: Style,
+}
+
 /// A horizontal or vertical container.
 #[derive(Debug, Clone)]
 pub struct Container {
@@ -125,6 +134,7 @@ pub struct Container {
 pub enum Tree {
     Text(Text),
     Button(Button),
+    Input(Input),
     Container(Container),
 }
 
@@ -143,6 +153,15 @@ impl Tree {
         Self::Button(Button {
             id: None,
             label: label.into(),
+            style,
+        })
+    }
+
+    /// A single-line text input (id-less until [`id`](Self::id) is called).
+    pub fn input(content: impl Into<String>, style: Style) -> Self {
+        Self::Input(Input {
+            id: None,
+            content: content.into(),
             style,
         })
     }
@@ -194,6 +213,7 @@ impl Tree {
         match self {
             Self::Text(t) => t.id = Some(id),
             Self::Button(b) => b.id = Some(id),
+            Self::Input(i) => i.id = Some(id),
             Self::Container(c) => c.id = Some(id),
         }
     }
@@ -203,6 +223,7 @@ impl Tree {
         match self {
             Self::Text(t) => t.style = style,
             Self::Button(b) => b.style = style,
+            Self::Input(i) => i.style = style,
             Self::Container(_) => {}
         }
     }
@@ -213,6 +234,7 @@ impl Tree {
         match self {
             Self::Text(t) => t.id,
             Self::Button(b) => b.id,
+            Self::Input(i) => i.id,
             Self::Container(c) => c.id,
         }
     }
@@ -241,6 +263,12 @@ pub enum Flat {
         label: String,
         style: Style,
     },
+    Input {
+        id: Option<u32>,
+        parent: Option<u32>,
+        content: String,
+        style: Style,
+    },
     Container {
         id: Option<u32>,
         parent: Option<u32>,
@@ -252,7 +280,7 @@ impl Flat {
     /// This node's id, whichever variant (`None` if id-less).
     pub fn id(&self) -> Option<u32> {
         match self {
-            Flat::Text { id, .. } | Flat::Button { id, .. } => *id,
+            Flat::Text { id, .. } | Flat::Button { id, .. } | Flat::Input { id, .. } => *id,
             Flat::Container { id, .. } => *id,
         }
     }
@@ -332,6 +360,12 @@ fn flat(node: &Tree, parent: Option<u32>) -> Flat {
             parent,
             label: b.label.clone(),
             style: b.style,
+        },
+        Tree::Input(i) => Flat::Input {
+            id: i.id,
+            parent,
+            content: i.content.clone(),
+            style: i.style,
         },
         Tree::Container(c) => Flat::Container {
             id: c.id,
@@ -450,6 +484,12 @@ mod tests {
                 label: b.label.clone(),
                 style: b.style,
             },
+            Tree::Input(i) => Flat::Input {
+                id: i.id,
+                parent,
+                content: i.content.clone(),
+                style: i.style,
+            },
             Tree::Container(c) => Flat::Container {
                 id: c.id,
                 parent,
@@ -461,7 +501,9 @@ mod tests {
     fn ids(flat: &[Flat]) -> Vec<(Option<u32>, Option<u32>)> {
         flat.iter()
             .map(|f| match f {
-                Flat::Text { id, parent, .. } | Flat::Button { id, parent, .. } => (*id, *parent),
+                Flat::Text { id, parent, .. }
+                | Flat::Button { id, parent, .. }
+                | Flat::Input { id, parent, .. } => (*id, *parent),
                 Flat::Container { id, parent, .. } => (*id, *parent),
             })
             .collect()
@@ -625,6 +667,26 @@ mod tests {
     }
 
     #[test]
+    fn macro_builds_an_input() {
+        // The input lowers like text: the same record shape, a `content`
+        // attribute, and its own tag.
+        let tree = ui! {
+            column id = 1, {
+                input content = "", id = 9, size = Size::Medium,
+            }
+        };
+        let flat = lower(&tree, to_flat);
+        assert_eq!(ids(&flat), vec![(Some(1), None), (Some(9), Some(1))]);
+        match &flat[1] {
+            Flat::Input { content, style, .. } => {
+                assert_eq!(content, "");
+                assert_eq!(style.size, Size::Medium);
+            }
+            _ => panic!("expected an input node"),
+        }
+    }
+
+    #[test]
     fn macro_splices_an_iterator_child() {
         // The todo demo's shape: a column whose children are a `map`, not a
         // collected `Vec`.
@@ -713,6 +775,24 @@ mod tests {
         // Crossing zero changes the readout's color with its content.
         let (out, _) = diff_with(&counter("-1", Color::Negative), Some(&last), proj);
         assert_eq!(out, vec![M::Changed(3, Some(1))]);
+    }
+
+    /// A todo-ish shape: a box (1) with an input (9) and an add button (7).
+    /// The input's content is state; the button is static.
+    fn with_input(content: &str) -> Tree {
+        Tree::column(vec![
+            Tree::input(content, style(Color::Neutral, Size::Medium)).id(9),
+            Tree::button("add", style(Color::Positive, Size::Medium)).id(7),
+        ])
+        .id(1)
+    }
+
+    #[test]
+    fn diff_reports_an_input_content_change() {
+        // Typing into the input changes only the input node's record.
+        let last = flat_list(&with_input(""));
+        let (out, _) = diff_with(&with_input("buy milk"), Some(&last), proj);
+        assert_eq!(out, vec![M::Changed(9, Some(1))]);
     }
 
     #[test]
@@ -819,15 +899,15 @@ pub fn kid(c: impl Into<Kid>) -> Vec<Tree> {
 /// assert_eq!(tree.node_id(), Some(1));
 /// ```
 ///
-/// Tags: `text` (`content`), `button` (`label`), `row`, `column`,
-/// `container` (`direction`). Attributes in any order: `id`, `color`,
-/// `size`, `style`; an unstated color or size is [`Color::Neutral`] /
-/// [`Size::Medium`]. Containers take a `{ ... }` children block; children
-/// are tags or bare expressions, comma-separated. A bare expression whose
-/// first token is a tag name (a `Tree` named `text`, `row`, ...) is the
-/// expression. A bare expression that is a list of trees (a `Vec<Tree>`,
-/// an iterator) is spliced into the children — the JSX array idiom — while
-/// one that is a single [`Tree`] is one child.
+/// Tags: `text` (`content`), `button` (`label`), `input` (`content`),
+/// `row`, `column`, `container` (`direction`). Attributes in any order:
+/// `id`, `color`, `size`, `style`; an unstated color or size is
+/// [`Color::Neutral`] / [`Size::Medium`]. Containers take a `{ ... }`
+/// children block; children are tags or bare expressions, comma-separated.
+/// A bare expression whose first token is a tag name (a `Tree` named
+/// `text`, `row`, ...) is the expression. A bare expression that is a list
+/// of trees (a `Vec<Tree>`, an iterator) is spliced into the children — the
+/// JSX array idiom — while one that is a single [`Tree`] is one child.
 #[macro_export]
 macro_rules! ui {
     ( $( $t:tt )* ) => {
@@ -948,6 +1028,9 @@ macro_rules! __ui_tag {
     ( $ctx:tt $acc:tt button $t1:tt $( $r:tt )* ) => {
         $crate::__ui_leaf!(button $ctx $acc () () () () () $t1 $( $r )* )
     };
+    ( $ctx:tt $acc:tt input $t1:tt $( $r:tt )* ) => {
+        $crate::__ui_leaf!(input $ctx $acc () () () () () $t1 $( $r )* )
+    };
     ( $ctx:tt $acc:tt row $t1:tt $( $r:tt )* ) => {
         $crate::__ui_cont!(row $ctx $acc ( some $crate::Direction::Row) () $t1 $( $r )* )
     };
@@ -1013,8 +1096,8 @@ macro_rules! __ui_wrap {
     };
 }
 
-/// A leaf node: `text` / `button`. Slot order: label, id, color, size,
-/// style. The label must be present (a `content` / `label` attribute).
+/// A leaf node: `text` / `button` / `input`. Slot order: label, id, color,
+/// size, style. The label must be present (a `content` / `label` attribute).
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ui_leaf {
@@ -1039,6 +1122,9 @@ macro_rules! __ui_leaf {
     ( button $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt label = $v:expr , $( $r:tt )* ) => {
         $crate::__ui_leaf!(button $ctx $acc ( some $v) $i $c $s $st $( $r )* )
     };
+    ( input $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt content = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(input $ctx $acc ( some $v) $i $c $s $st $( $r )* )
+    };
     // Terminals: the label slot must be present (bound here, unwrapped);
     // the rest are optional.
     ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt ) => {
@@ -1059,7 +1145,7 @@ macro_rules! __ui_leaf {
     // A label-less leaf: whatever follows, the required `content` /
     // `label` attribute never appeared.
     ( $kind:tt $ctx:tt $acc:tt () $i:tt $c:tt $s:tt $st:tt $( $r:tt )* ) => {
-        compile_error!("`text` needs a `content = ...` attribute; `button` needs a `label = ...` attribute")
+        compile_error!("`text` and `input` need a `content = ...` attribute; `button` needs a `label = ...` attribute")
     };
 }
 
@@ -1092,6 +1178,9 @@ macro_rules! __ui_leafbuild {
     };
     ( button, $l:expr, $style:expr ) => {
         $crate::Tree::button($l, $style)
+    };
+    ( input, $l:expr, $style:expr ) => {
+        $crate::Tree::input($l, $style)
     };
 }
 

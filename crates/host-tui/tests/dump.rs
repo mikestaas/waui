@@ -153,6 +153,7 @@ fn build_component_as(demo: &str) {
             core.to_str().unwrap(),
             renamed.to_str().unwrap(),
             "onclick=on-click",
+            "ontext=on-text",
             "ontick=on-tick",
         ]);
         steps.push(c);

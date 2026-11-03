@@ -1,15 +1,19 @@
-// Byte-oriented string/number emitters: the canonical ABI encodes strings
+// Byte-oriented string/number converters: the canonical ABI encodes strings
 // as UTF-8 byte runs in linear memory, while AssemblyScript strings are
-// UTF-16. These write straight into arena memory — no AS heap allocation
+// UTF-16. The writers go straight into arena memory — no AS heap allocation
 // (which would require a runtime), just `store<i8>` loops.
 //
-// Each returns the *cursor* — the position after what it wrote — so
+// Each writer returns the *cursor* — the position after what it wrote — so
 // writes compose:
 //
 //   const str = arenaAlloc(24);
 //   let p = writeInt64(str, elapsed);
 //   p = writeUtf8(p, ' ms');
 //   emitText(rec, id, parent, str, p - str, color, size);
+//
+// `readUtf8` goes the other way: a UTF-8 byte run in linear memory (the
+// `on-text` string the web host writes to the scratch region) into an AS
+// string.
 
 import { arenaAlloc } from './arena';
 
@@ -45,6 +49,42 @@ export function writeUtf8(dst: i32, s: string, end: i32 = 2147483647): i32 {
     }
   }
   return p;
+}
+
+/// Decode a UTF-8 byte run at `[ptr, ptr + len)` (surrogate pairs included)
+/// into an AS string. A truncated final sequence (a partial multi-byte
+/// character) stops the decode, like the writers.
+export function readUtf8(ptr: i32, len: i32): string {
+  let s = '';
+  let i = 0;
+  while (i < len) {
+    const c = (load<i8>(ptr + i) as u32) & 0xff;
+    if (c < 0x80) {
+      s += String.fromCharCode(c as i32);
+      i += 1;
+    } else if (c < 0xe0) {
+      if (i + 2 > len) break;
+      const c2 = (load<i8>(ptr + i + 1) as u32) & 0x3f;
+      s += String.fromCharCode((((c & 0x1f) << 6) | c2) as i32);
+      i += 2;
+    } else if (c < 0xf0) {
+      if (i + 3 > len) break;
+      const c2 = (load<i8>(ptr + i + 1) as u32) & 0x3f;
+      const c3 = (load<i8>(ptr + i + 2) as u32) & 0x3f;
+      s += String.fromCharCode((((c & 0x0f) << 12) | (c2 << 6) | c3) as i32);
+      i += 3;
+    } else {
+      if (i + 4 > len) break;
+      const c2 = (load<i8>(ptr + i + 1) as u32) & 0x3f;
+      const c3 = (load<i8>(ptr + i + 2) as u32) & 0x3f;
+      const c4 = (load<i8>(ptr + i + 3) as u32) & 0x3f;
+      const cp = ((c & 0x07) << 18) | (c2 << 12) | (c3 << 6) | c4;
+      const v = cp - 0x10000;
+      s += String.fromCharCode(0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff));
+      i += 4;
+    }
+  }
+  return s;
 }
 
 // The absolute value is computed by *unsigned* negation (modular): for

@@ -14,6 +14,10 @@
 //! windowed host can be driven and screenshotted without a pointer; the
 //! click takes the same path as a pointer event.
 //!
+//! Text inputs render as editable fields; each edit forwards the field's
+//! whole buffer through `on-text`, and the component's answer (it is the
+//! source of truth for the buffer) lands through the diff.
+//!
 //! `--dump <file.png>` renders one frame to a PNG and exits, headless: the
 //! window's own render path with the surface replaced by iced's software
 //! (`tiny-skia`) backend, so no window, display, or GPU is needed and the
@@ -87,6 +91,9 @@ struct State {
 #[derive(Debug, Clone)]
 enum Message {
     Click(u32),
+    /// The input with `id` now holds `text`: the field's whole buffer,
+    /// after the user's latest edit.
+    Text(u32, String),
     Tick,
 }
 
@@ -307,6 +314,15 @@ fn update(state: &mut State, message: Message) {
                 .expect("on-click() failed");
             woke = true;
         }
+        // An edit always wakes the component: it re-derives the field's
+        // content from the buffer it stores, and the diff carries it.
+        Message::Text(id, text) => {
+            state
+                .app
+                .call_on_text(&mut state.store, id, &text)
+                .expect("on-text() failed");
+            woke = true;
+        }
         Message::Tick => {
             let mut w = state.wake.lock().unwrap();
             let due = w.rate_ms > 0 && now_ms() >= w.last_wake_ms + w.rate_ms;
@@ -412,6 +428,31 @@ fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
                 button = button.on_press(Message::Click(*id));
             }
             button.into()
+        }
+        Tree::Input(id, content, style) => {
+            // The field's chrome matches the web page (theme.rs), as the
+            // button's does; the field's text takes the node's semantic
+            // color (the page's style class does the same).
+            let value = iced_color(style.color).unwrap_or_else(|| theme::style().text_color);
+            // A fixed field width: a stable target, and content past it
+            // scrolls (a host concern, like the button's chrome).
+            let mut input = widget::text_input("", content.as_str())
+                .width(iced::Length::Fixed(80.0))
+                .padding(iced::Padding {
+                    top: 6.0,
+                    right: 16.0,
+                    bottom: 6.0,
+                    left: 16.0,
+                })
+                .size(size_pt(style.size))
+                .style(theme::input_style(value));
+            // iced disables a text input without an `on_input`; a field
+            // with no id is unaddressable (the WIT identity note), so that
+            // is exactly the right rendering for it.
+            if let Some(id) = id {
+                input = input.on_input(move |text| Message::Text(*id, text));
+            }
+            input.into()
         }
         // The web page centers a column's children (align-items: center)
         // and a row's; iced's default is start (top/left).

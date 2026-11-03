@@ -2,13 +2,14 @@
 // contract the other hosts use) and renders it as plain elements.
 //
 // It follows the diff protocol: the initial `view()` is a full snapshot,
-// and after each click or scheduled wake the host applies the component's
-// `changes()` to a retained copy of the node list. Content-only mutations
-// (a text or button whose position in the tree is unchanged) are applied
-// in place — the existing element is restyled, no DOM rebuild, and the
-// delegated click listener survives. Anything structural (removals,
-// additions, re-parenting, container changes) falls back to a full rebuild
-// from the retained tree; an empty diff does nothing.
+// and after each click, text-input edit, or scheduled wake the host applies
+// the component's `changes()` to a retained copy of the node list.
+// Content-only mutations (a text, button, or input whose position in the
+// tree is unchanged) are applied in place — the existing element is
+// updated, no DOM rebuild, and the delegated click and input listeners
+// survive. Anything structural (removals, additions, re-parenting,
+// container changes) falls back to a full rebuild from the retained tree;
+// an empty diff does nothing.
 //
 // Time-based refresh is requested by the component: its `schedule` import
 // arms (or stops, with 0) the host's wake loop, which calls `on-tick()`
@@ -127,6 +128,12 @@ function rebuild() {
       el.className = `waui waui-button waui-${n.style.color} waui-${n.style.size}`;
       el.textContent = n.label;
       if (n.id !== null) elements.set(n.id, el);
+    } else if (n.kind === 'input') {
+      el = document.createElement('input');
+      // The component's semantic style, as token classes (see index.html).
+      el.className = `waui waui-input waui-${n.style.color} waui-${n.style.size}`;
+      el.value = n.content;
+      if (n.id !== null) elements.set(n.id, el);
     } else {
       el = document.createElement('div');
       el.className = `waui waui-text waui-${n.style.color} waui-${n.style.size}`;
@@ -169,6 +176,13 @@ function restyle(n) {
   } else if (n.kind === 'text') {
     el.textContent = n.content;
     el.className = `waui waui-text waui-${n.style.color} waui-${n.style.size}`;
+  } else if (n.kind === 'input') {
+    // The component is the source of truth for the buffer; apply its
+    // answer, but skip the field when it echoes the buffer the user just
+    // typed (setting .value to the same text moves the caret in some
+    // browsers).
+    if (el.value !== n.content) el.value = n.content;
+    el.className = `waui waui-input waui-${n.style.color} waui-${n.style.size}`;
   }
   return true;
 }
@@ -200,6 +214,16 @@ rootEl.addEventListener('click', (e) => {
   const btn = e.target.closest('button[data-id]');
   if (!btn) return;
   app.click(Number(btn.dataset.id));
+  refresh();
+});
+
+// The `input` event bubbles, so one delegated listener covers every field.
+// The component is the source of truth for the buffer: its answer (echo,
+// transform, or ignore) lands through the diff like any other change.
+rootEl.addEventListener('input', (e) => {
+  const field = e.target.closest('input[data-id]');
+  if (!field) return;
+  app.text(Number(field.dataset.id), field.value);
   refresh();
 });
 

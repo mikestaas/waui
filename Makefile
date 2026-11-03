@@ -45,7 +45,7 @@ components-as:
 			-O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2 || exit 1; \
 		node assembly/patch-env-abort.mjs target/assembly/$$c.raw.wasm target/assembly/$$c.core.wasm || exit 1; \
 		node assembly/rename-exports.mjs target/assembly/$$c.core.wasm target/assembly/$$c-as.wasm \
-			onclick=on-click ontick=on-tick || exit 1; \
+			onclick=on-click ontext=on-text ontick=on-tick || exit 1; \
 		wasm-tools component embed wit/ target/assembly/$$c-as.wasm \
 			--output target/assembly/$$c-as.embedded.wasm || exit 1; \
 		wasm-tools component new target/assembly/$$c-as.embedded.wasm \

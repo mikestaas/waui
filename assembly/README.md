@@ -19,11 +19,11 @@ assembly/<demo>/index.tsx
 assembly/<demo>/index.gen.ts
   │  asc  -O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2
   ▼
-target/assembly/<demo>.raw.wasm        exports onclick/ontick; imports env.abort
+target/assembly/<demo>.raw.wasm        exports onclick/ontext/ontick; imports env.abort
   │  node assembly/patch-env-abort.mjs
   ▼
 target/assembly/<demo>.core.wasm
-  │  node assembly/rename-exports.mjs ... onclick=on-click ontick=on-tick
+  │  node assembly/rename-exports.mjs ... onclick=on-click ontext=on-text ontick=on-tick
   ▼
 target/assembly/<demo>-as.wasm         (the web host runs this one)
   │  wasm-tools component embed wit/  →  wasm-tools component new
@@ -53,10 +53,10 @@ target/components/<demo>-as.component.wasm
   behavior is unchanged. After the patch: the counter and the todo are
   import-free; the stopwatch keeps only the world's own `$root.now` and
   `$root.schedule`.
-- **`rename-exports.mjs`** rewrites two export names: the world spells them
-  `on-click`/`on-tick` (hyphens, which WIT uses verbatim as wasm export
-  names), and AssemblyScript identifiers cannot contain hyphens, so the demos
-  export `onclick`/`ontick` and are renamed after compilation.
+- **`rename-exports.mjs`** rewrites three export names: the world spells them
+  `on-click`/`on-text`/`on-tick` (hyphens, which WIT uses verbatim as wasm
+  export names), and AssemblyScript identifiers cannot contain hyphens, so the
+  demos export `onclick`/`ontext`/`ontick` and are renamed after compilation.
 - **`component embed` + `new`** is the stand-in for Rust's `generate!`: the
   WIT world is embedded into the core module as component-type metadata, and
   the lift is typed against it.
@@ -111,13 +111,14 @@ element. `{readout}` embeds the persistent leaf by reference.
 API:
 
 - constructors: `text(content, color, size)`, `button(label, color, size)`,
-  `row(children)`, `column(children)`
+  `input(content, color, size)`, `row(children)`, `column(children)`
 - chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`
   (the id's storage is `_id`, set with `.id()`: AssemblyScript cannot name a
   field and a method alike the way Rust can)
 - plain fields: `children`
 - JSX: `h(tag, props, ...children)` — the factory `../jsx.mjs` emits; `tag`
-  is `text`/`button`/`row`/`column`/`container`, `props` is the `Props` class
+  is `text`/`button`/`input`/`row`/`column`/`container`, `props` is the
+  `Props` class
   (a bag of `id`, `label`, `color`, `size`, `reserve`, `direction` — the last
   honored only by `container`), null when the element has no attributes. Each
   child is a `Widget` or a `Widget[]` — a dynamic list, spliced into the
@@ -131,9 +132,9 @@ Behavior:
   Rust demos do; the structural `Widget` objects are local to the call and the
   conservative GC reclaims them when the export returns. The state-dependent
   nodes (the counter's readout; the stopwatch's readout and button; the todo's
-  two lists, count, and footer buttons) are the exception: module globals, kept
-  for the module's lifetime. A few bytes each; the todo's lists grow one object
-  per add.
+  two lists, count, input, and footer buttons) are the exception: module
+  globals, kept for the module's lifetime. A few bytes each; the todo's lists
+  grow one object per add.
 - **Labels** live in the static **label pool** (raw linear memory; the GC
   never scans it). The label is kept as UTF-16 source; the UTF-8 pool write
   happens at projection, keyed by the node's id. A partition is
@@ -163,7 +164,8 @@ the arena, the AS twin of the Rust `component-ui` unit tests.
 
 ```
 [0 ......... RESULT_END = 32 KiB)   result arena, reset by cabi_post_*
-[RESULT_END ... 64 KiB)             the label pool (above)
+[RESULT_END ... 60 KiB)             the label pool (above)
+[60 KiB ... 64 KiB)                 the host's scratch region (the on-text buffer)
 [64 KiB ...)                        static data + runtime heap, from page 1
 ```
 
@@ -176,13 +178,20 @@ last-export snapshot (the diff's reference, replaced on every export) add a
 small amount of retained heap: constant for the counter and stopwatch, growing
 with the number of todos for the todo — all within the leak check's allowance.
 
+The scratch region is a fixed 4 KiB that neither the arena nor the pool
+allocates. Two consumers, never at once: the web host (which runs the
+pre-lift core module and has no memory of its own) writes the `on-text`
+string there directly, and the lifted component's `cabi_realloc` (the
+wasmtime hosts' lift glue) bump-allocates from it — one buffer at a time, a
+free returns the region to its base.
+
 ## The ABI layer (`abi/`)
 
 | file        | what it is                                                                                                                                     |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it)                              |
-| `utf8.ts`   | `writeUtf8` (surrogate pairs; stops at a whole character at the `end` bound) and `writeInt32`/`writeInt64` (a number that would not fit whole is not written) |
-| `node.ts`   | emitters for the ABI encodings: the 32-byte `node` record, the 36-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`)           |
+| `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it) + `host_scratch` (the scratch region's base) + `cabi_realloc` (a bump allocator over it) |
+| `utf8.ts`   | `writeUtf8` (surrogate pairs; stops at a whole character at the `end` bound), `readUtf8` (a UTF-8 byte run into an AS string; stops at a whole character), and `writeInt32`/`writeInt64` (a number that would not fit whole is not written) |
+| `node.ts`   | emitters for the ABI encodings: the 32-byte `node` record (text/button/input/container), the 36-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
 | `root.ts`   | the world's import side: `now` and `schedule` as `@external('$root', ...)`                                                                        |
 
 AS strings are UTF-16; the ABI's are UTF-8 bytes, converted at write time.

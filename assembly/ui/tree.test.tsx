@@ -2,8 +2,8 @@
 // Rust `component-ui` unit tests. Compiled to a core module and run via Node
 // (`make ui-test`); `run()` drives `viewOf`/`diffOf` through the structural
 // cases (bootstrap, value change, add, remove, re-parent, id-less, a
-// spliced list child), decodes the diff from the arena, and returns 0 on
-// success (the first failing scenario's index otherwise).
+// spliced list child, an input), decodes the diff from the arena, and
+// returns 0 on success (the first failing scenario's index otherwise).
 //
 // It is import-free after `../patch-env-abort.mjs` (the incremental runtime's
 // one import is its OOM path), so Node instantiates it directly.
@@ -18,7 +18,9 @@ import {
   SIZE_LARGE,
   SIZE_MEDIUM,
   TAG_CONTAINER,
+  TAG_INPUT,
 } from '../abi/node';
+import { readUtf8 } from '../abi/utf8';
 import { diffOf, h, viewOf, Widget } from './tree';
 
 // The trees are written in JSX; `../jsx.mjs` lowers them to `h` calls before
@@ -85,6 +87,16 @@ function spliced(n: i32): Widget {
   return <column id={1}>{kids}</column>;
 }
 
+// A column with an input (3) — the fourth node kind, the same record shape
+// as text and button.
+function withInput(content: string): Widget {
+  return (
+    <column id={1}>
+      <input id={3} label={content} size={SIZE_MEDIUM} />
+    </column>
+  );
+}
+
 // ------------------------------------------------------------------ decoding
 
 /// One decoded mutation: the tag, and (for `changed`) the node's fields.
@@ -97,39 +109,6 @@ class Mut {
   size: i32 = -1;
   direction: i32 = -1;
   label: string = '';
-}
-
-/// Decode a UTF-8 byte run (the label pool) into an AS string.
-function readUtf8(ptr: i32, len: i32): string {
-  let s = '';
-  let i = 0;
-  while (i < len) {
-    // The `as` cast, not the `<u32>` angle form: this is a `.tsx` file,
-    // where the parser reads `<u32>` as a JSX tag.
-    const c = (load<i8>(ptr + i) as u32) & 0xff;
-    if (c < 0x80) {
-      s += String.fromCharCode(c as i32);
-      i += 1;
-    } else if (c < 0xe0) {
-      const c2 = (load<i8>(ptr + i + 1) as u32) & 0x3f;
-      s += String.fromCharCode((((c & 0x1f) << 6) | c2) as i32);
-      i += 2;
-    } else if (c < 0xf0) {
-      const c2 = (load<i8>(ptr + i + 1) as u32) & 0x3f;
-      const c3 = (load<i8>(ptr + i + 2) as u32) & 0x3f;
-      s += String.fromCharCode((((c & 0x0f) << 12) | (c2 << 6) | c3) as i32);
-      i += 3;
-    } else {
-      const c2 = (load<i8>(ptr + i + 1) as u32) & 0x3f;
-      const c3 = (load<i8>(ptr + i + 2) as u32) & 0x3f;
-      const c4 = (load<i8>(ptr + i + 3) as u32) & 0x3f;
-      const cp = ((c & 0x07) << 18) | (c2 << 12) | (c3 << 6) | c4;
-      const v = cp - 0x10000;
-      s += String.fromCharCode(0xd800 + (v >> 10), 0xdc00 + (v & 0x3ff));
-      i += 4;
-    }
-  }
-  return s;
 }
 
 /// Decode one 36-byte mutation record at `rec`.
@@ -280,6 +259,18 @@ export function run(): i32 {
       return c != null && c.parent == 1 && c.label == 'r2' ? 0 : 8;
     });
     if (r != 0) return 8;
+  }
+
+  // 9. Input: the fourth node kind; a content change is one mutation.
+  viewOf(withInput('')); // the reference: the column (1), the input (3)
+  arenaReset();
+  {
+    const r = scenario(withInput('hi'), (m) => {
+      if (m.length != 1) return 9;
+      const c = changed(m, 3);
+      return c != null && c.kind == TAG_INPUT && c.label == 'hi' ? 0 : 9;
+    });
+    if (r != 0) return 9;
   }
 
   return 0;

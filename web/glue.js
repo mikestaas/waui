@@ -15,7 +15,18 @@
 //                              mutations and the buffer is returned with
 //                              `cabi_post_changes(desc)`.
 //   on-click(id: u32)        : `on-click(i32)` — passes directly.
+//   on-text(id: u32, text)   : `on-text(i32, i32, i32)` — the id, then the
+//                              string's pointer + length, in the *guest's*
+//                              memory (the canonical ABI). The host has no
+//                              memory of its own, so `text()` writes the
+//                              buffer to `host_scratch()` first.
 //   on-tick()                : `on-tick()`.
+//   host_scratch() -> u32    : a convention of the core-module ABI, not
+//                              part of the WIT world: the base of a fixed
+//                              4 KiB region in the guest's memory that the
+//                              guest's allocator never touches. It is where
+//                              `text()` puts the buffer. The wasmtime hosts
+//                              marshal strings themselves and never call it.
 //   schedule(p: u64)         : `$root"."schedule"`, `(i64)` — the
 //                              component's refresh request in ms (0 = no
 //                              periodic wake). Delivered to the
@@ -26,8 +37,8 @@
 //                              counter never calls it.
 //
 // The 32-byte node (all little-endian):
-//   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container
-//                   (the WIT case order in waui:ui/widget)
+//   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container,
+//                   3 = input (the WIT case order in waui:ui/widget)
 //   bytes [1..4]    padding
 //   bytes [4]       id option flag: 0 = none (an unaddressable node)
 //   bytes [5..8]    padding
@@ -36,13 +47,13 @@
 //   bytes [13..16]  padding
 //   bytes [16..20]  parent id: u32 (valid only when the flag is set)
 //   bytes [20]      container: direction (u8, 0 = row, 1 = column)
-//   bytes [20..24]  text/button: string pointer
-//   bytes [24..28]  text/button: string length (UTF-8 bytes)
-//   bytes [28]      text/button: style.color (u8, WIT case order in
+//   bytes [20..24]  text/button/input: string pointer
+//   bytes [24..28]  text/button/input: string length (UTF-8 bytes)
+//   bytes [28]      text/button/input: style.color (u8, WIT case order in
 //                   waui:ui/widget: 0 = neutral, 1 = accent, 2 = positive,
 //                   3 = negative, 4 = warning)
-//   bytes [29]      text/button: style.size (u8: 0 = small, 1 = medium,
-//                   2 = large)
+//   bytes [29]      text/button/input: style.size (u8: 0 = small,
+//                   1 = medium, 2 = large)
 //   bytes [30..32]  padding
 //
 // The 36-byte mutation (a variant with a node- or u32-sized payload):
@@ -86,6 +97,9 @@ export async function createApp(wasmBytes, hooks = {}) {
   // case order of waui:ui/widget (unknown values degrade safely).
   const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning'];
   const SIZES = ['small', 'medium', 'large'];
+  const enc = new TextEncoder();
+  // The scratch region's capacity (see `host_scratch` above).
+  const SCRATCH_CAP = 4096;
 
   // Decode one 32-byte node record at byte offset `o`.
   const decodeNode = (i32, u8, o) => {
@@ -109,7 +123,9 @@ export async function createApp(wasmBytes, hooks = {}) {
     };
     return tag === 1
       ? { kind: 'button', id, parent, label: s, style }
-      : { kind: 'text', id, parent, content: s, style };
+      : tag === 3
+        ? { kind: 'input', id, parent, content: s, style }
+        : { kind: 'text', id, parent, content: s, style };
   };
 
   // Decode a `list` result: an 8-byte {ptr, len} descriptor, then `len`
@@ -145,6 +161,29 @@ export async function createApp(wasmBytes, hooks = {}) {
 
     click: (id) => ex['on-click'](id),
     tick: () => ex['on-tick'](),
+
+    /// The world's `on-text` export: the input with `id` now holds `text`
+    /// (the host's whole current buffer). The canonical ABI wants the
+    /// string in the guest's memory, so the buffer is written to the
+    /// guest's scratch region first. An over-long buffer is clamped to the
+    /// region, at a UTF-8 character boundary.
+    text: (id, text) => {
+      const base = ex.host_scratch();
+      const u8 = new Uint8Array(mem());
+      let s = text;
+      for (;;) {
+        const bytes = enc.encode(s);
+        if (bytes.length <= SCRATCH_CAP) {
+          u8.set(bytes, base);
+          ex['on-text'](id, base, bytes.length);
+          return;
+        }
+        // Drop the last code point (a surrogate pair, if any).
+        const last = s.charCodeAt(s.length - 1);
+        const units = last >= 0xdc00 && last <= 0xdfff ? 2 : 1;
+        s = s.slice(0, s.length - units);
+      }
+    },
 
     /// The guest's linear memory, in 64 KiB pages (for leak checks).
     memoryPages: () => ex.memory.buffer.byteLength / 65536,

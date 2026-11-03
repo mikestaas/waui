@@ -1,5 +1,7 @@
 //! A minimal terminal host for waui components: renders `view()` as an
-//! ASCII tree and forwards clicks read from standard input.
+//! ASCII tree and forwards events read from standard input: a numeric
+//! line clicks the widget with that id, any other non-empty line is the
+//! whole buffer of the first text input in pre-order (`on-text`).
 //!
 //! Ignores the diff channel — it re-queries `view()` after every event,
 //! which stays correct because `view()` is always the full tree — and
@@ -55,7 +57,7 @@ fn main() {
         App::instantiate(&mut store, &component, &linker).expect("failed to instantiate component");
 
     println!("waui (terminal host) rendering: {path}");
-    println!("type the id of a widget to click it, or q to quit");
+    println!("type the id of a widget to click it, text to fill the first input, or q to quit");
 
     let stdin = io::stdin();
     loop {
@@ -78,7 +80,24 @@ fn main() {
         if let Ok(id) = line.parse::<u32>() {
             app.call_on_click(&mut store, id)
                 .expect("on-click() failed");
+        } else if !line.is_empty() {
+            // A non-numeric line is the whole buffer of the first text
+            // input (in pre-order), as `on-text` takes it.
+            if let Some(id) = first_input(&tree) {
+                app.call_on_text(&mut store, id, line)
+                    .expect("on-text() failed");
+            }
         }
+    }
+}
+
+/// The first text input with an id, in depth-first pre-order — the
+/// target of a typed (non-numeric) line.
+fn first_input(node: &Tree) -> Option<u32> {
+    match node {
+        Tree::Input(id, _, _) => *id,
+        Tree::Row(children) | Tree::Column(children) => children.iter().find_map(first_input),
+        _ => None,
     }
 }
 
@@ -94,6 +113,12 @@ fn render(node: &Tree, depth: usize, out: &mut String) {
             // A button with no id is display-only; no id prefix.
             let id = id.map_or_else(String::new, |i| format!("{i}: "));
             out.push_str(&format!("{indent}[{id}{label}]\n"));
+        }
+        Tree::Input(id, content, _) => {
+            // The quotes mark an editable field (a button's label has none);
+            // a field with no id is display-only, like an id-less button.
+            let id = id.map_or_else(String::new, |i| format!("{i}: "));
+            out.push_str(&format!("{indent}[{id}\"{content}\"]\n"));
         }
         Tree::Row(children) => {
             out.push_str(&format!("{indent}row:\n"));

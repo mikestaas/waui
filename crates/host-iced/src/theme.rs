@@ -11,7 +11,7 @@
 //! applied per widget in `map_tree`, not part of the `Theme`.
 
 use iced::theme::{Palette, Style};
-use iced::widget::button;
+use iced::widget::{button, text_input};
 use iced::{border, Background, Border, Color, Shadow, Theme};
 
 /// The palette, matching `web/index.html`.
@@ -59,6 +59,26 @@ pub fn button_style(_theme: &Theme, status: button::Status) -> button::Style {
         },
         shadow: Shadow::default(),
         snap: false,
+    }
+}
+
+/// The web page's input chrome (`.waui-input` in `web/index.html`): the
+/// button's fill, border, and radius. `value` is the node's semantic color
+/// for the field's text (the page's style class does the same); the
+/// selection takes the palette's primary.
+pub fn input_style(value: Color) -> impl Fn(&Theme, text_input::Status) -> text_input::Style {
+    let selection = palette().primary;
+    move |_: &Theme, _: text_input::Status| text_input::Style {
+        background: Background::Color(Color::from_rgb8(0x24, 0x28, 0x3b)),
+        border: Border {
+            color: Color::from_rgb8(0x41, 0x48, 0x68),
+            width: 1.0,
+            radius: border::radius(6.0),
+        },
+        icon: value,
+        placeholder: value,
+        value,
+        selection,
     }
 }
 

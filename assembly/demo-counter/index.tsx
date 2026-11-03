@@ -12,15 +12,16 @@
 //             readout (id 3; its color is state — negative below zero), and
 //             the "-" button (id 4, negative)
 //   on-click: 2 increments, 4 decrements
+//   on-text:  nothing (a counter has no input)
 //   changes:  the changed readout (the whole tree on first contact)
 //   on-tick:  nothing (a counter has no clock)
 //
 // The tree is written in JSX; `../jsx.mjs` lowers it to `h` calls before
-// `asc` compiles it (asc's parser has no JSX). `onclick`/`ontick` are
-// renamed to the world's hyphenated names after compilation (see
+// `asc` compiles it (asc's parser has no JSX). `onclick`/`ontext`/`ontick`
+// are renamed to the world's hyphenated names after compilation (see
 // `../rename-exports.mjs`).
 
-import { cabi_post_changes, cabi_post_view } from '../abi/arena';
+import { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch } from '../abi/arena';
 import {
   COLOR_NEGATIVE,
   COLOR_NEUTRAL,
@@ -30,8 +31,11 @@ import {
 } from '../abi/node';
 import { Widget, diffOf, h, text, viewOf } from '../ui/tree';
 
-// The world requires both post functions on the module itself.
-export { cabi_post_changes, cabi_post_view };
+// The world requires both post functions on the module itself;
+// `host_scratch` is the core-module-ABI convention for the web host's
+// `on-text` buffer, and `cabi_realloc` is the canonical allocator the
+// wasmtime hosts' lift uses for it (see `../abi/arena`).
+export { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch };
 
 // Widget ids (the contract's identity convention).
 const BOX = 1;
@@ -85,5 +89,9 @@ export function onclick(id: i32): void {
     value += delta;
   }
 }
+
+// → `on-text` after the export rename. The counter has no input, so the
+// host's buffer is ignored (the export is required on every component).
+export function ontext(_id: i32, _ptr: i32, _len: i32): void {}
 
 export function ontick(): void {} // → `on-tick`; a counter has no clock

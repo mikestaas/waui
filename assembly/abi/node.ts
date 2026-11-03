@@ -3,12 +3,12 @@
 // components, and of what the hosts' decoders (e.g. `web/glue.js`) read.
 //
 //   `node` (a variant; 32 bytes, the widest case):
-//     [0]       tag: 0 = text, 1 = button, 2 = container
+//     [0]       tag: 0 = text, 1 = button, 2 = container, 3 = input
 //     [4]       id option flag        [8..12)   id
 //     [12]      parent option flag    [16..20)  parent
-//     [20..24)  text/button: string pointer | container: direction byte
-//     [24..28)  text/button: string length (UTF-8 bytes)
-//     [28]      text/button: style.color    [29] style.size
+//     [20..24)  text/button/input: string pointer | container: direction byte
+//     [24..28)  text/button/input: string length (UTF-8 bytes)
+//     [28]      text/button/input: style.color    [29] style.size
 //
 //   `mutation` (a variant; 36 bytes):
 //     [0..4)    tag: 0 = changed, 1 = removed
@@ -24,6 +24,7 @@ import { arenaAlloc } from './arena';
 export const TAG_TEXT = 0;
 export const TAG_BUTTON = 1;
 export const TAG_CONTAINER = 2;
+export const TAG_INPUT = 3;
 export const COLOR_NEUTRAL = 0;
 export const COLOR_ACCENT = 1;
 export const COLOR_POSITIVE = 2;
@@ -93,6 +94,25 @@ export function emitButton(
   store<i8>(rec + 29, size);
 }
 
+/// An `input` node record at `rec` (32 bytes).
+export function emitInput(
+  rec: i32,
+  id: i32,
+  parent: i32,
+  str: i32,
+  len: i32,
+  color: i32,
+  size: i32,
+): void {
+  zero(rec, 32);
+  store<i8>(rec + 0, TAG_INPUT);
+  putId(rec, id, parent);
+  store<i32>(rec + 20, str);
+  store<i32>(rec + 24, len);
+  store<i8>(rec + 28, color);
+  store<i8>(rec + 29, size);
+}
+
 /// A `container` node record at `rec` (32 bytes).
 export function emitContainer(rec: i32, id: i32, parent: i32, direction: i32): void {
   zero(rec, 32);
@@ -132,6 +152,21 @@ export function emitChangedButton(
   zero(rec, 36);
   store<i32>(rec + 0, MUT_CHANGED);
   emitButton(rec + 4, id, parent, str, len, color, size);
+}
+
+/// A `changed` mutation carrying an `input` node, at `rec` (36 bytes).
+export function emitChangedInput(
+  rec: i32,
+  id: i32,
+  parent: i32,
+  str: i32,
+  len: i32,
+  color: i32,
+  size: i32,
+): void {
+  zero(rec, 36);
+  store<i32>(rec + 0, MUT_CHANGED);
+  emitInput(rec + 4, id, parent, str, len, color, size);
 }
 
 /// A `changed` mutation carrying a `container` node, at `rec` (36 bytes).

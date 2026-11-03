@@ -8,9 +8,10 @@ component changes.
 
 ## The contract (`wit/`, package `waui:ui`)
 
-- **`widget` interface** — `text`, `button`, `container` (row/column) records,
-  a `node` variant, a semantic `style` (a `color` token and a `size` token),
-  and a `mutation` variant (`changed(node)` / `removed(u32)`).
+- **`widget` interface** — `text`, `button`, `input`, `container`
+  (row/column) records, a `node` variant (one case per record), a semantic
+  `style` (a `color` token and a `size` token), and a `mutation` variant
+  (`changed(node)` / `removed(u32)`).
   - WIT types cannot be recursive, so the tree is a **flat list of nodes in
     depth-first pre-order**; each node carries a `parent` id and hosts rebuild
     the tree from the list (Rust hosts: `host-shared`; web: `web/app.js`).
@@ -23,7 +24,9 @@ component changes.
     enums with ≤256 variants lay out as one byte, so `style` costs two bytes
     per node.
 - **`app` world** — exports `view() -> list<node>` (the current tree),
-  `changes() -> list<mutation>` (the diff since the last export), `on-click(u32)`,
+  `changes() -> list<mutation>` (the diff since the last export),
+  `on-click(u32)`, `on-text(u32, string)` (the host's whole input buffer on
+  every edit; the component is the source of truth for the field), and
   `on-tick()`; imports `now() -> u64` (host clock, ms) and `schedule(u64)`
   (the component's refresh request, in ms).
 
@@ -33,6 +36,10 @@ Protocol rules:
 - `changes()` is empty when nothing changed; a component that has never
   exported its tree reports every node as `changed`, so a host may bootstrap
   from `changes` alone.
+- The host calls `on-text(id, text)` on every edit to the input `id`, with
+  the whole current buffer; the component stores it, and the input node's
+  content re-derives from it (the component is the source of truth for the
+  field).
 - The host calls `on-tick` only at the period the component requests with
   `schedule` (a new request restarts it; 0 cancels); a component that never
   schedules is never woken.
@@ -65,16 +72,16 @@ child the factory splices in).
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
 | `wit/`                   | the WIT contract (`widget` + `app`)                                                                   |
 | `crates/host-shared`     | wasmtime host core: the bindings, the list→tree rebuild, the retained tree diffs apply against        |
-| `crates/host-iced`       | windowed host (iced); style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG (CI) |
-| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame (CI) |
-| `crates/host-cli`        | terminal host, ASCII tree, clicks via stdin; ignores `style`, the diff channel, and `schedule`         |
+| `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG (CI) |
+| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame (CI) |
+| `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, the diff channel, and `schedule` |
 | `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm)             |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests    |
 |                          | a refresh (the host never wakes it)                                                                   |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one    |
 |                          | mutation                                                                                               |
 | `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component;   |
-|                          | the "add" cycles preset labels (the contract has no text input)                                         |
+|                          | the footer's input takes typed text, and "add" uses it (a preset label when it is empty)                |
 | `assembly/`              | the same three demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`), no bindings |
 
 The three wasmtime hosts load the same component file. The web host runs the
@@ -122,9 +129,10 @@ it runs from disk with no server and no network.
   (`crates/host-cli/tests/roundtrip.rs`), which drives the counter, the
   stopwatch, and the todo through the same wasmtime host code the real hosts
   use and asserts on the node content, the style, the diff channel (the
-  todo's is structural: add, remove, re-parent), and the refresh request
-  (`schedule`). It runs against the Rust component and, as `*_as`, against
-  the AssemblyScript one (skipped when `node_modules` is missing).
+  todo's is structural: add, remove, re-parent), the text event (the todo's
+  input), and the refresh request (`schedule`). It runs against the Rust
+  component and, as `*_as`, against the AssemblyScript one (skipped when
+  `node_modules` is missing).
 - The hosts' headless render checks, also under `cargo test`: `host-tui`
   `tests/dump.rs` runs the binary with `--dump` (one frame into ratatui's
   test backend) and asserts on the layout, the semantic colors, and the
@@ -137,8 +145,8 @@ it runs from disk with no server and no network.
 - `make web-test` (and `-as`): the same assertions from Node, against the core
   modules, through the same `glue.js` the browser page uses.
 - `make ui-test`: the tree layer's diff channel, as a standalone module run
-  via Node: the structural cases (add, remove, re-parent) plus the bootstrap
-  and id-less rules — the AS twin of the `component-ui` unit tests.
+  via Node: the structural cases (add, remove, re-parent) plus the bootstrap,
+  id-less, and input rules — the AS twin of the `component-ui` unit tests.
 - `make fmt-check`: all sources are formatter-clean (`cargo fmt --check`
   for the Rust crates, prettier for the assembly/ and web/ trees). A
   pre-commit hook runs it on every commit (`make hooks` installs it);
@@ -146,9 +154,8 @@ it runs from disk with no server and no network.
 
 ## Not implemented
 
-- **Text input and component-directed focus.** The only event channel is
-  `on-click`, so nothing can take keyboard text. A contract change touching
-  every host, the AS ABI, and the parity tests.
+- **Component-directed focus.** The host owns focus (arrow keys, the mouse);
+  a component can only report state, not move it.
 - **Images, as a WIT `resource`.** Substantial ABI work, worst on the
   hand-rolled AS side.
 - **Multi-component hosts.** Host-side only.

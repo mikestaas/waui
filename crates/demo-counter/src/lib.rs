@@ -1,7 +1,9 @@
 //! A counter whose UI and logic live entirely in the component.
 //!
 //! The host is a plain renderer: it draws what `view()` returns and
-//! forwards clicks via `on-click`.
+//! forwards clicks via `on-click`. `on-text` is the world's text-input
+//! channel; the counter has no input, so it is a no-op here (the world
+//! requires the export on every component).
 //!
 //! The view is a nested `component-ui` tree projected into the contract's
 //! flat node list at the ABI boundary.
@@ -80,6 +82,12 @@ fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
             label: b.label.clone(),
             style: style(b.style),
         }),
+        Tree::Input(i) => Node::Input(wit::Input {
+            id: i.id,
+            parent,
+            content: i.content.clone(),
+            style: style(i.style),
+        }),
         Tree::Container(c) => Node::Container(wit::Container {
             id: c.id,
             parent,
@@ -127,7 +135,25 @@ impl Guest for Counter {
         }
     }
 
+    // The world's text-input channel: the counter has no input, so the
+    // host's buffer is ignored (the export is required on every component).
+    fn on_text(_id: u32, _text: String) {}
+
     fn on_tick() {}
 }
 
 export!(Counter);
+
+/// A fixed region of the module's linear memory that the allocator never
+/// touches: the web host (which runs the pre-lift core module and has no
+/// memory of its own) writes the input text here before calling `on-text`.
+/// The canonical ABI passes a string as a pointer + length in the callee's
+/// memory, so the host needs somewhere in the guest to put it. Not part of
+/// the WIT world; a convention of the core-module ABI (see `web/glue.js`).
+/// The wasmtime hosts marshal strings themselves and never call this.
+static HOST_SCRATCH: [u8; 4096] = [0; 4096];
+
+#[no_mangle]
+pub extern "C" fn host_scratch() -> u32 {
+    HOST_SCRATCH.as_ptr() as u32
+}

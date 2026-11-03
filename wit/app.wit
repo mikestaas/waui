@@ -13,7 +13,8 @@ package waui:ui;
 ///
 /// The host calls `on-tick` at the period the component requests with
 /// `schedule` (0 = never) and provides a `now` clock the component can
-/// poll.
+/// poll. User events flow the other way: `on-click` for activations and
+/// `on-text` for text-input edits.
 world app {
   use widget.{node, mutation};
 
@@ -28,6 +29,14 @@ world app {
 
   /// The widget with the given id was activated (e.g. clicked).
   export on-click: func(id: u32);
+
+  /// The widget with the given id is a text input whose content is now
+  /// `text`: the host's whole current buffer, after the user's latest edit.
+  /// The component is the source of truth for the buffer — it may echo it,
+  /// transform it, or ignore the edit — and reports the result in its tree;
+  /// a host that cannot keep up re-queries `view`, which stays the full
+  /// truth.
+  export on-text: func(id: u32, text: string);
 
   /// The host calls this at the component's scheduled period, so
   /// time-based UIs can advance.

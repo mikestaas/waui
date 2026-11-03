@@ -2,12 +2,16 @@
 //! remove, and re-parent, and the unit tests cover both sides in isolation;
 //! this is the demo that drives them through a real component.
 //!
-//! The contract has no text input (the README's roadmap), so the "add"
-//! button cycles a preset list of labels instead of a text box.
+//! The footer's "add" button uses the text input: it adds a todo with the
+//! input's text and clears the field, or — when the field is empty — cycles
+//! a preset list of labels. The input's text is component state: the host
+//! reports each edit through `on-text` (the whole current buffer), the
+//! component stores it, and the input node's content re-derives from it.
 //!
 //! The layout: a column with the "todos" header, the active column, the done
-//! column, and a footer (the count, the add button, the clear button). Each
-//! todo row is a row with a checkbox, a label, and a delete button.
+//! column, and a footer (the count, the input, the add button, the clear
+//! button). Each todo row is a row with a checkbox, a label, and a delete
+//! button.
 //!
 //! **The ids.** A todo created i-th gets its row 100+4i while active and
 //! 500+4i while done; its checkbox, label, and delete keep 101+4i, 102+4i,
@@ -15,14 +19,14 @@
 //! the contract moves a container by removing the subtree and re-adding it
 //! (a host links a container's children in list order, and a re-parented
 //! container would leave them behind); the children's ids do not, so a move
-//! re-parents them — same id, new parent.
+//! re-parents them — same id, new parent. The footer's input is 9.
 //!
 //! **The order.** Both columns are newest-first: the host inserts a new or
 //! moved node just after its parent, the top of the column, so the component
 //! keeps that order and `view()` and the retained list agree.
 //!
-//! It never calls `schedule` (it changes only on a click), so the host never
-//! wakes it.
+//! It never calls `schedule` (it changes only on a click or a text edit), so
+//! the host never wakes it.
 
 wit_bindgen::generate!({
     world: "app",
@@ -38,15 +42,16 @@ use component_ui::{ui, Color, Direction, Size, Style, Tree};
 use waui::ui::widget as wit;
 
 /// One todo. `idx` is its creation index, the source of its node ids (never
-/// reused); `label` is a preset; `done` picks its column and its row's style.
-#[derive(Clone, Copy)]
+/// reused); `label` is the typed text or a preset; `done` picks its column
+/// and its row's style.
+#[derive(Clone)]
 struct Todo {
     idx: u32,
-    label: &'static str,
+    label: String,
     done: bool,
 }
 
-/// The labels the "add" button cycles (the contract has no text input).
+/// The labels the "add" button cycles when the input is empty.
 const PRESETS: &[&str] = &[
     "buy milk",
     "walk the dog",
@@ -65,6 +70,9 @@ static NEXT: AtomicU32 = AtomicU32::new(3);
 /// The next preset label for the add button; the seed consumed the first
 /// three.
 static PRESET: AtomicUsize = AtomicUsize::new(3);
+/// The input's text: the component's copy of the buffer the host reports
+/// through `on-text`.
+static INPUT: Mutex<String> = Mutex::new(String::new());
 
 /// Seed the lists once: the first three presets, the last one done, added in
 /// index order (so the newest, 1, sits at the front of the active list).
@@ -74,28 +82,29 @@ fn seed(active: &mut Vec<Todo>, done: &mut Vec<Todo>) {
     }
     active.push(Todo {
         idx: 1,
-        label: PRESETS[1],
+        label: PRESETS[1].to_string(),
         done: false,
     });
     active.push(Todo {
         idx: 0,
-        label: PRESETS[0],
+        label: PRESETS[0].to_string(),
         done: false,
     });
     done.push(Todo {
         idx: 2,
-        label: PRESETS[2],
+        label: PRESETS[2].to_string(),
         done: true,
     });
     INITED.store(true, Ordering::Relaxed);
 }
 
-/// A copy of the lists, seeding on first use.
-fn snapshot() -> (Vec<Todo>, Vec<Todo>) {
+/// Copies of the lists and the input's text, seeding on first use.
+fn snapshot() -> (Vec<Todo>, Vec<Todo>, String) {
     let mut active = ACTIVE.lock().unwrap();
     let mut done = DONE.lock().unwrap();
     seed(&mut active, &mut done);
-    (active.clone(), done.clone())
+    let input = INPUT.lock().unwrap().clone();
+    (active.clone(), done.clone(), input)
 }
 
 /// One todo's row: the checkbox, the label, and the delete button. The row's
@@ -108,7 +117,7 @@ fn row(t: &Todo) -> Tree {
                    id = 101 + base,
                    color = if t.done { Color::Positive } else { Color::Neutral },
                    size = Size::Medium,
-            text content = t.label,
+            text content = t.label.clone(),
                  id = 102 + base,
                  color = if t.done { Color::Warning } else { Color::Neutral },
                  size = Size::Medium,
@@ -117,11 +126,12 @@ fn row(t: &Todo) -> Tree {
     }
 }
 
-/// The footer: the count, the add button, and the clear button.
-fn footer(left: usize) -> Tree {
+/// The footer: the count, the input, the add button, and the clear button.
+fn footer(left: usize, input: &str) -> Tree {
     ui! {
         row id = 5, {
             text content = format!("{left} left"), id = 6, size = Size::Small,
+            input content = input, id = 9, size = Size::Medium,
             button label = "add", id = 7, color = Color::Positive, size = Size::Medium,
             button label = "clear done", id = 8, color = Color::Negative, size = Size::Medium,
         }
@@ -130,13 +140,13 @@ fn footer(left: usize) -> Tree {
 
 /// The todo list's whole UI, nested. The columns' rows are spliced into the
 /// columns' children (a list child, not one child per row).
-fn tree(active: &[Todo], done: &[Todo]) -> Tree {
+fn tree(active: &[Todo], done: &[Todo], input: &str) -> Tree {
     ui! {
         column id = 1, {
             text content = "todos", id = 2, color = Color::Accent, size = Size::Large,
             column id = 3, { active.iter().map(row) }
             column id = 4, { done.iter().map(row) }
-            footer(active.len()),
+            footer(active.len(), input),
         }
     }
 }
@@ -172,6 +182,12 @@ fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
             label: b.label.clone(),
             style: style(b.style),
         }),
+        Tree::Input(i) => Node::Input(wit::Input {
+            id: i.id,
+            parent,
+            content: i.content.clone(),
+            style: style(i.style),
+        }),
         Tree::Container(c) => Node::Container(wit::Container {
             id: c.id,
             parent,
@@ -187,8 +203,8 @@ struct TodoList;
 
 impl Guest for TodoList {
     fn view() -> Vec<Node> {
-        let (active, done) = snapshot();
-        let t = tree(&active, &done);
+        let (active, done, input) = snapshot();
+        let t = tree(&active, &done, &input);
         // The full snapshot becomes the reference the next diff compares
         // against.
         component_ui::note_view(&t);
@@ -198,8 +214,8 @@ impl Guest for TodoList {
     fn changes() -> Vec<Mutation> {
         // Bootstrap, a move, a removal: `component-ui`'s diff against its
         // retained last export.
-        let (active, done) = snapshot();
-        component_ui::diff(&tree(&active, &done), |c| match c {
+        let (active, done, input) = snapshot();
+        component_ui::diff(&tree(&active, &done, &input), |c| match c {
             component_ui::DiffNode::Changed(node, parent) => {
                 Mutation::Changed(to_node(node, parent))
             }
@@ -212,15 +228,24 @@ impl Guest for TodoList {
         let mut done = DONE.lock().unwrap();
         seed(&mut active, &mut done);
         match id {
-            // The add button: the next preset, newest first.
+            // The add button: the input's text if the user typed any, else
+            // the next preset; newest first.
             7 => {
                 let idx = NEXT.fetch_add(1, Ordering::Relaxed);
-                let p = PRESET.fetch_add(1, Ordering::Relaxed);
+                let label = {
+                    let mut input = INPUT.lock().unwrap();
+                    if input.is_empty() {
+                        let p = PRESET.fetch_add(1, Ordering::Relaxed);
+                        PRESETS[p % PRESETS.len()].to_string()
+                    } else {
+                        std::mem::take(&mut *input)
+                    }
+                };
                 active.insert(
                     0,
                     Todo {
                         idx,
-                        label: PRESETS[p % PRESETS.len()],
+                        label,
                         done: false,
                     },
                 );
@@ -267,7 +292,30 @@ impl Guest for TodoList {
         }
     }
 
+    // The input (9): the host's whole current buffer. The component is the
+    // source of truth for the field, so it stores the text verbatim; the
+    // input node's content re-derives from it on the next export.
+    fn on_text(id: u32, text: String) {
+        if id == 9 {
+            *INPUT.lock().unwrap() = text;
+        }
+    }
+
     fn on_tick() {}
 }
 
 export!(TodoList);
+
+/// A fixed region of the module's linear memory that the allocator never
+/// touches: the web host (which runs the pre-lift core module and has no
+/// memory of its own) writes the input text here before calling `on-text`.
+/// The canonical ABI passes a string as a pointer + length in the callee's
+/// memory, so the host needs somewhere in the guest to put it. Not part of
+/// the WIT world; a convention of the core-module ABI (see `web/glue.js`).
+/// The wasmtime hosts marshal strings themselves and never call this.
+static HOST_SCRATCH: [u8; 4096] = [0; 4096];
+
+#[no_mangle]
+pub extern "C" fn host_scratch() -> u32 {
+    HOST_SCRATCH.as_ptr() as u32
+}

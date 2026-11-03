@@ -16,11 +16,11 @@
 // clock readings.
 //
 // The tree is written in JSX; `../jsx.mjs` lowers it to `h` calls before
-// `asc` compiles it (asc's parser has no JSX). `onclick`/`ontick` are
-// renamed to the world's hyphenated names after compilation (see
+// `asc` compiles it (asc's parser has no JSX). `onclick`/`ontext`/`ontick`
+// are renamed to the world's hyphenated names after compilation (see
 // `../rename-exports.mjs`).
 
-import { cabi_post_changes, cabi_post_view } from '../abi/arena';
+import { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch } from '../abi/arena';
 import {
   COLOR_ACCENT,
   COLOR_NEUTRAL,
@@ -32,8 +32,11 @@ import {
 import { now, schedule } from '../abi/root';
 import { Widget, button, diffOf, h, text, viewOf } from '../ui/tree';
 
-// The world requires both post functions on the module itself.
-export { cabi_post_changes, cabi_post_view };
+// The world requires both post functions on the module itself;
+// `host_scratch` is the core-module-ABI convention for the web host's
+// `on-text` buffer, and `cabi_realloc` is the canonical allocator the
+// wasmtime hosts' lift uses for it (see `../abi/arena`).
+export { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch };
 
 // Widget ids (the contract's identity convention).
 const BOX = 1;
@@ -122,3 +125,7 @@ export function onclick(id: i32): void {
 // running, the next `changes` re-derives the readout and reports it; while
 // paused, the value is frozen and the diff is empty.
 export function ontick(): void {}
+
+// → `on-text` after the export rename. The stopwatch has no input, so the
+// host's buffer is ignored (the export is required on every component).
+export function ontext(_id: i32, _ptr: i32, _len: i32): void {}

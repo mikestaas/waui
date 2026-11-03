@@ -3,7 +3,8 @@
 //! component has no focus concept; which button is highlighted is a host
 //! concern.
 //!
-//! Controls: up/down (or j/k) move focus, enter/space clicks, q quits.
+//! Controls: up/down (or j/k) move focus, enter/space clicks, printable
+//! keys type into the focused text input, q quits.
 //! `--dump` renders one frame with ANSI color and prints it, for headless
 //! verification of the tree-to-UI mapping; `--click <id>` injects clicks
 //! before the interactive loop.
@@ -86,6 +87,8 @@ fn width_of(node: &Tree) -> u16 {
     match node {
         Tree::Text(content, _) => content.chars().count() as u16,
         Tree::Button(_, label, _) => label.chars().count() as u16 + 2, // borders
+        // Framed like a button: the content plus its two border columns.
+        Tree::Input(_, content, _) => content.chars().count() as u16 + 2,
         Tree::Row(children) => children.iter().map(width_of).sum(),
         Tree::Column(children) => children.iter().map(width_of).max().unwrap_or(0),
     }
@@ -95,6 +98,7 @@ fn height_of(node: &Tree) -> u16 {
     match node {
         Tree::Text(..) => 1,
         Tree::Button(..) => 3, // border top, label, border bottom
+        Tree::Input(..) => 3,  // border top, content, border bottom
         Tree::Row(children) => children.iter().map(height_of).max().unwrap_or(0),
         Tree::Column(children) => children.iter().map(height_of).sum(),
     }
@@ -161,6 +165,24 @@ fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>) {
                 area,
             );
         }
+        Tree::Input(id, content, style) => {
+            // A display-only field (no id) can never be focused. The
+            // content is the component's copy of the buffer, so it is
+            // left-aligned, like a text field.
+            let focused = *id == focus;
+            let style = if focused {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                node_style(style)
+            };
+            let block = Block::default().borders(Borders::ALL).border_style(style);
+            frame.render_widget(
+                Paragraph::new(content.clone()).style(style).block(block),
+                area,
+            );
+        }
         Tree::Row(children) => {
             let layout =
                 Layout::horizontal(children.iter().map(|c| Constraint::Length(width_of(c))));
@@ -205,7 +227,8 @@ fn sgr_fg(c: Color) -> Option<&'static str> {
 
 /// The hint bar's text. Its length sets the `--dump` buffer's minimum
 /// width, so the verification frame shows the bar whole.
-const HINT: &str = " waui (tui)   up/down or j/k: focus   enter/space: click   q: quit ";
+const HINT: &str =
+    " waui (tui)   up/down or j/k: focus   enter/space: click   type: input   q: quit ";
 
 /// Draw one full frame: a hint bar, then the tree centered below it.
 fn draw(frame: &mut Frame, tree: &Tree, focus: Option<u32>) {
@@ -230,24 +253,64 @@ fn draw(frame: &mut Frame, tree: &Tree, focus: Option<u32>) {
 }
 
 // --------------------------------------------------------------------------
-// Focus: a host-local ring over the tree's buttons (in pre-order).
+// Focus: a host-local ring over the tree's buttons and inputs (in pre-order).
 
-fn focusable_ids(node: &Tree, out: &mut Vec<u32>) {
+/// One widget the focus ring can move to: its id, and whether it is a text
+/// input (printable keys type into it; enter/space does not activate it).
+#[derive(Clone, Copy)]
+struct FocusTarget {
+    id: u32,
+    is_input: bool,
+}
+
+fn focusables(node: &Tree, out: &mut Vec<FocusTarget>) {
     match node {
         // A button the component gave no id cannot be clicked, so it is
         // not focusable.
         Tree::Button(id, ..) => {
             if let Some(i) = id {
-                out.push(*i);
+                out.push(FocusTarget {
+                    id: *i,
+                    is_input: false,
+                });
+            }
+        }
+        // An id-less input is unaddressable (the WIT identity note), so it
+        // is not focusable either.
+        Tree::Input(id, ..) => {
+            if let Some(i) = id {
+                out.push(FocusTarget {
+                    id: *i,
+                    is_input: true,
+                });
             }
         }
         Tree::Row(children) | Tree::Column(children) => {
             for child in children {
-                focusable_ids(child, out);
+                focusables(child, out);
             }
         }
         Tree::Text(..) => {}
     }
+}
+
+/// The content of the input with `id`, wherever it sits in the tree.
+fn input_content(node: &Tree, id: u32) -> Option<&str> {
+    match node {
+        Tree::Input(iid, content, _) if *iid == Some(id) => Some(content),
+        Tree::Row(children) | Tree::Column(children) => {
+            children.iter().find_map(|c| input_content(c, id))
+        }
+        _ => None,
+    }
+}
+
+/// Report the focused input's whole buffer to the component (`on-text`)
+/// and mark the diff pending: the component re-derives the field's content
+/// from what it stored, and the next `changes` carries it back.
+fn report_input(app: &App, store: &mut Store<Host>, id: u32, buf: &str, pending: &mut bool) {
+    app.call_on_text(store, id, buf).expect("on-text() failed");
+    *pending = true;
 }
 
 // --------------------------------------------------------------------------
@@ -324,9 +387,9 @@ fn main() {
         let h = height_of(&tree) + 3;
         let mut terminal =
             Terminal::new(TestBackend::new(w, h)).expect("failed to create terminal");
-        let mut focus_ids = Vec::new();
-        focusable_ids(&tree, &mut focus_ids);
-        let focus = focus_ids.first().copied();
+        let mut targets = Vec::new();
+        focusables(&tree, &mut targets);
+        let focus = targets.first().map(|t| t.id);
         let completed = terminal
             .draw(|f| draw(f, &tree, focus))
             .expect("draw failed");
@@ -386,6 +449,13 @@ fn main() {
     // `changes` call.
     let mut pending = false;
     let mut quit = false;
+    // The ring's targets, in pre-order: the key handler reads the previous
+    // iteration's list, and the loop recomputes it after every rebuild.
+    let mut targets: Vec<FocusTarget> = Vec::new();
+    // The host's copy of the focused input's buffer: the component is the
+    // source of truth for the field, so this re-syncs from the tree each
+    // iteration and only the keystrokes between syncs are local.
+    let mut input_buf = String::new();
 
     while !quit {
         // Read every pending event before acting on them.
@@ -393,8 +463,12 @@ fn main() {
             while event::poll(Duration::ZERO).expect("failed to poll events") {
                 match event::read().expect("failed to read event") {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
+                        // The ring's current target, from the last rebuild:
+                        // it decides what printable keys do (a 'q' typed
+                        // into the input types; only outside it quits).
+                        let focused_input = targets.get(focus_idx).filter(|t| t.is_input);
                         match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => {
+                            KeyCode::Esc => {
                                 quit = true;
                             }
                             // Move the focus ring to the previous/next
@@ -406,8 +480,29 @@ fn main() {
                             KeyCode::Down | KeyCode::Left | KeyCode::Right | KeyCode::Char('j') => {
                                 focus_idx = focus_idx.wrapping_add(1);
                             }
+                            // Enter/space activates a button; an input has
+                            // no activation.
                             KeyCode::Enter | KeyCode::Char(' ') => {
-                                click_pending = true;
+                                if focused_input.is_none() {
+                                    click_pending = true;
+                                }
+                            }
+                            // The focused input's buffer: edited here,
+                            // reported whole through `on-text`, and re-synced
+                            // from the tree after the component answers.
+                            KeyCode::Backspace => {
+                                if let Some(t) = focused_input {
+                                    input_buf.pop();
+                                    report_input(&app, &mut store, t.id, &input_buf, &mut pending);
+                                }
+                            }
+                            KeyCode::Char(c) => {
+                                if let Some(t) = focused_input {
+                                    input_buf.push(c);
+                                    report_input(&app, &mut store, t.id, &input_buf, &mut pending);
+                                } else if c == 'q' {
+                                    quit = true;
+                                }
                             }
                             _ => {}
                         }
@@ -439,25 +534,39 @@ fn main() {
             }
         }
 
-        let mut focus_ids = Vec::new();
-        focusable_ids(&tree, &mut focus_ids);
-        if focus_ids.is_empty() {
+        // Recomputed from the tree so a rebuilt tree (a moved or removed
+        // widget) re-seats the ring.
+        targets.clear();
+        focusables(&tree, &mut targets);
+        if targets.is_empty() {
             focus_idx = 0;
             click_pending = false;
         } else {
             // `focus_idx` may be one past the end (from wrapping) or
-            // stale after a tree change; normalize into the button list.
-            let n = focus_ids.len();
+            // stale after a tree change; normalize into the target list.
+            let n = targets.len();
             focus_idx = ((focus_idx % n) + n) % n;
+            let target = &targets[focus_idx];
+            // The component is the source of truth for the field: it may
+            // have transformed or cleared the buffer, so the host's copy
+            // follows the tree.
+            if target.is_input {
+                if let Some(content) = input_content(&tree, target.id) {
+                    input_buf = content.to_string();
+                }
+            }
             if click_pending {
                 click_pending = false;
-                app.call_on_click(&mut store, focus_ids[focus_idx])
-                    .expect("on-click() failed");
-                pending = true;
+                // An input has no activation; only a button is clicked.
+                if !target.is_input {
+                    app.call_on_click(&mut store, target.id)
+                        .expect("on-click() failed");
+                    pending = true;
+                }
             }
         }
 
-        let focus = focus_ids.get(focus_idx).copied();
+        let focus = targets.get(focus_idx).map(|t| t.id);
         let _ = terminal
             .draw(|f| draw(f, &tree, focus))
             .expect("failed to draw");

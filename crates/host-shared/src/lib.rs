@@ -35,6 +35,9 @@ pub enum Tree {
     /// (widget id — `None` for a display-only button a component did not
     /// give an id, label, style)
     Button(Option<u32>, String, Style),
+    /// (widget id — `None` for an input a component did not give an id, the
+    /// input's content, style)
+    Input(Option<u32>, String, Style),
     Row(Vec<Tree>),
     Column(Vec<Tree>),
 }
@@ -45,6 +48,7 @@ fn node_id(node: &Node) -> Option<u32> {
     match node {
         Node::Text(t) => t.id,
         Node::Button(b) => b.id,
+        Node::Input(i) => i.id,
         Node::Container(c) => c.id,
     }
 }
@@ -53,6 +57,7 @@ fn node_parent(node: &Node) -> Option<u32> {
     match node {
         Node::Text(t) => t.parent,
         Node::Button(b) => b.parent,
+        Node::Input(i) => i.parent,
         Node::Container(c) => c.parent,
     }
 }
@@ -61,6 +66,7 @@ fn to_tree(node: &Node) -> Tree {
     match node {
         Node::Text(t) => Tree::Text(t.content.clone(), t.style),
         Node::Button(b) => Tree::Button(b.id, b.label.clone(), b.style),
+        Node::Input(i) => Tree::Input(i.id, i.content.clone(), i.style),
         Node::Container(c) => {
             if c.direction == Direction::Row {
                 Tree::Row(Vec::new())

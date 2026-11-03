@@ -3,18 +3,24 @@
 // contract's diff expresses add, remove, and re-parent, and this drives
 // them through a real component.
 //
-// The contract has no text input (the README's roadmap), so the "add"
-// button cycles a preset list of labels instead of a text box.
+// The footer's "add" button uses the text input: it adds a todo with the
+// input's text and clears the field, or — when the field is empty — cycles
+// a preset list of labels. The input's text is component state: the host
+// reports each edit through `on-text` (the whole current buffer), the
+// component stores it, and the input node's content re-derives from it.
 //
 //   view:     a column (1): the "todos" header (2), the active column (3)
 //             and the done column (4) stacked, and the footer row (5) with
-//             the count (6, small), the add button (7, positive), and the
-//             clear button (8, negative)
-//   on-click: 7 adds the next preset todo; 8 clears the done column; a
+//             the count (6, small), the input (9), the add button (7,
+//             positive), and the clear button (8, negative)
+//   on-click: 7 adds a todo with the input's text (the next preset when it
+//             is empty) and clears the field; 8 clears the done column; a
 //             row's checkbox (101+4i) moves the todo between the columns;
 //             its delete (103+4i) removes it
-//   changes:  the diff: the new or moved nodes, the count, and the removed
-//             ids (the whole tree on first contact)
+//   on-text:  9 stores the host's whole buffer (the component is the source
+//             of truth for the field)
+//   changes:  the diff: the new or moved nodes, the count, the input's
+//             content, and the removed ids (the whole tree on first contact)
 //   on-tick:  nothing (a todo list has no clock)
 //
 // **The ids.** A todo created i-th gets its row 100+4i while active and
@@ -23,19 +29,26 @@
 // the contract moves a container by removing the subtree and re-adding it
 // (a host links a container's children in list order, and a re-parented
 // container would leave them behind); the children's ids do not, so a move
-// re-parents them — same id, new parent.
+// re-parents them — same id, new parent. The footer's input is 9.
 //
 // **The order.** Both columns are newest first: the host inserts a new or
 // moved node just after its parent, the top of the column, so the lists
 // keep that order and view() and the retained list agree.
 //
+// **The pool.** A label partition is fixed at its first allocation and
+// never grows (`../ui/tree`); the input's is reserved at 64 bytes. The AS
+// pool is bounded, the Rust `String` is not, so content longer than its
+// partition clamps; the selftest types 10 bytes, and the demos stay
+// byte-parity at the gate.
+//
 // The whole UI is JSX, as in the other demos; the columns' rows are a child
 // of their own (a dynamic list the factory splices in, like its single-
 // widget siblings). `../jsx.mjs` lowers it to `h` calls before `asc` compiles
-// it (asc's parser has no JSX). `onclick`/`ontick` are renamed to the world's
-// hyphenated names after compilation (see `../rename-exports.mjs`).
+// it (asc's parser has no JSX). `onclick`/`ontext`/`ontick` are renamed to
+// the world's hyphenated names after compilation (see
+// `../rename-exports.mjs`).
 
-import { cabi_post_changes, cabi_post_view } from '../abi/arena';
+import { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch } from '../abi/arena';
 import {
   COLOR_ACCENT,
   COLOR_NEUTRAL,
@@ -46,10 +59,14 @@ import {
   SIZE_MEDIUM,
   SIZE_SMALL,
 } from '../abi/node';
-import { button, diffOf, h, text, viewOf, Widget } from '../ui/tree';
+import { readUtf8 } from '../abi/utf8';
+import { button, diffOf, h, input, text, viewOf, Widget } from '../ui/tree';
 
-// The world requires both post functions on the module itself.
-export { cabi_post_changes, cabi_post_view };
+// The world requires both post functions on the module itself;
+// `host_scratch` is the core-module-ABI convention for the web host's
+// `on-text` buffer, and `cabi_realloc` is the canonical allocator the
+// wasmtime hosts' lift uses for it (see `../abi/arena`).
+export { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch };
 
 // Widget ids (the contract's identity convention).
 const BOX = 1;
@@ -60,16 +77,18 @@ const FOOTER = 5;
 const COUNT = 6;
 const ADD = 7;
 const CLEAR = 8;
+const INPUT = 9;
 
 /// One todo. `idx` is its creation index, the source of its node ids (never
-/// reused); `label` is a preset; `done` picks its column and its row's style.
+/// reused); `label` is the typed text or a preset; `done` picks its column
+/// and its row's style.
 class Todo {
   idx: i32 = 0;
   label: string = '';
   done: i32 = 0;
 }
 
-/// The labels the "add" button cycles (the contract has no text input).
+/// The labels the "add" button cycles when the input is empty.
 const PRESETS: string[] = [
   'buy milk',
   'walk the dog',
@@ -90,15 +109,20 @@ var nextIdx: i32 = 3;
 /// The next preset label for the add button; the seed consumed the first
 /// three.
 var presetIdx: i32 = 3;
+/// The input's text: the component's copy of the buffer the host reports
+/// through `on-text`; the add button consumes it (and clears the field).
+var inputText = '';
 
-/// The count, the only state-dependent leaf outside the rows. A module
-/// global, so it survives between exports; derived from the active list on
-/// every build.
+/// The count, derived from the active list on every build. A module global,
+/// so it survives between exports.
 var count = text('', COLOR_NEUTRAL, SIZE_SMALL).id(COUNT);
 count.reserve(16); // "100 left" is 8 bytes
-// The footer's buttons are static.
+// The footer's buttons are static; the input is persistent, with a 64-byte
+// label partition (see the header, *The pool*).
 var addBtn = button('add', COLOR_POSITIVE, SIZE_MEDIUM).id(ADD);
 var clearBtn = button('clear done', COLOR_NEGATIVE, SIZE_MEDIUM).id(CLEAR);
+var inputField = input('').id(INPUT);
+inputField.reserve(64);
 
 /// Seed the lists once: the first three presets, the last one done, added
 /// in index order (so the newest, 1, sits at the front of the active list).
@@ -167,11 +191,12 @@ function withFront(list: Todo[], t: Todo): Todo[] {
   return out;
 }
 
-/// The todo list's whole UI, nested: the structure is rebuilt, the count
-/// and the footer's buttons are the persistent leaves. The columns' rows are
-/// a child of each (a dynamic list the factory splices in).
+/// The todo list's whole UI, nested: the structure is rebuilt, the count,
+/// the input, and the footer's buttons are the persistent leaves. The
+/// columns' rows are a child of each (a dynamic list the factory splices in).
 function tree(): Widget {
   applyCount(active.length);
+  inputField.label(inputText);
   return (
     <column id={BOX}>
       <text id={HEADER} label="todos" color={COLOR_ACCENT} size={SIZE_LARGE} />
@@ -179,6 +204,7 @@ function tree(): Widget {
       <column id={DONE_COL}>{rows(done)}</column>
       <row id={FOOTER}>
         {count}
+        {inputField}
         {addBtn}
         {clearBtn}
       </row>
@@ -203,12 +229,18 @@ export function changes(): i32 {
 export function onclick(id: i32): void {
   // → `on-click` after the export rename
   if (id == ADD) {
-    // The next preset, newest first.
+    // The input's text if the user typed any, else the next preset; newest
+    // first.
     const t = new Todo();
     t.idx = nextIdx;
     nextIdx += 1;
-    t.label = PRESETS[presetIdx];
-    presetIdx = (presetIdx + 1) % PRESETS.length;
+    if (inputText.length != 0) {
+      t.label = inputText;
+      inputText = '';
+    } else {
+      t.label = PRESETS[presetIdx];
+      presetIdx = (presetIdx + 1) % PRESETS.length;
+    }
     active = withFront(active, t);
     return;
   }
@@ -256,6 +288,14 @@ export function onclick(id: i32): void {
     done = withFront(done, t);
   } else {
     active = withFront(active, t);
+  }
+}
+
+// → `on-text` after the export rename. The host's whole current buffer; the
+// component is the source of truth for the field.
+export function ontext(id: i32, ptr: i32, len: i32): void {
+  if (id == INPUT) {
+    inputText = readUtf8(ptr, len);
   }
 }
 

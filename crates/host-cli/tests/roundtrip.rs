@@ -1,9 +1,10 @@
 //! Headless contract test: drive the counter, the stopwatch, and the todo
 //! through the same wasmtime host code the real hosts use, and assert on the
 //! flat node list `view()` returns, its style, the diff channel (the todo's
-//! is structural: add, remove, re-parent), and the refresh request
-//! (`schedule`: a 250ms period while the stopwatch runs, 0 while it pauses;
-//! the counter and the todo never call it).
+//! is structural: add, remove, re-parent), the text event (the todo's
+//! input), and the refresh request (`schedule`: a 250ms period while the
+//! stopwatch runs, 0 while it pauses; the counter and the todo never call
+//! it).
 //!
 //! Each scenario runs against both producer languages: the Rust component
 //! (cargo + wit-bindgen) and its AssemblyScript one (asc + the hand-rolled
@@ -187,6 +188,7 @@ fn build_component_as(demo: &str) {
             core.to_str().unwrap(),
             renamed.to_str().unwrap(),
             "onclick=on-click",
+            "ontext=on-text",
             "ontick=on-tick",
         ]);
         steps.push(c);
@@ -241,6 +243,7 @@ fn node_id(node: &waui::ui::widget::Node) -> Option<u32> {
     match node {
         waui::ui::widget::Node::Text(t) => t.id,
         waui::ui::widget::Node::Button(b) => b.id,
+        waui::ui::widget::Node::Input(i) => i.id,
         waui::ui::widget::Node::Container(c) => c.id,
     }
 }
@@ -257,8 +260,20 @@ fn text_with_id(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&str> {
         })
 }
 
-/// Find a node by id and return its semantic style (text and button nodes
-/// carry one; containers do not).
+/// Find a node by id and return the content of an input node (if that's what
+/// it is).
+fn input_with_id(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&str> {
+    nodes
+        .iter()
+        .find(|n| node_id(n) == Some(id))
+        .and_then(|n| match n {
+            waui::ui::widget::Node::Input(i) => Some(i.content.as_str()),
+            _ => None,
+        })
+}
+
+/// Find a node by id and return its semantic style (text, button, and input
+/// nodes carry one; containers do not).
 fn style_of(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&waui::ui::widget::Style> {
     nodes
         .iter()
@@ -266,6 +281,7 @@ fn style_of(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&waui::ui::widg
         .and_then(|n| match n {
             waui::ui::widget::Node::Text(t) => Some(&t.style),
             waui::ui::widget::Node::Button(b) => Some(&b.style),
+            waui::ui::widget::Node::Input(i) => Some(&i.style),
             _ => None,
         })
 }
@@ -556,6 +572,10 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
     assert_eq!(style_of(&nodes, 2).unwrap().size, Size::Large);
     assert_eq!(text_with_id(&nodes, 6), Some("2 left"));
     assert_eq!(style_of(&nodes, 6).unwrap().size, Size::Small);
+    // The input: empty, the host's default color, the row's size.
+    assert_eq!(input_with_id(&nodes, 9), Some(""));
+    assert_eq!(style_of(&nodes, 9).unwrap().color, Color::Neutral);
+    assert_eq!(style_of(&nodes, 9).unwrap().size, Size::Medium);
     // The rows: the moved-to-done row's id is 500+4i, the active's 100+4i;
     // the children keep their ids in both columns.
     assert_eq!(text_with_id(&nodes, 106), Some("walk the dog"));
@@ -565,19 +585,31 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
     assert_eq!(style_of(&nodes, 110).unwrap().color, Color::Warning);
     assert_eq!(style_of(&nodes, 109).unwrap().color, Color::Positive);
     assert_eq!(style_of(&nodes, 111).unwrap().color, Color::Negative);
-    assert_eq!(nodes.len(), 20, "the seeded tree has 20 id'd nodes");
+    assert_eq!(nodes.len(), 21, "the seeded tree has 21 id'd nodes");
 
-    // Add: five mutations — the new row and its three children, plus the
-    // count. The row lands at the top of the active column.
+    // Type: the host reports the whole buffer; the component stores it, and
+    // the diff reports the input's content.
+    app.call_on_text(&mut *store, 9, "buy coffee")
+        .expect("on-text failed");
+    let mutations = app.call_changes(&mut *store).expect("changes failed");
+    assert_eq!(
+        mutations.iter().map(mutation_id).collect::<Vec<_>>(),
+        vec![9],
+        "on-text: the input's content only"
+    );
+
+    // Add: the typed entry becomes the new todo; the field clears. Six
+    // mutations — the new row and its three children, the count, the input.
     app.call_on_click(&mut *store, 7).expect("on-click failed");
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
         mutations.iter().map(mutation_id).collect::<Vec<_>>(),
-        vec![112, 113, 114, 115, 6],
-        "add: the new row, its children, and the count"
+        vec![112, 113, 114, 115, 6, 9],
+        "add: the new row, its children, the count, the cleared input"
     );
     let nodes = app.call_view(&mut *store).expect("view failed");
-    assert_eq!(text_with_id(&nodes, 114), Some("write code"));
+    assert_eq!(text_with_id(&nodes, 114), Some("buy coffee"));
+    assert_eq!(input_with_id(&nodes, 9), Some(""));
     assert_eq!(text_with_id(&nodes, 6), Some("3 left"));
 
     // Toggle: the row is re-added under a new id (504), its children are
@@ -618,6 +650,7 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
             Some(111),
             Some(5),
             Some(6),
+            Some(9),
             Some(7),
             Some(8)
         ],
@@ -692,6 +725,9 @@ fn mutation_summary(m: &waui::ui::widget::Mutation) -> String {
                 waui::ui::widget::Node::Button(b) => {
                     format!("changed button {id} {b:?}")
                 }
+                waui::ui::widget::Node::Input(i) => {
+                    format!("changed input {id} {i:?}")
+                }
                 waui::ui::widget::Node::Container(c) => {
                     format!("changed container {id} parent {:?} {c:?}", c.parent)
                 }
@@ -707,7 +743,7 @@ fn assert_todo_bootstrap(app: &mut App, store: &mut Store<Host>) {
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
         mutations.len(),
-        20,
+        21,
         "first-ever changes() should export the whole tree: {}",
         mutations
             .iter()
