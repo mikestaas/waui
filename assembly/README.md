@@ -179,17 +179,18 @@ small amount of retained heap: constant for the counter and stopwatch, growing
 with the number of todos for the todo — all within the leak check's allowance.
 
 The scratch region is a fixed 4 KiB that neither the arena nor the pool
-allocates. Two consumers, never at once: the web host (which runs the
-pre-lift core module and has no memory of its own) writes the `on-text`
-string there directly, and the lifted component's `cabi_realloc` (the
-wasmtime hosts' lift glue) bump-allocates from it — one buffer at a time, a
-free returns the region to its base.
+allocates. `cabi_realloc` is its only consumer: the canonical ABI puts a
+`string` parameter in the callee's memory, so both hosts (the web host,
+running the pre-lift core module, and the wasmtime hosts, running the
+lifted component) bump-allocate the `on-text` buffer from it. The callee
+owns the buffer and frees it, so one buffer is live at a time and a free
+returns the region to its base.
 
 ## The ABI layer (`abi/`)
 
 | file        | what it is                                                                                                                                     |
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it) + `host_scratch` (the scratch region's base) + `cabi_realloc` (a bump allocator over it) |
+| `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it) + `cabi_realloc` (a bump allocator over the top-4 KiB scratch region) |
 | `utf8.ts`   | `writeUtf8` (surrogate pairs; stops at a whole character at the `end` bound), `readUtf8` (a UTF-8 byte run into an AS string; stops at a whole character), and `writeInt32`/`writeInt64` (a number that would not fit whole is not written) |
 | `node.ts`   | emitters for the ABI encodings: the 32-byte `node` record (text/button/input/container), the 36-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
 | `root.ts`   | the world's import side: `now` and `schedule` as `@external('$root', ...)`                                                                        |

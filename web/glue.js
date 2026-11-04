@@ -18,15 +18,14 @@
 //   on-text(id: u32, text)   : `on-text(i32, i32, i32)` — the id, then the
 //                              string's pointer + length, in the *guest's*
 //                              memory (the canonical ABI). The host has no
-//                              memory of its own, so `text()` writes the
-//                              buffer to `host_scratch()` first.
+//                              memory of its own, so `text()` allocates the
+//                              buffer through the guest's `cabi_realloc`
+//                              (the canonical allocator) and writes to it.
+//                              The buffer is a live allocation the callee
+//                              owns: a Rust component wraps it into a String
+//                              and frees it on drop, so it must come from the
+//                              guest's allocator, not a fixed region.
 //   on-tick()                : `on-tick()`.
-//   host_scratch() -> u32    : a convention of the core-module ABI, not
-//                              part of the WIT world: the base of a fixed
-//                              4 KiB region in the guest's memory that the
-//                              guest's allocator never touches. It is where
-//                              `text()` puts the buffer. The wasmtime hosts
-//                              marshal strings themselves and never call it.
 //   schedule(p: u64)         : `$root"."schedule"`, `(i64)` — the
 //                              component's refresh request in ms (0 = no
 //                              periodic wake). Delivered to the
@@ -98,7 +97,10 @@ export async function createApp(wasmBytes, hooks = {}) {
   const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning'];
   const SIZES = ['small', 'medium', 'large'];
   const enc = new TextEncoder();
-  // The scratch region's capacity (see `host_scratch` above).
+  // The AssemblyScript scratch region's capacity (the top 4 KiB of page 0,
+  // a bump allocator through `cabi_realloc`). `text()` clamps an over-long
+  // buffer to it so the AssemblyScript demo (bounded region) and the Rust
+  // demo (unbounded heap) stay byte-parity.
   const SCRATCH_CAP = 4096;
 
   // Decode one 32-byte node record at byte offset `o`.
@@ -163,19 +165,31 @@ export async function createApp(wasmBytes, hooks = {}) {
     tick: () => ex['on-tick'](),
 
     /// The world's `on-text` export: the input with `id` now holds `text`
-    /// (the host's whole current buffer). The canonical ABI wants the
-    /// string in the guest's memory, so the buffer is written to the
-    /// guest's scratch region first. An over-long buffer is clamped to the
-    /// region, at a UTF-8 character boundary.
+    /// (the host's whole current buffer). The canonical ABI wants the string
+    /// in the guest's memory, so the buffer is allocated through the guest's
+    /// `cabi_realloc` (the canonical allocator) and written there. The buffer
+    /// is a live allocation the callee owns — a Rust component wraps it into
+    /// a String and frees it on drop — so it must come from the guest's
+    /// allocator, not a fixed region. An over-long buffer is clamped to the
+    /// AssemblyScript scratch region's 4 KiB, at a UTF-8 character boundary,
+    /// so the two demos stay byte-parity (the Rust heap is unbounded).
     text: (id, text) => {
-      const base = ex.host_scratch();
-      const u8 = new Uint8Array(mem());
       let s = text;
       for (;;) {
         const bytes = enc.encode(s);
         if (bytes.length <= SCRATCH_CAP) {
-          u8.set(bytes, base);
-          ex['on-text'](id, base, bytes.length);
+          if (bytes.length === 0) {
+            // An empty buffer needs no allocation: (0, 0) is a null,
+            // zero-length string the callee can wrap or read safely.
+            ex['on-text'](id, 0, 0);
+            return;
+          }
+          const ptr = ex.cabi_realloc(0, 0, bytes.length, 1);
+          // The allocation may have grown the guest's memory, detaching the
+          // previous ArrayBuffer: build the view after it.
+          const u8 = new Uint8Array(mem());
+          u8.set(bytes, ptr);
+          ex['on-text'](id, ptr, bytes.length);
           return;
         }
         // Drop the last code point (a surrogate pair, if any).

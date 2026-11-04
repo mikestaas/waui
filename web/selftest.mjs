@@ -195,9 +195,15 @@ function mutation(m) {
     'button{id:8,parent:5,label:"clear done",style:negative:medium}',
   ]);
 
-  // Type: the host reports the whole buffer through on-text; the component
-  // stores it and re-derives the field's content — one mutation.
-  app.text(9, 'buy coffee');
+  // Type one char at a time: the host reports the whole buffer on each
+  // keystroke, so each is a fresh buffer the guest owns, and the previous
+  // one is freed as the new is stored. The field's content re-derives — one
+  // mutation for the whole edit.
+  let buf = '';
+  for (const ch of 'buy coffee') {
+    buf += ch;
+    app.text(9, buf);
+  }
   assert.deepEqual(app.changes().map(mutation), [
     'changed input{id:9,parent:5,content:"buy coffee",style:neutral:medium}',
   ]);

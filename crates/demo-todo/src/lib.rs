@@ -294,7 +294,9 @@ impl Guest for TodoList {
 
     // The input (9): the host's whole current buffer. The component is the
     // source of truth for the field, so it stores the text verbatim; the
-    // input node's content re-derives from it on the next export.
+    // input node's content re-derives from it on the next export. `text` is
+    // a string parameter the callee owns, allocated through the guest's
+    // `cabi_realloc`, so the `String`'s drop is a valid free.
     fn on_text(id: u32, text: String) {
         if id == 9 {
             *INPUT.lock().unwrap() = text;
@@ -305,17 +307,3 @@ impl Guest for TodoList {
 }
 
 export!(TodoList);
-
-/// A fixed region of the module's linear memory that the allocator never
-/// touches: the web host (which runs the pre-lift core module and has no
-/// memory of its own) writes the input text here before calling `on-text`.
-/// The canonical ABI passes a string as a pointer + length in the callee's
-/// memory, so the host needs somewhere in the guest to put it. Not part of
-/// the WIT world; a convention of the core-module ABI (see `web/glue.js`).
-/// The wasmtime hosts marshal strings themselves and never call this.
-static HOST_SCRATCH: [u8; 4096] = [0; 4096];
-
-#[no_mangle]
-pub extern "C" fn host_scratch() -> u32 {
-    HOST_SCRATCH.as_ptr() as u32
-}

@@ -20,7 +20,7 @@
 // are renamed to the world's hyphenated names after compilation (see
 // `../rename-exports.mjs`).
 
-import { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch } from '../abi/arena';
+import { cabi_post_changes, cabi_post_view, cabi_realloc } from '../abi/arena';
 import {
   COLOR_ACCENT,
   COLOR_NEUTRAL,
@@ -32,11 +32,10 @@ import {
 import { now, schedule } from '../abi/root';
 import { Widget, button, diffOf, h, text, viewOf } from '../ui/tree';
 
-// The world requires both post functions on the module itself;
-// `host_scratch` is the core-module-ABI convention for the web host's
-// `on-text` buffer, and `cabi_realloc` is the canonical allocator the
-// wasmtime hosts' lift uses for it (see `../abi/arena`).
-export { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch };
+// The world requires both post functions on the module itself, and
+// `cabi_realloc` is the canonical allocator both hosts use for the `on-text`
+// string buffer (see `../abi/arena`).
+export { cabi_post_changes, cabi_post_view, cabi_realloc };
 
 // Widget ids (the contract's identity convention).
 const BOX = 1;
@@ -128,4 +127,8 @@ export function ontick(): void {}
 
 // → `on-text` after the export rename. The stopwatch has no input, so the
 // host's buffer is ignored (the export is required on every component).
-export function ontext(_id: i32, _ptr: i32, _len: i32): void {}
+export function ontext(_id: i32, _ptr: i32, _len: i32): void {
+  // The buffer is a string parameter the callee owns; free it so the scratch
+  // region returns to its base (the Rust twin drops its String).
+  cabi_realloc(_ptr, _len, 0, 1);
+}

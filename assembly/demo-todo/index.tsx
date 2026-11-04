@@ -48,7 +48,7 @@
 // the world's hyphenated names after compilation (see
 // `../rename-exports.mjs`).
 
-import { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch } from '../abi/arena';
+import { cabi_post_changes, cabi_post_view, cabi_realloc } from '../abi/arena';
 import {
   COLOR_ACCENT,
   COLOR_NEUTRAL,
@@ -62,11 +62,10 @@ import {
 import { readUtf8 } from '../abi/utf8';
 import { button, diffOf, h, input, text, viewOf, Widget } from '../ui/tree';
 
-// The world requires both post functions on the module itself;
-// `host_scratch` is the core-module-ABI convention for the web host's
-// `on-text` buffer, and `cabi_realloc` is the canonical allocator the
-// wasmtime hosts' lift uses for it (see `../abi/arena`).
-export { cabi_post_changes, cabi_post_view, cabi_realloc, host_scratch };
+// The world requires both post functions on the module itself, and
+// `cabi_realloc` is the canonical allocator both hosts use for the `on-text`
+// string buffer (see `../abi/arena`).
+export { cabi_post_changes, cabi_post_view, cabi_realloc };
 
 // Widget ids (the contract's identity convention).
 const BOX = 1;
@@ -297,6 +296,10 @@ export function ontext(id: i32, ptr: i32, len: i32): void {
   if (id == INPUT) {
     inputText = readUtf8(ptr, len);
   }
+  // The buffer is a string parameter the callee owns: the host allocated it
+  // through `cabi_realloc`. Freeing it returns the scratch region to its
+  // base, so the next edit fits.
+  cabi_realloc(ptr, len, 0, 1);
 }
 
 // → `on-tick` after the export rename. A todo list has no clock.

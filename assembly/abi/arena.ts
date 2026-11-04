@@ -6,7 +6,7 @@
 //                                      lists, mutation lists, itoa scratch)
 //   [RESULT_END . HOST_SCRATCH_BASE)  the `../ui/tree` label pool
 //   [HOST_SCRATCH_BASE . 64 KiB)      the host's scratch region (see
-//                                      `host_scratch` and `cabi_realloc`)
+//                                      `cabi_realloc`)
 //
 // Static data (string literals, state globals) lives from page 1 up
 // (`--memoryBase 65536`), so the regions cannot collide.
@@ -25,18 +25,6 @@ export const HOST_SCRATCH_BASE = 60 * 1024;
 /// The scratch region's capacity in bytes.
 export const HOST_SCRATCH_CAP = 65536 - HOST_SCRATCH_BASE;
 
-/// The base of the host's scratch region: a fixed 4 KiB of page 0 that
-/// neither the arena nor the label pool ever allocates. The web host —
-/// which runs the pre-lift core module and has no memory of its own —
-/// writes an `on-text` string here before calling the export (the canonical
-/// ABI wants the string in the guest's memory). Not part of the WIT world;
-/// a convention of the core-module ABI (see `web/glue.js`). The wasmtime
-/// hosts run the lifted component, whose lift glue allocates the same region
-/// through `cabi_realloc` instead, and never call this.
-export function host_scratch(): i32 {
-  return HOST_SCRATCH_BASE;
-}
-
 // The bump cursor of the scratch region (see `cabi_realloc`).
 var reallocCur: i32 = HOST_SCRATCH_BASE;
 
@@ -46,15 +34,15 @@ function roundUp(n: i32, align: i32): i32 {
 }
 
 /// The canonical ABI's `cabi_realloc`: a buffer in the module's own memory,
-/// for a string parameter. The wasmtime hosts run the lifted component, and
-/// its lift glue allocates the `on-text` string through this (the canonical
-/// ABI wants a parameter string in the callee's memory). The web host runs
-/// the pre-lift module and never calls it (it writes to the region directly,
-/// see `host_scratch`).
+/// for a string parameter. The canonical ABI wants a parameter string in the
+/// callee's memory, so both hosts allocate the `on-text` buffer through this:
+/// the wasmtime hosts' lift glue (the lifted component) and the web host (the
+/// pre-lift core module, which has no memory of its own). The buffer is a
+/// string *parameter*, so the callee owns it and frees it when done.
 ///
-/// The region is a bump allocator: one buffer is live at a time (the glue
-/// allocates, copies, calls, and frees), so a free returns the region to its
-/// base. A buffer longer than the 4 KiB region traps.
+/// The region is a bump allocator: one buffer is live at a time (the host
+/// allocates, the callee frees), so a free returns the region to its base. A
+/// buffer longer than the 4 KiB region traps.
 export function cabi_realloc(oldPtr: i32, oldLen: i32, newLen: i32, align: i32): i32 {
   const base = HOST_SCRATCH_BASE;
   const end = base + HOST_SCRATCH_CAP;

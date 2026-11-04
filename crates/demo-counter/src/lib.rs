@@ -137,23 +137,11 @@ impl Guest for Counter {
 
     // The world's text-input channel: the counter has no input, so the
     // host's buffer is ignored (the export is required on every component).
+    // The buffer is a string parameter the callee owns; the `String`'s drop
+    // frees it (it came through the guest's `cabi_realloc`).
     fn on_text(_id: u32, _text: String) {}
 
     fn on_tick() {}
 }
 
 export!(Counter);
-
-/// A fixed region of the module's linear memory that the allocator never
-/// touches: the web host (which runs the pre-lift core module and has no
-/// memory of its own) writes the input text here before calling `on-text`.
-/// The canonical ABI passes a string as a pointer + length in the callee's
-/// memory, so the host needs somewhere in the guest to put it. Not part of
-/// the WIT world; a convention of the core-module ABI (see `web/glue.js`).
-/// The wasmtime hosts marshal strings themselves and never call this.
-static HOST_SCRATCH: [u8; 4096] = [0; 4096];
-
-#[no_mangle]
-pub extern "C" fn host_scratch() -> u32 {
-    HOST_SCRATCH.as_ptr() as u32
-}
