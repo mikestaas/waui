@@ -149,7 +149,8 @@ Behavior:
   AS twin of the Rust `component-ui`'s retained `LAST_EXPORTED`). The last
   export is kept as a flat list of records; `changes` calls `diffOf(root)`,
   which reports every id'd node whose record — kind, parent, label, style, or
-  direction — differs from it as `changed` (in depth-first pre-order), and
+  direction — differs from it as `changed` (in depth-first pre-order, each carrying the
+   node's index among its parent's children), and
   every id it no longer contains as `removed` (in the last export's
   pre-order). `viewOf` records the full snapshot as the next reference, so a
   diff after a view sees nothing. Before the first export, `diffOf` reports
@@ -192,7 +193,7 @@ returns the region to its base.
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it) + `cabi_realloc` (a bump allocator over the top-4 KiB scratch region) |
 | `utf8.ts`   | `writeUtf8` (surrogate pairs; stops at a whole character at the `end` bound), `readUtf8` (a UTF-8 byte run into an AS string; stops at a whole character), and `writeInt32`/`writeInt64` (a number that would not fit whole is not written) |
-| `node.ts`   | emitters for the ABI encodings: the 32-byte `node` record (text/button/input/container), the 36-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
+| `node.ts`   | emitters for the ABI encodings: the 32-byte `node` record (text/button/input/container), the 40-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
 | `root.ts`   | the world's import side: `now` and `schedule` as `@external('$root', ...)`                                                                        |
 
 AS strings are UTF-16; the ABI's are UTF-8 bytes, converted at write time.
@@ -215,7 +216,7 @@ it.
   its whole subtree forever, so the structure stays local to the call.
 - **Precedence is JavaScript's**: `!=` binds tighter than `&` (so
   `d & BIT != 0` tests the constant — parenthesize), and `<` binds tighter
-  than `?:` (so an unparenthesized `… != 0 ? 36 : 32` parses as a ternary *as*
+  than `?:` (so an unparenthesized `… != 0 ? 40 : 32` parses as a ternary *as*
   the condition, which never terminates a loop). Compute such values into
   locals first, as `lower` does.
 - **String `==` compares contents** (unlike JavaScript's reference semantics

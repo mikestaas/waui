@@ -105,21 +105,33 @@ interface widget {
     input(input),
   }
 
+  /// The `changed` mutation's payload: the node, plus its `index` — the
+  /// node's 0-based position among its parent's children in the component's
+  /// tree (0 for a root). The host places a new or re-parented node at that
+  /// index among the parent's children; a node keeping its parent is
+  /// replaced in place and the index is ignored.
+  record changed {
+    node: node,
+    index: u32,
+  }
+
   /// One entry of a `changes` diff (see the `app` world): what is new for
   /// the host since it last saw the tree.
   ///
-  /// A `changed` node is keyed by its `id`: with the same parent as the
-  /// retained copy, the host replaces it in place; if the component
-  /// re-parents it (same id, new parent), the host moves it just after the
-  /// new parent (past any of its own descendants still in the list). A
-  /// `removed` id deletes a node — and, if it is a container, the whole
-  /// subtree under it. Deeper restructuring is composed from these: a
-  /// component that moves a container should remove the subtree and re-add
-  /// it, since the flat pre-order list gives each retained node a stable
-  /// home. A `changed` mutation for an id-less node is unaddressable (see
-  /// the identity note above): hosts may ignore it.
+  /// A `changed` mutation carries the node and its index. With the same
+  /// parent as the retained copy, the host replaces the node in place (the
+  /// index is ignored); if the host has never seen the node, or the
+  /// component re-parents it (same id, new parent), the host places it at
+  /// that index among the new parent's children (clamped to the parent's
+  /// current children: 0 is the front, the newest-first slot). A `removed`
+  /// id deletes a node — and, if it is a container, the whole subtree under
+  /// it. Deeper restructuring is composed from these: a component that moves
+  /// a container should remove the subtree and re-add it, since the flat
+  /// pre-order list gives each retained node a stable home. A `changed`
+  /// mutation for an id-less node is unaddressable (see the identity note
+  /// above): hosts may ignore it.
   variant mutation {
-    changed(node),
+    changed(changed),
     removed(u32),
   }
 }

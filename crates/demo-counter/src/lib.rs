@@ -115,8 +115,11 @@ impl Guest for Counter {
         // Bootstrap, a value change, a removal: `component-ui`'s diff
         // against its retained last export.
         component_ui::diff(&tree(VALUE.load(Ordering::Relaxed)), |c| match c {
-            component_ui::DiffNode::Changed(node, parent) => {
-                Mutation::Changed(to_node(node, parent))
+            component_ui::DiffNode::Changed(node, parent, index) => {
+                Mutation::Changed(wit::Changed {
+                    node: to_node(node, parent),
+                    index,
+                })
             }
             component_ui::DiffNode::Removed(id) => Mutation::Removed(id),
         })

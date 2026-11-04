@@ -435,14 +435,14 @@ function countRemoved(last: FlatRec[], newRecs: FlatRec[]): i32 {
 }
 
 /// Emit one record for `w` at `buf + off * stride`. With `isMutation`, the
-/// record is a 36-byte `changed` mutation (the tag word in front of the
-/// 32-byte node). Returns the next offset; stops at the arena's cap rather
+/// record is a 40-byte `changed` mutation (the tag word, the 32-byte node,
+/// and the index). Returns the next offset; stops at the arena's cap rather
 /// than walk into the label pool.
-function emitNode(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32 {
+function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMutation: i32): i32 {
   // Computed first: AS (like JS) binds `<` tighter than `?:`, so an
-  // unparenthesized `buf + off * isMutation != 0 ? 36 : 32` would parse as
+  // unparenthesized `buf + off * isMutation != 0 ? 40 : 32` would parse as
   // a ternary *as* the comparison.
-  const stride = isMutation != 0 ? 36 : 32;
+  const stride = isMutation != 0 ? 40 : 32;
   const rec = buf + off * stride;
   if (rec + stride > RESULT_END) return off;
   materializeLabel(w);
@@ -463,28 +463,33 @@ function emitNode(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): 
   } else {
     emitContainer(node, id, parent, w.direction);
   }
+  // The `changed` mutation's index (the node's 0-based position among its
+  // parent's children) sits after the 32-byte node; a plain node has none.
+  if (isMutation != 0) store<i32>(rec + 36, index);
   return off + 1;
 }
 
 /// Emit `w` and its descendants in depth-first pre-order (see `emitNode`).
-/// Returns the next offset.
-function lower(w: Widget, parent: i32, buf: i32, off: i32, isMutation: i32): i32 {
+/// `index` is `w`'s 0-based position among its parent's children. Returns
+/// the next offset.
+function lower(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMutation: i32): i32 {
   const id = w._id;
-  let next = emitNode(w, parent, buf, off, isMutation);
+  let next = emitNode(w, parent, index, buf, off, isMutation);
   const c = w.children;
   for (let i = 0; i < c.length; i++) {
-    next = lower(c[i], id, buf, next, isMutation);
+    next = lower(c[i], id, i, buf, next, isMutation);
   }
   return next;
 }
 
 /// Emit the `changed` nodes of a tree in depth-first pre-order, each with the
-/// parent from the structure. Non-changed nodes are skipped but descended
-/// into: a changed child sits under its unchanged parent. Returns the next
-/// offset.
+/// parent and index from the structure. Non-changed nodes are skipped but
+/// descended into: a changed child sits under its unchanged parent. Returns
+/// the next offset.
 function lowerChanged(
   w: Widget,
   parent: i32,
+  index: i32,
   buf: i32,
   off: i32,
   first: i32,
@@ -492,12 +497,12 @@ function lowerChanged(
 ): i32 {
   let next = off;
   if (isChanged(w, parent, first, last) != 0) {
-    next = emitNode(w, parent, buf, off, 1);
+    next = emitNode(w, parent, index, buf, off, 1);
   }
   const id = w._id;
   const c = w.children;
   for (let i = 0; i < c.length; i++) {
-    next = lowerChanged(c[i], id, buf, next, first, last);
+    next = lowerChanged(c[i], id, i, buf, next, first, last);
   }
   return next;
 }
@@ -510,7 +515,7 @@ function lowerRemoved(last: FlatRec[], newRecs: FlatRec[], buf: i32, off: i32): 
     const id = last[i]._id;
     if (id == 0) continue; // id-less: never removed
     if (presentIn(newRecs, id) == 0) {
-      emitRemoved(buf + next * 36, id);
+      emitRemoved(buf + next * 40, id);
       next += 1;
     }
   }
@@ -528,7 +533,7 @@ export function viewOf(root: Widget): i32 {
   lastExport = recs;
   const n = count(root);
   const buf = arenaAlloc(n * 32);
-  lower(root, 0, buf, 0, 0);
+  lower(root, 0, 0, buf, 0, 0);
   return makeList(buf, n);
 }
 
@@ -552,8 +557,8 @@ export function diffOf(root: Widget): i32 {
   lastExport = newRecs; // the new tree is the next reference
 
   if (n == 0) return makeList(0, 0); // an empty list's ptr is 0
-  const buf = arenaAlloc(n * 36);
-  let off = lowerChanged(root, 0, buf, 0, first, last);
+  const buf = arenaAlloc(n * 40);
+  let off = lowerChanged(root, 0, 0, buf, 0, first, last);
   if (first == 0) {
     lowerRemoved(last, newRecs, buf, off);
   }

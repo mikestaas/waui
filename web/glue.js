@@ -11,7 +11,7 @@
 //                              nodes. The result is guest-allocated and
 //                              must be returned to the guest with
 //                              `cabi_post_view(desc)`.
-//   changes() -> list<mut.>  : same shape; the items are 36-byte
+//   changes() -> list<mut.>  : same shape; the items are 40-byte
 //                              mutations and the buffer is returned with
 //                              `cabi_post_changes(desc)`.
 //   on-click(id: u32)        : `on-click(i32)` — passes directly.
@@ -55,12 +55,14 @@
 //                   1 = medium, 2 = large)
 //   bytes [30..32]  padding
 //
-// The 36-byte mutation (a variant with a node- or u32-sized payload):
+// The 40-byte mutation (a variant with a record- or u32-sized payload):
 //   bytes [0]       tag: 0 = changed, 1 = removed (one byte, like the node
 //                   tag — the canonical ABI sizes a variant's discriminant
 //                   to the case count: u8 for 256 or fewer cases)
 //   bytes [1..4]    padding
-//   changed   : the 32-byte node above, starting at byte 4
+//   changed   : the 32-byte node above at byte 4, then the node's index
+//               (a u32, its 0-based position among its parent's children)
+//               at byte 36
 //   removed   : the node id, u32 at byte 4
 //
 // The tag is read as a single byte, not a word: the padding bytes are not
@@ -151,14 +153,18 @@ export async function createApp(wasmBytes, hooks = {}) {
     view: () => readList(ex.view, ex.cabi_post_view, 32, decodeNode),
 
     /// Decode `changes()`'s result into a list of mutation objects:
-    /// { kind: 'changed', node } or { kind: 'removed', id }.
+    /// { kind: 'changed', node, index } or { kind: 'removed', id }.
     changes: () =>
-      readList(ex.changes, ex.cabi_post_changes, 36, (i32, u8, o) => {
+      readList(ex.changes, ex.cabi_post_changes, 40, (i32, u8, o) => {
         // The tag is one byte (see the layout note above); the padding after
         // it is unwritten, so it must not be read as part of the tag.
         return u8[o] === 1
           ? { kind: 'removed', id: i32[(o + 4) >> 2] }
-          : { kind: 'changed', node: decodeNode(i32, u8, o + 4) };
+          : {
+              kind: 'changed',
+              node: decodeNode(i32, u8, o + 4),
+              index: i32[(o + 36) >> 2],
+            };
       }),
 
     click: (id) => ex['on-click'](id),

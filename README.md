@@ -10,8 +10,8 @@ component changes.
 
 - **`widget` interface** — `text`, `button`, `input`, `container`
   (row/column) records, a `node` variant (one case per record), a semantic
-  `style` (a `color` token and a `size` token), and a `mutation` variant
-  (`changed(node)` / `removed(u32)`).
+  `style` (a `color` token and a `size` token), and a `mutation` variant:
+  `changed` (the `node` and its 0-based sibling `index`) and `removed(u32)`.
   - WIT types cannot be recursive, so the tree is a **flat list of nodes in
     depth-first pre-order**; each node carries a `parent` id and hosts rebuild
     the tree from the list (Rust hosts: `host-shared`; web: `web/app.js`).

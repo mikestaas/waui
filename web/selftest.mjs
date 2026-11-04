@@ -35,7 +35,7 @@ function node(n) {
 }
 
 function mutation(m) {
-  return m.kind === 'removed' ? `removed{id:${m.id}}` : `changed ${node(m.node)}`;
+  return m.kind === 'removed' ? `removed{id:${m.id}}` : `changed ${node(m.node)} index:${m.index}`;
 }
 
 // ---------------------------------------------------------------- counter
@@ -62,7 +62,7 @@ function mutation(m) {
   app.click(2);
   assert.deepEqual(
     app.changes().map(mutation),
-    ['changed text{id:3,parent:1,content:"1",style:neutral:large}'],
+    ['changed text{id:3,parent:1,content:"1",style:neutral:large} index:1'],
     'one click should report exactly the changed readout',
   );
 
@@ -78,7 +78,7 @@ function mutation(m) {
   app.click(4);
   app.click(4);
   assert.deepEqual(app.changes().map(mutation), [
-    'changed text{id:3,parent:1,content:"-1",style:negative:large}',
+    'changed text{id:3,parent:1,content:"-1",style:negative:large} index:1',
   ]);
   expect([
     'container{id:1,parent:null,dir:column}',
@@ -123,8 +123,8 @@ function mutation(m) {
   app.click(3);
   let muts = app.changes().map(mutation);
   assert.equal(muts.length, 2);
-  assert.match(muts[0], /^changed text\{.*content:"\d+ ms",style:accent:large\}$/);
-  assert.equal(muts[1], 'changed button{id:3,parent:1,label:"pause",style:warning:medium}');
+  assert.match(muts[0], /^changed text\{.*content:"\d+ ms",style:accent:large\} index:0$/);
+  assert.equal(muts[1], 'changed button{id:3,parent:1,label:"pause",style:warning:medium} index:1');
 
   // Let real time pass, tick: while running, only the readout changes.
   await new Promise((r) => setTimeout(r, 400));
@@ -134,13 +134,17 @@ function mutation(m) {
   const ms = Number(muts[0].match(/content:"(-?\d+) ms"/)[1]);
   assert.ok(ms >= 200 && ms < 2000, `unexpected elapsed time: ${ms} ms`);
   assert.match(muts[0], /style:accent:large/);
+  assert.match(muts[0], /index:0$/);
 
   // Pause: the readout and the button change again...
   app.click(3);
   muts = app.changes().map(mutation);
   assert.equal(muts.length, 2);
-  assert.match(muts[0], /^changed text\{.*content:"\d+ ms",style:neutral:large\}$/);
-  assert.equal(muts[1], 'changed button{id:3,parent:1,label:"start",style:positive:medium}');
+  assert.match(muts[0], /^changed text\{.*content:"\d+ ms",style:neutral:large\} index:0$/);
+  assert.equal(
+    muts[1],
+    'changed button{id:3,parent:1,label:"start",style:positive:medium} index:1',
+  );
 
   // ...and a further tick while paused reports an *empty* diff: the
   // paused stopwatch generates zero diff traffic.
@@ -205,19 +209,19 @@ function mutation(m) {
     app.text(9, buf);
   }
   assert.deepEqual(app.changes().map(mutation), [
-    'changed input{id:9,parent:5,content:"buy coffee",style:neutral:medium}',
+    'changed input{id:9,parent:5,content:"buy coffee",style:neutral:medium} index:1',
   ]);
 
   // Add with the typed text: the new row and its three children, the count,
   // and the cleared field. The row lands at the top of the active column.
   app.click(7);
   assert.deepEqual(app.changes().map(mutation), [
-    'changed container{id:112,parent:3,dir:row}',
-    'changed button{id:113,parent:112,label:"○",style:neutral:medium}',
-    'changed text{id:114,parent:112,content:"buy coffee",style:neutral:medium}',
-    'changed button{id:115,parent:112,label:"✕",style:negative:medium}',
-    'changed text{id:6,parent:5,content:"3 left",style:neutral:small}',
-    'changed input{id:9,parent:5,content:"",style:neutral:medium}',
+    'changed container{id:112,parent:3,dir:row} index:0',
+    'changed button{id:113,parent:112,label:"○",style:neutral:medium} index:0',
+    'changed text{id:114,parent:112,content:"buy coffee",style:neutral:medium} index:1',
+    'changed button{id:115,parent:112,label:"✕",style:negative:medium} index:2',
+    'changed text{id:6,parent:5,content:"3 left",style:neutral:small} index:0',
+    'changed input{id:9,parent:5,content:"",style:neutral:medium} index:1',
   ]);
 
   // Toggle: the row is re-added under a new id (504), its children are
@@ -225,11 +229,11 @@ function mutation(m) {
   // removed. Six mutations.
   app.click(105);
   assert.deepEqual(app.changes().map(mutation), [
-    'changed container{id:504,parent:4,dir:row}',
-    'changed button{id:105,parent:504,label:"✓",style:positive:medium}',
-    'changed text{id:106,parent:504,content:"walk the dog",style:warning:medium}',
-    'changed button{id:107,parent:504,label:"✕",style:negative:medium}',
-    'changed text{id:6,parent:5,content:"2 left",style:neutral:small}',
+    'changed container{id:504,parent:4,dir:row} index:0',
+    'changed button{id:105,parent:504,label:"✓",style:positive:medium} index:0',
+    'changed text{id:106,parent:504,content:"walk the dog",style:warning:medium} index:1',
+    'changed button{id:107,parent:504,label:"✕",style:negative:medium} index:2',
+    'changed text{id:6,parent:5,content:"2 left",style:neutral:small} index:0',
     'removed{id:104}',
   ]);
 
@@ -266,7 +270,7 @@ function mutation(m) {
   // Delete: the count, then the row and its children. Five mutations.
   app.click(103);
   assert.deepEqual(app.changes().map(mutation), [
-    'changed text{id:6,parent:5,content:"1 left",style:neutral:small}',
+    'changed text{id:6,parent:5,content:"1 left",style:neutral:small} index:0',
     'removed{id:100}',
     'removed{id:101}',
     'removed{id:102}',

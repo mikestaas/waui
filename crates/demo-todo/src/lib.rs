@@ -21,9 +21,9 @@
 //! container would leave them behind); the children's ids do not, so a move
 //! re-parents them — same id, new parent. The footer's input is 9.
 //!
-//! **The order.** Both columns are newest-first: the host inserts a new or
-//! moved node just after its parent, the top of the column, so the component
-//! keeps that order and `view()` and the retained list agree.
+//! **The order.** Both columns are newest-first: the component keeps that
+//! order and the host places a new or moved node at its index among the
+//! parent's children, so `view()` and the retained list agree.
 //!
 //! It never calls `schedule` (it changes only on a click or a text edit), so
 //! the host never wakes it.
@@ -216,8 +216,11 @@ impl Guest for TodoList {
         // retained last export.
         let (active, done, input) = snapshot();
         component_ui::diff(&tree(&active, &done, &input), |c| match c {
-            component_ui::DiffNode::Changed(node, parent) => {
-                Mutation::Changed(to_node(node, parent))
+            component_ui::DiffNode::Changed(node, parent, index) => {
+                Mutation::Changed(wit::Changed {
+                    node: to_node(node, parent),
+                    index,
+                })
             }
             component_ui::DiffNode::Removed(id) => Mutation::Removed(id),
         })

@@ -99,7 +99,8 @@ function withInput(content: string): Widget {
 
 // ------------------------------------------------------------------ decoding
 
-/// One decoded mutation: the tag, and (for `changed`) the node's fields.
+/// One decoded mutation: the tag, and (for `changed`) the node's fields and
+/// its index.
 class Mut {
   tag: i32 = -1; // MUT_CHANGED / MUT_REMOVED
   kind: i32 = -1; // node tag (`changed` only)
@@ -109,9 +110,10 @@ class Mut {
   size: i32 = -1;
   direction: i32 = -1;
   label: string = '';
+  index: i32 = -1; // sibling index (`changed` only)
 }
 
-/// Decode one 36-byte mutation record at `rec`.
+/// Decode one 40-byte mutation record at `rec`.
 function decodeMut(rec: i32): Mut {
   const m = new Mut();
   m.tag = load<i32>(rec + 0);
@@ -133,6 +135,8 @@ function decodeMut(rec: i32): Mut {
     m.size = load<i8>(n + 29);
     m.label = str != 0 ? readUtf8(str, len) : '';
   }
+  // The index sits after the 32-byte node.
+  m.index = load<i32>(rec + 36);
   return m;
 }
 
@@ -142,7 +146,7 @@ function decodeList(desc: i32): Mut[] {
   const ptr = load<i32>(desc + 0);
   const len = load<i32>(desc + 4);
   for (let i = 0; i < len; i++) {
-    out.push(decodeMut(ptr + i * 36));
+    out.push(decodeMut(ptr + i * 40));
   }
   return out;
 }
@@ -201,7 +205,16 @@ export function run(): i32 {
     const r = scenario(counter(1), (m) => {
       if (m.length != 1) return 3;
       const c = changed(m, 3);
-      if (c == null || c.label != '1' || c.color != COLOR_NEUTRAL || c.size != SIZE_LARGE) return 3;
+      // The readout is the box's second child (index 1); in place, so the
+      // host ignores the index, but the diff still carries it.
+      if (
+        c == null ||
+        c.label != '1' ||
+        c.color != COLOR_NEUTRAL ||
+        c.size != SIZE_LARGE ||
+        c.index != 1
+      )
+        return 3;
       return 0;
     });
     if (r != 0) return 3;
@@ -223,7 +236,8 @@ export function run(): i32 {
     const r = scenario(counter(1), (m) => {
       if (m.length != 1) return 5;
       const c = changed(m, 3);
-      return c != null && c.label == '1' ? 0 : 5;
+      // The readout re-appears as the box's second child (index 1).
+      return c != null && c.label == '1' && c.index == 1 ? 0 : 5;
     });
     if (r != 0) return 5;
   }
@@ -236,8 +250,11 @@ export function run(): i32 {
       if (m.length != 2) return 6;
       const rowM = changed(m, 5);
       const readM = changed(m, 3);
-      if (rowM == null || rowM.kind != TAG_CONTAINER || rowM.parent != 1) return 6;
-      if (readM == null || readM.parent != 5 || readM.label != '1') return 6;
+      // The row is the box's second child (index 1); the readout, re-parented
+      // under it, is its only child (index 0).
+      if (rowM == null || rowM.kind != TAG_CONTAINER || rowM.parent != 1 || rowM.index != 1)
+        return 6;
+      if (readM == null || readM.parent != 5 || readM.label != '1' || readM.index != 0) return 6;
       return 0;
     });
     if (r != 0) return 6;
@@ -256,7 +273,8 @@ export function run(): i32 {
     const r = scenario(spliced(3), (m) => {
       if (m.length != 1) return 8;
       const c = changed(m, 12);
-      return c != null && c.parent == 1 && c.label == 'r2' ? 0 : 8;
+      // The third row: index 2 among the column's children.
+      return c != null && c.parent == 1 && c.label == 'r2' && c.index == 2 ? 0 : 8;
     });
     if (r != 0) return 8;
   }
@@ -268,7 +286,8 @@ export function run(): i32 {
     const r = scenario(withInput('hi'), (m) => {
       if (m.length != 1) return 9;
       const c = changed(m, 3);
-      return c != null && c.kind == TAG_INPUT && c.label == 'hi' ? 0 : 9;
+      // The input is the column's only child (index 0).
+      return c != null && c.kind == TAG_INPUT && c.label == 'hi' && c.index == 0 ? 0 : 9;
     });
     if (r != 0) return 9;
   }

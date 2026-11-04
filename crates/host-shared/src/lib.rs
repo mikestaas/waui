@@ -174,7 +174,8 @@ impl Retained {
         }
         for mutation in mutations {
             match mutation {
-                Mutation::Changed(node) => {
+                Mutation::Changed(c) => {
+                    let node = &c.node;
                     // A node without an id is unaddressable (see the WIT
                     // identity note): the diff cannot name it, so skip it.
                     if node_id(node).is_none() {
@@ -183,18 +184,20 @@ impl Retained {
                     match self.nodes.iter().position(|n| node_id(n) == node_id(node)) {
                         Some(i) => {
                             if node_parent(&self.nodes[i]) == node_parent(node) {
-                                // Same parent: the node keeps its position.
+                                // Same parent: the node keeps its position
+                                // (the index is ignored).
                                 self.nodes[i] = node.clone();
                             } else {
-                                // Re-parented: move it just after the new
-                                // parent so the list stays pre-ordered.
+                                // Re-parented: move it to `index` among the
+                                // new parent's children.
                                 self.nodes.remove(i);
-                                self.insert(node.clone());
+                                self.insert(node.clone(), c.index);
                             }
                         }
                         // A node the host has never seen (added after
-                        // bootstrap): insert in its canonical position.
-                        None => self.insert(node.clone()),
+                        // bootstrap): insert at `index` among the parent's
+                        // children.
+                        None => self.insert(node.clone(), c.index),
                     }
                 }
                 Mutation::Removed(id) => self.remove_subtree(*id),
@@ -203,23 +206,49 @@ impl Retained {
         true
     }
 
-    /// Insert a node the host does not have: just after its parent (past
-    /// any of the node's own descendants still in the list, so a re-added
-    /// container lands after its children), or at the end if it is a new
-    /// root.
-    fn insert(&mut self, node: Node) {
+    /// Insert a node the host does not have at `index` among its parent's
+    /// children (0 is the front; an index past the end appends), or at the
+    /// end of the list if it is a new root. The walk skips the node's own
+    /// descendants still in the list, so a re-added container lands after
+    /// them.
+    fn insert(&mut self, node: Node, index: u32) {
         let id = node_id(&node);
-        let parent = node_parent(&node);
-        match parent.and_then(|p| self.nodes.iter().position(|n| node_id(n) == Some(p))) {
-            None => self.nodes.push(node),
-            Some(p) => {
-                let mut i = p + 1;
-                while i < self.nodes.len() && self.descendant_of(&self.nodes[i], id) {
+        // A node with no parent, or whose parent the host does not retain,
+        // cannot be placed among a parent's children: it is a new root.
+        let Some(parent) = node_parent(&node) else {
+            self.nodes.push(node);
+            return;
+        };
+        let Some(p) = self.nodes.iter().position(|n| node_id(n) == Some(parent)) else {
+            self.nodes.push(node);
+            return;
+        };
+        let mut i = p + 1;
+        let mut siblings = 0;
+        while i < self.nodes.len() {
+            let n = &self.nodes[i];
+            if self.descendant_of(n, id) {
+                i += 1; // the node's own descendant
+                continue;
+            }
+            if !self.descendant_of(n, Some(parent)) {
+                break; // past the parent's subtree
+            }
+            if node_parent(n) == Some(parent) {
+                if siblings >= index as usize {
+                    break; // before the `index`-th sibling
+                }
+                siblings += 1;
+                let child_id = node_id(n);
+                i += 1;
+                while i < self.nodes.len() && self.descendant_of(&self.nodes[i], child_id) {
                     i += 1;
                 }
-                self.nodes.insert(i, node);
+            } else {
+                i += 1; // a deeper descendant: advance
             }
         }
+        self.nodes.insert(i, node);
     }
 
     /// Remove a node and, if it is a container, its whole subtree.
@@ -261,10 +290,14 @@ mod tests {
     //! a component in sight.
 
     use super::*;
-    use waui::ui::widget::{Button, Color, Container, Direction, Size, Style, Text};
+    use waui::ui::widget::{Button, Changed, Color, Container, Direction, Size, Style, Text};
 
     fn style(color: Color, size: Size) -> Style {
         Style { color, size }
+    }
+
+    fn changed(node: Node, index: u32) -> Mutation {
+        Mutation::Changed(Changed { node, index })
     }
 
     fn cont(id: u32, parent: Option<u32>) -> Node {
@@ -311,12 +344,15 @@ mod tests {
         // A `changed` node without an id cannot be named (see the WIT
         // identity note): the host ignores it rather than guess.
         let mut r = Retained::from_view(vec![cont(1, None), text(3, Some(1), "0")]);
-        assert!(r.apply(&[Mutation::Changed(Node::Text(Text {
-            id: None,
-            parent: Some(1),
-            content: "intruder".to_string(),
-            style: style(Color::Neutral, Size::Large),
-        }))]));
+        assert!(r.apply(&[changed(
+            Node::Text(Text {
+                id: None,
+                parent: Some(1),
+                content: "intruder".to_string(),
+                style: style(Color::Neutral, Size::Large),
+            }),
+            0
+        )]));
         assert_eq!(ids(&r), vec![1, 3]);
         match &r.nodes[1] {
             Node::Text(t) => assert_eq!(t.content, "0"),
@@ -331,7 +367,7 @@ mod tests {
             text(3, Some(1), "0"),
             button(4, Some(1), "-"),
         ]);
-        assert!(r.apply(&[Mutation::Changed(text(3, Some(1), "-1"))]));
+        assert!(r.apply(&[changed(text(3, Some(1), "-1"), 0)]));
         assert_eq!(ids(&r), vec![1, 3, 4]); // position kept
         match &r.nodes[1] {
             Node::Text(t) => assert_eq!(t.content, "-1"),
@@ -362,24 +398,57 @@ mod tests {
             cont(2, None),
             text(4, Some(2), "b"),
         ]);
-        assert!(r.apply(&[Mutation::Changed(text(3, Some(2), "a"))]));
-        // Just after its new parent, before its new siblings: still
-        // pre-ordered.
+        assert!(r.apply(&[changed(text(3, Some(2), "a"), 0)]));
+        // At index 0 of its new parent's children, before its new
+        // siblings: still pre-ordered.
         assert_eq!(ids(&r), vec![1, 2, 3, 4]);
     }
 
     #[test]
-    fn apply_inserts_a_new_node_after_its_parents_subtree() {
+    fn apply_inserts_a_new_node_at_index_zero() {
         let mut r = Retained::from_view(vec![
             cont(1, None),
             text(3, Some(1), "a"),
             cont(2, Some(1)),
             text(4, Some(2), "b"),
         ]);
-        assert!(r.apply(&[Mutation::Changed(text(7, Some(1), "c"))]));
-        // A leaf lands just after its parent, before the existing
-        // children.
+        assert!(r.apply(&[changed(text(7, Some(1), "c"), 0)]));
+        // Index 0 is the front: the leaf lands before the existing
+        // children, and the walk steps over the container's subtree.
         assert_eq!(ids(&r), vec![1, 7, 3, 2, 4]);
+    }
+
+    #[test]
+    fn apply_inserts_children_in_the_emitted_order() {
+        // A batch of children emitted in pre-order must land in the
+        // component's order, not reversed at the front of the parent.
+        let mut r = Retained::from_view(vec![
+            cont(1, None),
+            text(3, Some(1), "a"),
+            button(4, Some(1), "b"),
+        ]);
+        assert!(r.apply(&[
+            changed(cont(5, Some(1)), 0),
+            changed(text(6, Some(5), "x"), 0),
+            changed(text(7, Some(5), "y"), 1),
+            changed(button(8, Some(5), "z"), 2),
+        ]));
+        assert_eq!(ids(&r), vec![1, 5, 6, 7, 8, 3, 4]);
+    }
+
+    #[test]
+    fn apply_inserts_at_a_middle_index_and_appends() {
+        let mut r = Retained::from_view(vec![
+            cont(1, None),
+            text(3, Some(1), "a"),
+            button(4, Some(1), "b"),
+        ]);
+        assert!(r.apply(&[
+            changed(text(7, Some(1), "c"), 1),
+            changed(text(8, Some(1), "d"), 3),
+        ]));
+        // 7 before the second child; 8 past the end (appended).
+        assert_eq!(ids(&r), vec![1, 3, 7, 4, 8]);
     }
 
     #[test]
@@ -392,7 +461,7 @@ mod tests {
             button(2, Some(1), "+"),
             button(4, Some(1), "-"),
         ]);
-        assert!(r.apply(&[Mutation::Changed(text(3, Some(1), "-1"))]));
+        assert!(r.apply(&[changed(text(3, Some(1), "-1"), 0)]));
         let tree = build_tree(r.nodes());
         if let Tree::Column(children) = &tree {
             // List order: the readout first, then the two buttons.

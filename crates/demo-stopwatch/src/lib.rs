@@ -140,8 +140,11 @@ impl Guest for Stopwatch {
         component_ui::diff(
             &tree(elapsed(), RUNNING.load(Ordering::Relaxed)),
             |c| match c {
-                component_ui::DiffNode::Changed(node, parent) => {
-                    Mutation::Changed(to_node(node, parent))
+                component_ui::DiffNode::Changed(node, parent, index) => {
+                    Mutation::Changed(wit::Changed {
+                        node: to_node(node, parent),
+                        index,
+                    })
                 }
                 component_ui::DiffNode::Removed(id) => Mutation::Removed(id),
             },

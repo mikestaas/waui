@@ -333,7 +333,8 @@ fn assert_counter_roundtrip(app: &mut App, store: &mut Store<Host>) {
         "one click should change exactly one node"
     );
     match &mutations[0] {
-        waui::ui::widget::Mutation::Changed(node) => {
+        waui::ui::widget::Mutation::Changed(c) => {
+            let node = &c.node;
             assert_eq!(node_id(node), Some(3));
             if let waui::ui::widget::Node::Text(t) = node {
                 assert_eq!(t.content, "-2");
@@ -371,7 +372,8 @@ fn assert_counter_roundtrip(app: &mut App, store: &mut Store<Host>) {
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(mutations.len(), 1);
     match &mutations[0] {
-        waui::ui::widget::Mutation::Changed(node) => {
+        waui::ui::widget::Mutation::Changed(c) => {
+            let node = &c.node;
             if let waui::ui::widget::Node::Text(t) = node {
                 assert_eq!(t.content, "0");
                 assert_eq!(t.style.color, Color::Neutral);
@@ -450,7 +452,8 @@ fn assert_stopwatch_roundtrip(app: &mut App, store: &mut Store<Host>) {
         "a running wake should report the readout only"
     );
     match &mutations[0] {
-        waui::ui::widget::Mutation::Changed(node) => {
+        waui::ui::widget::Mutation::Changed(c) => {
+            let node = &c.node;
             if let waui::ui::widget::Node::Text(t) = node {
                 let ms = t
                     .content
@@ -706,7 +709,8 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
 /// `removed`.
 fn mutation_id(m: &waui::ui::widget::Mutation) -> u32 {
     match m {
-        waui::ui::widget::Mutation::Changed(node) => {
+        waui::ui::widget::Mutation::Changed(c) => {
+            let node = &c.node;
             node_id(node).expect("a reported node has an id")
         }
         waui::ui::widget::Mutation::Removed(id) => *id,
@@ -716,7 +720,8 @@ fn mutation_id(m: &waui::ui::widget::Mutation) -> u32 {
 /// A one-line rendering of a mutation, for failure messages.
 fn mutation_summary(m: &waui::ui::widget::Mutation) -> String {
     match m {
-        waui::ui::widget::Mutation::Changed(node) => {
+        waui::ui::widget::Mutation::Changed(c) => {
+            let node = &c.node;
             let id = node_id(node).unwrap_or(0);
             match node {
                 waui::ui::widget::Node::Text(t) => {

@@ -286,11 +286,12 @@ impl Flat {
     }
 }
 
-/// One diff entry: a node to report `changed` (with the lowering's parent,
-/// whose record differs from the last export or which the host has never
-/// seen), or an id to report `removed`.
+/// One diff entry: a node to report `changed` (with the lowering's parent
+/// and its 0-based index among the parent's children, whose record differs
+/// from the last export or which the host has never seen), or an id to
+/// report `removed`.
 pub enum DiffNode<'a> {
-    Changed(&'a Tree, Option<u32>),
+    Changed(&'a Tree, Option<u32>, u32),
     Removed(u32),
 }
 
@@ -385,12 +386,14 @@ pub fn flat_list(tree: &Tree) -> Vec<Flat> {
 ///
 /// An id'd node is reported [`DiffNode::Changed`] when its record — content,
 /// style, direction, or parent — differs from the reference, or when the
-/// reference is `None` (bootstrap). Ids in the reference that are no longer
-/// in the tree are reported [`DiffNode::Removed`], after the `changed`
-/// nodes, in the reference's pre-order. Id-less nodes are unaddressable (the
-/// WIT's identity rule) and never reported. A sibling re-order under an
-/// unchanged parent is not expressible (a `changed` node is replaced where it
-/// stands); the WIT says: remove it and re-add it.
+/// reference is `None` (bootstrap); the entry carries the node's 0-based
+/// index among its parent's children, which the host uses to place a new or
+/// re-parented node. Ids in the reference that are no longer in the tree are
+/// reported [`DiffNode::Removed`], after the `changed` nodes, in the
+/// reference's pre-order. Id-less nodes are unaddressable (the WIT's identity
+/// rule) and never reported. A sibling re-order under an unchanged parent is
+/// not expressible (a `changed` node is replaced where it stands); the WIT
+/// says: remove it and re-add it.
 ///
 /// Returns the mutation list and the tree flattened, ready to be the next
 /// reference.
@@ -400,7 +403,7 @@ where
 {
     let new = flat_list(tree);
     let mut out = Vec::new();
-    diff_node_against(tree, None, last, &mut f, &mut out);
+    diff_node_against(tree, None, 0, last, &mut f, &mut out);
     if let Some(last) = last {
         for ref_node in last {
             let Some(id) = ref_node.id() else { continue };
@@ -414,10 +417,13 @@ where
 }
 
 /// Walk the new tree in pre-order, reporting a node whose record differs
-/// from the reference (or every id'd node when there is none).
+/// from the reference (or every id'd node when there is none). `index` is
+/// the node's 0-based position among its parent's children (0 for a root),
+/// carried in the `changed` entry for the host to place it.
 fn diff_node_against<'a, M, F>(
     node: &'a Tree,
     parent: Option<u32>,
+    index: u32,
     last: Option<&Vec<Flat>>,
     f: &mut F,
     out: &mut Vec<M>,
@@ -432,12 +438,12 @@ fn diff_node_against<'a, M, F>(
                 .any(|ref_node| ref_node.id() == Some(id) && ref_node == &flat(node, parent)),
         };
         if changed {
-            out.push(f(DiffNode::Changed(node, parent)));
+            out.push(f(DiffNode::Changed(node, parent, index)));
         }
     }
     if let Tree::Container(c) = node {
-        for child in &c.children {
-            diff_node_against(child, node.node_id(), last, f, out);
+        for (i, child) in c.children.iter().enumerate() {
+            diff_node_against(child, node.node_id(), i as u32, last, f, out);
         }
     }
 }
@@ -714,14 +720,14 @@ mod tests {
 
     #[derive(Debug, PartialEq, Eq)]
     enum M {
-        Changed(u32, Option<u32>), // id, parent
+        Changed(u32, Option<u32>, u32), // id, parent, index
         Removed(u32),
     }
 
     fn proj(d: DiffNode<'_>) -> M {
         match d {
-            DiffNode::Changed(t, p) => {
-                M::Changed(t.node_id().expect("a reported node has an id"), p)
+            DiffNode::Changed(t, p, i) => {
+                M::Changed(t.node_id().expect("a reported node has an id"), p, i)
             }
             DiffNode::Removed(i) => M::Removed(i),
         }
@@ -744,10 +750,10 @@ mod tests {
         assert_eq!(
             out,
             vec![
-                M::Changed(1, None),
-                M::Changed(2, Some(1)),
-                M::Changed(3, Some(1)),
-                M::Changed(4, Some(1)),
+                M::Changed(1, None, 0),
+                M::Changed(2, Some(1), 0),
+                M::Changed(3, Some(1), 1),
+                M::Changed(4, Some(1), 2),
             ]
         );
     }
@@ -766,7 +772,7 @@ mod tests {
     fn diff_reports_the_changed_readout_alone() {
         let last = flat_list(&counter("0", Color::Neutral));
         let (out, _) = diff_with(&counter("1", Color::Neutral), Some(&last), proj);
-        assert_eq!(out, vec![M::Changed(3, Some(1))]);
+        assert_eq!(out, vec![M::Changed(3, Some(1), 1)]);
     }
 
     #[test]
@@ -774,7 +780,7 @@ mod tests {
         let last = flat_list(&counter("0", Color::Neutral));
         // Crossing zero changes the readout's color with its content.
         let (out, _) = diff_with(&counter("-1", Color::Negative), Some(&last), proj);
-        assert_eq!(out, vec![M::Changed(3, Some(1))]);
+        assert_eq!(out, vec![M::Changed(3, Some(1), 1)]);
     }
 
     /// A todo-ish shape: a box (1) with an input (9) and an add button (7).
@@ -792,7 +798,7 @@ mod tests {
         // Typing into the input changes only the input node's record.
         let last = flat_list(&with_input(""));
         let (out, _) = diff_with(&with_input("buy milk"), Some(&last), proj);
-        assert_eq!(out, vec![M::Changed(9, Some(1))]);
+        assert_eq!(out, vec![M::Changed(9, Some(1), 0)]);
     }
 
     #[test]
@@ -828,7 +834,10 @@ mod tests {
         .id(6)])
         .id(1);
         let (out, _) = diff_with(&new, Some(&last), proj);
-        assert_eq!(out, vec![M::Changed(6, Some(1)), M::Changed(5, Some(6))]);
+        assert_eq!(
+            out,
+            vec![M::Changed(6, Some(1), 0), M::Changed(5, Some(6), 0)]
+        );
     }
 
     #[test]

@@ -56,31 +56,48 @@ function apply(mutations) {
       const i = retained.findIndex((x) => x.id === n.id);
       if (i >= 0) {
         if (retained[i].parent === n.parent) {
-          retained[i] = n; // a changed node keeps its position
+          retained[i] = n; // a changed node keeps its position (index ignored)
         } else {
-          // Re-parented: move it to its canonical position so the list
-          // stays pre-ordered.
+          // Re-parented: move it to `index` among the new parent's children.
           retained.splice(i, 1);
-          insertNode(n);
+          insertNode(n, m.index);
         }
       } else {
-        insertNode(n); // a node the host has never seen
+        insertNode(n, m.index); // a node the host has never seen
       }
     }
   }
 }
 
-// Insert a node the host does not have: just after its parent (past any
-// of its own descendants still in the list, so a re-added container lands
-// after its children), or at the end if it is a new root.
-function insertNode(n) {
+// Insert a node the host does not have at `index` among its parent's
+// children (0 is the front; an index past the end appends), or at the end
+// of the list if it is a new root. The walk skips the node's own
+// descendants still in the list, so a re-added container lands after them.
+function insertNode(n, index) {
   const p = retained.findIndex((x) => x.id === n.parent);
   if (p < 0) {
-    retained.push(n);
+    retained.push(n); // a new root
     return;
   }
   let i = p + 1;
-  while (i < retained.length && descendantOf(retained[i], n.id)) i++;
+  let siblings = 0;
+  while (i < retained.length) {
+    const x = retained[i];
+    if (descendantOf(x, n.id)) {
+      i++; // the node's own descendant
+      continue;
+    }
+    if (!descendantOf(x, n.parent)) break; // past the parent's subtree
+    if (x.parent === n.parent) {
+      if (siblings >= index) break; // before the `index`-th sibling
+      siblings++;
+      const childId = x.id;
+      i++;
+      while (i < retained.length && descendantOf(retained[i], childId)) i++;
+    } else {
+      i++; // a deeper descendant: advance
+    }
+  }
   retained.splice(i, 0, n);
 }
 
