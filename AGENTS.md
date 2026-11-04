@@ -13,6 +13,7 @@
 - No buzzwords or marketing: "powerful", "robust", "seamless", "elegantly".
 - "Not implemented" is stated as such in the README, never euphemized.
 - When in doubt, cut the sentence; a reader can ask.
+- When generating Git commits, do not include any 'Co-Authored-By' trailers or external attributions.
 
 ## Verification
 
@@ -24,9 +25,8 @@ must not be edited to fit.
 
 ## Multiple sessions
 
-- Multiple sessions run at once. A session that needs its own checkout
-  takes a git worktree, not a scratch directory: a worktree is a real
-  checkout that shares the repo's history, so `make`, the tests, and the
-  git tooling work unchanged.
+- Multiple sessions run at once. Use a git worktree, not a scratch directory:
+  a worktree is a real checkout that shares the repo's history, so `make`,
+  the tests, and the git tooling work unchanged.
 - Commit work once it is done and verified. Don't leave finished work
   uncommitted.
