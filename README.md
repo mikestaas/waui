@@ -159,3 +159,12 @@ it runs from disk with no server and no network.
 - **Images, as a WIT `resource`.** Substantial ABI work, worst on the
   hand-rolled AS side.
 - **Multi-component hosts.** Host-side only.
+
+## Known limitations
+
+- **Rust heap fragmentation under text input.** Each `on-text` and `changes`
+  round-trip allocates short-lived buffers of varying size, which fragment
+  the Rust heap (dlmalloc). The Rust web todo demo traps after a few adds.
+  The AssemblyScript demos are immune: their buffers come from bump arenas
+  that reset on free. The selftest (the byte-parity gate) stays below the
+  threshold, so it passes for both.
