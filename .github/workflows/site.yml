@@ -1,0 +1,77 @@
+# Deploys the demo site to GitHub Pages: the desktop launcher (site/) plus
+# the six self-contained demo pages, assembled by `make site` in
+# target/site/.
+#
+# Needs Pages enabled once: Settings → Pages → Source: GitHub Actions.
+
+name: Site
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Stable Rust + the wasm32 target (rust-toolchain.toml pins both).
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      # Cargo registry + target/ cache: the release wasm builds are the
+      # expensive part.
+      - uses: Swatinem/rust-cache@v2
+
+      # Node 22 for the npm toolchain (asc for the AS demos); node_modules
+      # cached on the lockfile.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+          restore-keys: ${{ runner.os }}-node-
+
+      # wabt for the AS build's env.abort patch. The web build needs no
+      # iced link set: no host binaries here.
+      - name: System packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wabt
+
+      # Prebuilt wasm-tools for the component new / component embed lifts.
+      - uses: bytecodealliance/actions/wasm-tools/setup@v1
+        with:
+          version: 1.261.0
+
+      - name: npm toolchain
+        run: npm ci
+
+      - name: Build the site
+        run: make site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

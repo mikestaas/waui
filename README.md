@@ -80,6 +80,8 @@ child the factory splices in).
 | `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame (CI) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
 | `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm)             |
+| `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the self-contained page in   |
+|                          | a small window, several at once; deployed by `.github/workflows/site.yml`                              |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests    |
 |                          | a refresh (the host never wakes it)                                                                   |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one    |
@@ -109,6 +111,7 @@ make run-todo-cli    # todo, ASCII terminal host
 make run-todo-tui    # todo, TUI host
 make run-todo-iced   # todo, window
 make web             # self-contained HTML pages in target/web/
+make site            # the demo site in target/site/ (GitHub Pages)
 make web-test        # headless (Node) check of the web host's ABI layer
 make test            # cargo test, all crates
 make fmt             # format all sources (rustfmt + prettier)
@@ -124,6 +127,17 @@ make ui-test         # the tree layer's structural diff, run via Node
 
 `make web` inlines the wasm module as base64 into one HTML file per component;
 it runs from disk with no server and no network.
+
+## GitHub Pages
+
+`make site` assembles the demo site in `target/site/`: the desktop launcher
+(`site/`) plus the six self-contained demo pages. The launcher is a desktop —
+an icon per demo, title underneath; double-clicking one opens the demo in a
+small window (an iframe over the self-contained page), and several windows may
+be open at once. It runs straight from disk (`open target/site/index.html`)
+and is deployed to GitHub Pages by `.github/workflows/site.yml` on every push
+to main. Enabling it needs one manual step: repository Settings → Pages →
+Source: *GitHub Actions*.
 
 ## Tests
 

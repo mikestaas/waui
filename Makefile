@@ -5,7 +5,7 @@ AS_COMPONENTS := demo-counter demo-stopwatch demo-todo
 .PHONY: components components-as run-cli run-stop-cli run-todo-cli run-tui run-stop-tui run-todo-tui \
          run-iced run-stop-iced run-todo-iced run-cli-as run-stop-cli-as run-todo-cli-as \
          run-tui-as run-stop-tui-as run-todo-tui-as run-iced-as run-stop-iced-as run-todo-iced-as \
-         web web-as web-test web-test-as ui-test fmt fmt-check hooks test
+         web web-as web-test web-test-as site ui-test fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model.
 components:
@@ -129,6 +129,16 @@ web-as: components-as
 		node web/build.mjs target/assembly/$$c-as.wasm target/web/$$c-as.html || exit 1; \
 	done
 	@echo "wrote target/web/*-as.html — open them directly (no server needed)"
+
+# The GitHub Pages site: the desktop launcher (site/) plus the six
+# self-contained demo pages, assembled in target/site/. It runs straight
+# from disk; .github/workflows/site.yml deploys it on push to main.
+site: web web-as
+	@mkdir -p target/site/icons
+	@cp site/index.html site/desktop.js site/desktop.css target/site/
+	@cp site/icons/*.svg target/site/icons/
+	@cp target/web/*.html target/site/
+	@echo "wrote target/site/ — open target/site/index.html (no server needed)"
 
 # Headless check of the web host's ABI layer (Node).
 web-test: components
