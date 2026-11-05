@@ -38,14 +38,23 @@
         flex-direction: row;
         align-items: center;
       }
+      /* The container's cross-axis placement (the contract's `align` token):
+         start/center/end on the axis perpendicular to `direction` (a column
+         places its children left/center/right, a row top/center/bottom).
+         These follow the direction rules so they override the center default. */
+      .waui-align-start {
+        align-items: start;
+      }
+      .waui-align-center {
+        align-items: center;
+      }
+      .waui-align-end {
+        align-items: end;
+      }
       .waui-text {
         min-height: 1.5em;
         text-align: center;
         font-variant-numeric: tabular-nums;
-      }
-      .waui-column > .waui-text,
-      .waui-row > .waui-text {
-        align-self: center;
       }
       .waui-button {
         font: inherit;

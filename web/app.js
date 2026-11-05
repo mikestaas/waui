@@ -138,7 +138,8 @@ function rebuild() {
     let el;
     if (n.kind === 'container') {
       el = document.createElement('div');
-      el.className = 'waui waui-' + n.direction;
+      // The direction sets the axis; the align token the cross-axis placement.
+      el.className = `waui waui-${n.direction} waui-align-${n.align}`;
     } else if (n.kind === 'button') {
       el = document.createElement('button');
       // The component's semantic style, as token classes (see index.html).
@@ -175,7 +176,7 @@ function rebuild() {
     top = roots[0];
   } else {
     top = document.createElement('div');
-    top.className = 'waui waui-column';
+    top.className = 'waui waui-column waui-align-center';
     for (const r of roots) top.appendChild(r);
   }
   rootEl.replaceChildren(top);
@@ -209,11 +210,13 @@ function refresh() {
   const mutations = app.changes();
   if (mutations.length === 0) return; // nothing changed: do nothing
 
-  // Content-only? A changed text or button with an id, whose position in
-  // the tree is unchanged, can be restyled in place. Anything else (that
-  // includes id-less nodes) forces a rebuild.
+  // Content-only? A changed leaf (text, button, or input) with an id, whose
+  // position in the tree is unchanged, can be restyled in place. Anything
+  // else (a container — restyle cannot update one — or an id-less node)
+  // forces a rebuild.
   const inPlace = mutations.every((m) => {
     if (m.kind !== 'changed' || m.node.id === null) return false;
+    if (m.node.kind === 'container') return false;
     const prev = retained.find((n) => n.id === m.node.id);
     return prev !== undefined && prev.parent === m.node.parent;
   });

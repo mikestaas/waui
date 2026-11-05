@@ -46,6 +46,7 @@
 //   bytes [13..16]  padding
 //   bytes [16..20]  parent id: u32 (valid only when the flag is set)
 //   bytes [20]      container: direction (u8, 0 = row, 1 = column)
+//   bytes [21]      container: align (u8, 0 = start, 1 = center, 2 = end)
 //   bytes [20..24]  text/button/input: string pointer
 //   bytes [24..28]  text/button/input: string length (UTF-8 bytes)
 //   bytes [28]      text/button/input: style.color (u8, WIT case order in
@@ -98,6 +99,7 @@ export async function createApp(wasmBytes, hooks = {}) {
   // case order of waui:ui/widget (unknown values degrade safely).
   const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning'];
   const SIZES = ['small', 'medium', 'large'];
+  const ALIGNS = ['start', 'center', 'end'];
   const enc = new TextEncoder();
   // The AssemblyScript scratch region's capacity (the top 4 KiB of page 0,
   // a bump allocator through `cabi_realloc`). `text()` clamps an over-long
@@ -116,6 +118,7 @@ export async function createApp(wasmBytes, hooks = {}) {
         id,
         parent,
         direction: u8[o + 20] === 1 ? 'column' : 'row',
+        align: ALIGNS[u8[o + 21]] ?? 'center',
       };
     }
     const sp = i32[(o + 20) >> 2];

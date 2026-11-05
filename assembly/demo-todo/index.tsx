@@ -9,15 +9,18 @@
 // reports each edit through `on-text` (the whole current buffer), the
 // component stores it, and the input node's content re-derives from it.
 //
-//   view:     a column (1): the "todos" header (2), the active column (3)
-//             and the done column (4) stacked, and the footer row (5) with
-//             the count (6, small), the input (9), the add button (7,
-//             positive), and the clear button (8, negative)
-//   on-click: 7 adds a todo with the input's text (the next preset when it
-//             is empty) and clears the field; 8 clears the done column; a
+//   view:     a centered column (1): the "todos" header (2), a left-align
+//             wrapper column (3) holding the active column (4) and the done
+//             column (5), and the footer row (6) with the count (7, small),
+//             the input (8), the add button (9, positive), and the clear
+//             button (10, negative). The wrapper and the lists are left-
+//             align, so every row shares a left edge while the wrapper, the
+//             header, and the footer stay centered.
+//   on-click: 9 adds a todo with the input's text (the next preset when it
+//             is empty) and clears the field; 10 clears the done column; a
 //             row's checkbox (101+4i) moves the todo between the columns;
 //             its delete (103+4i) removes it
-//   on-text:  9 stores the host's whole buffer (the component is the source
+//   on-text:  8 stores the host's whole buffer (the component is the source
 //             of truth for the field)
 //   changes:  the diff: the new or moved nodes, the count, the input's
 //             content, and the removed ids (the whole tree on first contact)
@@ -29,7 +32,10 @@
 // the contract moves a container by removing the subtree and re-adding it
 // (a host links a container's children in list order, and a re-parented
 // container would leave them behind); the children's ids do not, so a move
-// re-parents them — same id, new parent. The footer's input is 9.
+// re-parents them — same id, new parent. The static structure is 1 (the
+// outer column), 2 (the header), 3 (the left-align wrapper), 4 and 5 (the
+// lists), and 6 (the footer); the footer's count, input, add, and clear are
+// 7, 8, 9, and 10.
 //
 // **The order.** Both columns are newest first: the host inserts a new or
 // moved node just after its parent, the top of the column, so the lists
@@ -50,6 +56,7 @@
 
 import { cabi_post_changes, cabi_post_view, cabi_realloc } from '../abi/arena';
 import {
+  ALIGN_START,
   COLOR_ACCENT,
   COLOR_NEUTRAL,
   COLOR_NEGATIVE,
@@ -70,13 +77,14 @@ export { cabi_post_changes, cabi_post_view, cabi_realloc };
 // Widget ids (the contract's identity convention).
 const BOX = 1;
 const HEADER = 2;
-const ACTIVE_COL = 3;
-const DONE_COL = 4;
-const FOOTER = 5;
-const COUNT = 6;
-const ADD = 7;
-const CLEAR = 8;
-const INPUT = 9;
+const WRAPPER = 3; // the left-align wrapper around the two lists
+const ACTIVE_COL = 4;
+const DONE_COL = 5;
+const FOOTER = 6;
+const COUNT = 7;
+const INPUT = 8;
+const ADD = 9;
+const CLEAR = 10;
 
 /// One todo. `idx` is its creation index, the source of its node ids (never
 /// reused); `label` is the typed text or a preset; `done` picks its column
@@ -199,8 +207,14 @@ function tree(): Widget {
   return (
     <column id={BOX}>
       <text id={HEADER} label="todos" color={COLOR_ACCENT} size={SIZE_LARGE} />
-      <column id={ACTIVE_COL}>{rows(active)}</column>
-      <column id={DONE_COL}>{rows(done)}</column>
+      <column id={WRAPPER} align={ALIGN_START}>
+        <column id={ACTIVE_COL} align={ALIGN_START}>
+          {rows(active)}
+        </column>
+        <column id={DONE_COL} align={ALIGN_START}>
+          {rows(done)}
+        </column>
+      </column>
       <row id={FOOTER}>
         {count}
         {inputField}

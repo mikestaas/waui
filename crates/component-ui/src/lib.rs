@@ -8,10 +8,10 @@
 //! would otherwise do.
 //!
 //! This crate is dependency-free: its token enums ([`Color`], [`Size`],
-//! [`Direction`]) are plain Rust mirrors of the WIT contract's, and
-//! [`lower`] is generic over the output type. Each `wit-bindgen generate!`
-//! is crate-local, so a component passes a projection that builds *its own*
-//! generated `Node` — written once per component.
+//! [`Direction`], [`Align`]) are plain Rust mirrors of the WIT contract's,
+//! and [`lower`] is generic over the output type. Each `wit-bindgen
+//! generate!` is crate-local, so a component passes a projection that builds
+//! *its own* generated `Node` — written once per component.
 //!
 //! Trees are usually written with the [`ui`] macro, a JSX-like literal:
 //! `ui! { column id = 1, { button label = "+", ... } }` builds the same
@@ -79,6 +79,21 @@ pub enum Direction {
     Column,
 }
 
+/// How a container places its children along the cross axis, mirroring
+/// `waui:ui/widget`'s `align` enum (same case order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Align {
+    Start,
+    Center,
+    End,
+}
+
+impl Default for Align {
+    fn default() -> Self {
+        Align::Center
+    }
+}
+
 impl Style {
     pub fn new(color: Color, size: Size) -> Self {
         Self { color, size }
@@ -124,6 +139,8 @@ pub struct Container {
     /// This node's id (see the crate docs, *Identity*).
     pub id: Option<u32>,
     pub direction: Direction,
+    /// How the children are placed along the cross axis.
+    pub align: Align,
     pub children: Vec<Tree>,
 }
 
@@ -172,6 +189,7 @@ impl Tree {
         Self::Container(Container {
             id: None,
             direction: Direction::Row,
+            align: Align::Center,
             children,
         })
     }
@@ -182,6 +200,7 @@ impl Tree {
         Self::Container(Container {
             id: None,
             direction: Direction::Column,
+            align: Align::Center,
             children,
         })
     }
@@ -192,6 +211,7 @@ impl Tree {
         Self::Container(Container {
             id: None,
             direction,
+            align: Align::Center,
             children,
         })
     }
@@ -205,6 +225,12 @@ impl Tree {
     /// Replace this node's style.
     pub fn style(mut self, style: Style) -> Self {
         self.set_style(style);
+        self
+    }
+
+    /// Replace a container's cross-axis alignment. A no-op on a leaf.
+    pub fn align(mut self, align: Align) -> Self {
+        self.set_align(align);
         self
     }
 
@@ -225,6 +251,13 @@ impl Tree {
             Self::Button(b) => b.style = style,
             Self::Input(i) => i.style = style,
             Self::Container(_) => {}
+        }
+    }
+
+    /// Replace a container's cross-axis alignment (in place). Leaves have none.
+    pub fn set_align(&mut self, align: Align) {
+        if let Self::Container(c) = self {
+            c.align = align;
         }
     }
 
@@ -273,6 +306,7 @@ pub enum Flat {
         id: Option<u32>,
         parent: Option<u32>,
         direction: Direction,
+        align: Align,
     },
 }
 
@@ -372,6 +406,7 @@ fn flat(node: &Tree, parent: Option<u32>) -> Flat {
             id: c.id,
             parent,
             direction: c.direction,
+            align: c.align,
         },
     }
 }
@@ -500,6 +535,7 @@ mod tests {
                 id: c.id,
                 parent,
                 direction: c.direction,
+                align: c.align,
             },
         }
     }
@@ -631,6 +667,32 @@ mod tests {
                 (Some(4), Some(1))
             ]
         );
+    }
+
+    #[test]
+    fn macro_builds_a_container_align() {
+        // A stated align is honored; an unstated one defaults to center.
+        let tree = ui! {
+            column id = 1, align = Align::Start, {
+                column id = 2, {
+                    text content = "x", id = 3, size = Size::Small,
+                }
+            }
+        };
+        let flat = lower(&tree, to_flat);
+        match &flat[0] {
+            Flat::Container {
+                direction, align, ..
+            } => {
+                assert_eq!(*direction, Direction::Column);
+                assert_eq!(*align, Align::Start);
+            }
+            _ => panic!("expected the outer container"),
+        }
+        match &flat[1] {
+            Flat::Container { align, .. } => assert_eq!(*align, Align::Center),
+            _ => panic!("expected the inner container"),
+        }
     }
 
     #[test]
@@ -783,6 +845,24 @@ mod tests {
         assert_eq!(out, vec![M::Changed(3, Some(1), 1)]);
     }
 
+    /// A box (1) with one child; the box's align is the only thing that
+    /// varies. A container's record is its direction and align, so an align
+    /// change is a `changed`.
+    fn box_align(align: Align) -> Tree {
+        Tree::column(vec![
+            Tree::text("x", style(Color::Neutral, Size::Small)).id(2)
+        ])
+        .id(1)
+        .align(align)
+    }
+
+    #[test]
+    fn diff_reports_a_container_align_change() {
+        let last = flat_list(&box_align(Align::Center));
+        let (out, _) = diff_with(&box_align(Align::Start), Some(&last), proj);
+        assert_eq!(out, vec![M::Changed(1, None, 0)]);
+    }
+
     /// A todo-ish shape: a box (1) with an input (9) and an add button (7).
     /// The input's content is state; the button is static.
     fn with_input(content: &str) -> Tree {
@@ -911,8 +991,10 @@ pub fn kid(c: impl Into<Kid>) -> Vec<Tree> {
 /// Tags: `text` (`content`), `button` (`label`), `input` (`content`),
 /// `row`, `column`, `container` (`direction`). Attributes in any order:
 /// `id`, `color`, `size`, `style`; an unstated color or size is
-/// [`Color::Neutral`] / [`Size::Medium`]. Containers take a `{ ... }`
-/// children block; children are tags or bare expressions, comma-separated.
+/// [`Color::Neutral`] / [`Size::Medium`]. Containers also take an optional
+/// `align` (a [`Align`], default [`Align::Center`]). Containers take a
+/// `{ ... }` children block; children are tags or bare expressions,
+/// comma-separated.
 /// A bare expression whose first token is a tag name (a `Tree` named
 /// `text`, `row`, ...) is the expression. A bare expression that is a list
 /// of trees (a `Vec<Tree>`, an iterator) is spliced into the children — the
@@ -982,6 +1064,9 @@ macro_rules! __ui_kids {
     ( $ctx:tt $acc:tt $t0:tt direction $( $r:tt )* ) => {
         $crate::__ui_tag!($ctx $acc $t0 direction $( $r )* )
     };
+    ( $ctx:tt $acc:tt $t0:tt align $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 align $( $r )* )
+    };
     ( $ctx:tt $acc:tt $t0:tt { $( $c:tt )* } $( $r:tt )* ) => {
         $crate::__ui_tag!($ctx $acc $t0 { $( $c )* } $( $r )* )
     };
@@ -1009,13 +1094,13 @@ macro_rules! __ui_kids {
 #[doc(hidden)]
 macro_rules! __ui_cmb {
     ( $ctx:tt $acc:tt row , { $( $c:tt )* } $( $r:tt )* ) => {
-        $crate::__ui_cont!(row $ctx $acc ( some $crate::Direction::Row) () , { $( $c )* } $( $r )* )
+        $crate::__ui_cont!(row $ctx $acc ( some $crate::Direction::Row) () () , { $( $c )* } $( $r )* )
     };
     ( $ctx:tt $acc:tt column , { $( $c:tt )* } $( $r:tt )* ) => {
-        $crate::__ui_cont!(column $ctx $acc ( some $crate::Direction::Column) () , { $( $c )* } $( $r )* )
+        $crate::__ui_cont!(column $ctx $acc ( some $crate::Direction::Column) () () , { $( $c )* } $( $r )* )
     };
     ( $ctx:tt $acc:tt container , { $( $c:tt )* } $( $r:tt )* ) => {
-        $crate::__ui_cont!(container $ctx $acc () () , { $( $c )* } $( $r )* )
+        $crate::__ui_cont!(container $ctx $acc () () () , { $( $c )* } $( $r )* )
     };
     ( $ctx:tt $acc:tt $t0:tt , { $( $c:tt )* } $( $r:tt )* ) => {
         $crate::__ui_expr!($ctx $acc () $t0 , { $( $c )* } $( $r )* )
@@ -1041,13 +1126,13 @@ macro_rules! __ui_tag {
         $crate::__ui_leaf!(input $ctx $acc () () () () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt row $t1:tt $( $r:tt )* ) => {
-        $crate::__ui_cont!(row $ctx $acc ( some $crate::Direction::Row) () $t1 $( $r )* )
+        $crate::__ui_cont!(row $ctx $acc ( some $crate::Direction::Row) () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt column $t1:tt $( $r:tt )* ) => {
-        $crate::__ui_cont!(column $ctx $acc ( some $crate::Direction::Column) () $t1 $( $r )* )
+        $crate::__ui_cont!(column $ctx $acc ( some $crate::Direction::Column) () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt container $t1:tt $( $r:tt )* ) => {
-        $crate::__ui_cont!(container $ctx $acc () () $t1 $( $r )* )
+        $crate::__ui_cont!(container $ctx $acc () () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt $t0:tt $t1:tt $( $r:tt )* ) => {
         $crate::__ui_expr!($ctx $acc () $t0 $t1 $( $r )* )
@@ -1193,52 +1278,57 @@ macro_rules! __ui_leafbuild {
     };
 }
 
-/// A container: `row` / `column` / `container`. Slot order: direction, id.
-/// `row` / `column` preset the direction (a `direction` attribute is a
-/// compile error on them); `container` requires one.
+/// A container: `row` / `column` / `container`. Slot order: direction, id,
+/// align. `row` / `column` preset the direction (a `direction` attribute is a
+/// compile error on them); `container` requires one. `align` is optional (it
+/// defaults to `center`).
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ui_cont {
-    ( $tag:tt $ctx:tt $acc:tt $d:tt $i:tt id = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_cont!($tag $ctx $acc $d ( some $v) $( $r )* )
+    // Attribute peels: each consumes `key = <expr>,` and restates its slot.
+    ( $tag:tt $ctx:tt $acc:tt $d:tt $i:tt $al:tt id = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_cont!($tag $ctx $acc $d ( some $v) $al $( $r )* )
     };
-    ( container $ctx:tt $acc:tt $d:tt $i:tt direction = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_cont!(container $ctx $acc ( some $v) $i $( $r )* )
+    ( $tag:tt $ctx:tt $acc:tt $d:tt $i:tt $al:tt align = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_cont!($tag $ctx $acc $d $i ( some $v) $( $r )* )
+    };
+    ( container $ctx:tt $acc:tt $d:tt $i:tt $al:tt direction = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_cont!(container $ctx $acc ( some $v) $i $al $( $r )* )
     };
     // A separator comma with no attributes (a `column, { ... }`): strip it
     // and retry; a comma-less block matches the terminals below.
-    ( $tag:tt $ctx:tt $acc:tt $d:tt $i:tt , { $( $c:tt )* } $( $r:tt )* ) => {
-        $crate::__ui_cont!($tag $ctx $acc $d $i { $( $c )* } $( $r )* )
+    ( $tag:tt $ctx:tt $acc:tt $d:tt $i:tt $al:tt , { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_cont!($tag $ctx $acc $d $i $al { $( $c )* } $( $r )* )
     };
     // Terminals: the children block. `row` / `column` keep their preset
     // direction; `container` must have been given one. The children are
     // rewrapped in a group: a `:tt` repetition ends where an `:expr` begins
     // only at a delimiter.
-    ( $tag:tt top $acc:tt ( some $d:expr ) $i:tt { $( $c:tt )* } ) => {
-        $crate::__ui_contnode!($tag $i ( $( $c )* ) $d)
+    ( $tag:tt top $acc:tt ( some $d:expr ) $i:tt $al:tt { $( $c:tt )* } ) => {
+        $crate::__ui_contnode!($tag $i $al ( $( $c )* ) $d)
     };
-    ( $tag:tt top $acc:tt ( some $d:expr ) $i:tt { $( $c:tt )* } , ) => {
-        $crate::__ui_contnode!($tag $i ( $( $c )* ) $d)
+    ( $tag:tt top $acc:tt ( some $d:expr ) $i:tt $al:tt { $( $c:tt )* } , ) => {
+        $crate::__ui_contnode!($tag $i $al ( $( $c )* ) $d)
     };
-    ( $tag:tt top $acc:tt ( some $d:expr ) $i:tt { $( $c:tt )* } , $x:tt $( $y:tt )* ) => {
+    ( $tag:tt top $acc:tt ( some $d:expr ) $i:tt $al:tt { $( $c:tt )* } , $x:tt $( $y:tt )* ) => {
         compile_error!("`ui!` takes a single root widget")
     };
-    ( $tag:tt top $acc:tt () $i:tt { $( $c:tt )* } $( $r:tt )* ) => {
+    ( $tag:tt top $acc:tt () $i:tt $al:tt { $( $c:tt )* } $( $r:tt )* ) => {
         compile_error!("a `container` needs a `direction = ...` attribute (or use `row` / `column`)")
     };
     // An empty acc matches with zero repetitions: one arm serves both. Each
     // acc item ends in its comma; the `:expr` binding consumes them.
-    ( $tag:tt kids ( $( $a:expr , )* ) ( some $d:expr ) $i:tt { $( $c:tt )* } $( $r:tt )* ) => {
-        $crate::__ui_kids!(kids ( $( $a , )* $crate::__ui_wrap!(kids $crate::__ui_contnode!($tag $i ( $( $c )* ) $d)) , ) $( $r )* )
+    ( $tag:tt kids ( $( $a:expr , )* ) ( some $d:expr ) $i:tt $al:tt { $( $c:tt )* } $( $r:tt )* ) => {
+        $crate::__ui_kids!(kids ( $( $a , )* $crate::__ui_wrap!(kids $crate::__ui_contnode!($tag $i $al ( $( $c )* ) $d)) , ) $( $r )* )
     };
-    ( $tag:tt kids $acc:tt () $i:tt { $( $c:tt )* } $( $r:tt )* ) => {
+    ( $tag:tt kids $acc:tt () $i:tt $al:tt { $( $c:tt )* } $( $r:tt )* ) => {
         compile_error!("a `container` needs a `direction = ...` attribute (or use `row` / `column`)")
     };
     // `direction` on a preset container: a compile error, not an attribute.
-    ( row $ctx:tt $acc:tt $d:tt $i:tt direction = $v:expr , $( $r:tt )* ) => {
+    ( row $ctx:tt $acc:tt $d:tt $i:tt $al:tt direction = $v:expr , $( $r:tt )* ) => {
         compile_error!("a `row` does not take a `direction` attribute (it is preset); use `container`")
     };
-    ( column $ctx:tt $acc:tt $d:tt $i:tt direction = $v:expr , $( $r:tt )* ) => {
+    ( column $ctx:tt $acc:tt $d:tt $i:tt $al:tt direction = $v:expr , $( $r:tt )* ) => {
         compile_error!("a `column` does not take a `direction` attribute (it is preset); use `container`")
     };
 }
@@ -1247,11 +1337,14 @@ macro_rules! __ui_cont {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ui_contnode {
-    ( $tag:tt $i:tt ( $( $c:tt )* ) $d:expr ) => {
+    ( $tag:tt $i:tt $al:tt ( $( $c:tt )* ) $d:expr ) => {
         {
             let mut node = $crate::Tree::container($d, $crate::__ui_kids!(kids () $( $c )* ));
             if let Some(id) = $crate::__ui_opt!($i) {
                 node.set_id(id);
+            }
+            if let Some(align) = $crate::__ui_opt!($al) {
+                node.set_align(align);
             }
             node
         }

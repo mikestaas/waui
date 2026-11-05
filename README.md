@@ -23,6 +23,10 @@ component changes.
     palette, and a host that cannot express a token renders without it. WIT
     enums with ≤256 variants lay out as one byte, so `style` costs two bytes
     per node.
+  - A container's `direction` (row/column) sets the axis its children stack
+    along; its `align` (start/center/end) places them on the cross axis. Like
+    `style`, it is intent: a host that cannot express a token renders without
+    it (the default is `center`).
 - **`app` world** — exports `view() -> list<node>` (the current tree),
   `changes() -> list<mutation>` (the diff since the last export),
   `on-click(u32)`, `on-text(u32, string)` (the host's whole input buffer on
@@ -43,7 +47,7 @@ Protocol rules:
 - The host calls `on-tick` only at the period the component requests with
   `schedule` (a new request restarts it; 0 cancels); a component that never
   schedules is never woken.
-- Hosts may ignore parts of the contract (host-cli ignores `style`,
+- Hosts may ignore parts of the contract (host-cli ignores `style`, `align`,
   `changes`, and `schedule`). Components cannot: the node layout is part of
   the ABI, so a component must be built against the WIT it targets.
 
@@ -74,7 +78,7 @@ child the factory splices in).
 | `crates/host-shared`     | wasmtime host core: the bindings, the list→tree rebuild, the retained tree diffs apply against        |
 | `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG (CI) |
 | `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame (CI) |
-| `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, the diff channel, and `schedule` |
+| `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
 | `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm)             |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests    |
 |                          | a refresh (the host never wakes it)                                                                   |
@@ -159,6 +163,11 @@ it runs from disk with no server and no network.
 - **Images, as a WIT `resource`.** Substantial ABI work, worst on the
   hand-rolled AS side.
 - **Multi-component hosts.** Host-side only.
+- **Grid layout.** The contract's containers are rows and columns (one axis
+  each); a grid — placing children on two axes at once — has no token.
+- **Stretch / equal-width.** `align` places children on the cross axis but
+  never stretches them to fill it or equalizes their sizes; a host that does
+  so is applying its own layout, not the contract's.
 
 ## Known limitations
 

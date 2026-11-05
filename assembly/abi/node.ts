@@ -6,7 +6,8 @@
 //     [0]       tag: 0 = text, 1 = button, 2 = container, 3 = input
 //     [4]       id option flag        [8..12)   id
 //     [12]      parent option flag    [16..20)  parent
-//     [20..24)  text/button/input: string pointer | container: direction byte
+//     [20..24)  text/button/input: string pointer
+//               container: [20] direction byte, [21] align byte
 //     [24..28)  text/button/input: string length (UTF-8 bytes)
 //     [28]      text/button/input: style.color    [29] style.size
 //
@@ -36,6 +37,9 @@ export const SIZE_MEDIUM = 1;
 export const SIZE_LARGE = 2;
 export const DIRECTION_ROW = 0;
 export const DIRECTION_COLUMN = 1;
+export const ALIGN_START = 0;
+export const ALIGN_CENTER = 1;
+export const ALIGN_END = 2;
 export const MUT_CHANGED = 0;
 export const MUT_REMOVED = 1;
 
@@ -115,11 +119,12 @@ export function emitInput(
 }
 
 /// A `container` node record at `rec` (32 bytes).
-export function emitContainer(rec: i32, id: i32, parent: i32, direction: i32): void {
+export function emitContainer(rec: i32, id: i32, parent: i32, direction: i32, align: i32): void {
   zero(rec, 32);
   store<i8>(rec + 0, TAG_CONTAINER);
   putId(rec, id, parent);
   store<i8>(rec + 20, direction);
+  store<i8>(rec + 21, align);
 }
 
 // The `changed` mutation's payload is a full node record at byte 4, so it
@@ -171,10 +176,16 @@ export function emitChangedInput(
 }
 
 /// A `changed` mutation carrying a `container` node, at `rec` (40 bytes).
-export function emitChangedContainer(rec: i32, id: i32, parent: i32, direction: i32): void {
+export function emitChangedContainer(
+  rec: i32,
+  id: i32,
+  parent: i32,
+  direction: i32,
+  align: i32,
+): void {
   zero(rec, 40);
   store<i32>(rec + 0, MUT_CHANGED);
-  emitContainer(rec + 4, id, parent, direction);
+  emitContainer(rec + 4, id, parent, direction, align);
 }
 
 /// A `removed` mutation (the node's id) at `rec` (40 bytes).

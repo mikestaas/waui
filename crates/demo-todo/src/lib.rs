@@ -8,10 +8,12 @@
 //! reports each edit through `on-text` (the whole current buffer), the
 //! component stores it, and the input node's content re-derives from it.
 //!
-//! The layout: a column with the "todos" header, the active column, the done
-//! column, and a footer (the count, the input, the add button, the clear
-//! button). Each todo row is a row with a checkbox, a label, and a delete
-//! button.
+//! The layout: a centered column with the "todos" header, a left-align
+//! wrapper holding the active and done columns, and a footer (the count, the
+//! input, the add button, the clear button). The wrapper and the lists are
+//! left-align, so every row shares a left edge while the wrapper, the header,
+//! and the footer stay centered. Each todo row is a row with a checkbox, a
+//! label, and a delete button.
 //!
 //! **The ids.** A todo created i-th gets its row 100+4i while active and
 //! 500+4i while done; its checkbox, label, and delete keep 101+4i, 102+4i,
@@ -19,7 +21,10 @@
 //! the contract moves a container by removing the subtree and re-adding it
 //! (a host links a container's children in list order, and a re-parented
 //! container would leave them behind); the children's ids do not, so a move
-//! re-parents them — same id, new parent. The footer's input is 9.
+//! re-parents them — same id, new parent. The static structure is 1 (the
+//! outer column), 2 (the header), 3 (the left-align wrapper), 4 and 5 (the
+//! lists), and 6 (the footer); the footer's count, input, add, and clear are
+//! 7, 8, 9, and 10.
 //!
 //! **The order.** Both columns are newest-first: the component keeps that
 //! order and the host places a new or moved node at its index among the
@@ -38,7 +43,7 @@ use std::sync::Mutex;
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
-use component_ui::{ui, Color, Direction, Size, Style, Tree};
+use component_ui::{ui, Align, Color, Direction, Size, Style, Tree};
 use waui::ui::widget as wit;
 
 /// One todo. `idx` is its creation index, the source of its node ids (never
@@ -129,23 +134,28 @@ fn row(t: &Todo) -> Tree {
 /// The footer: the count, the input, the add button, and the clear button.
 fn footer(left: usize, input: &str) -> Tree {
     ui! {
-        row id = 5, {
-            text content = format!("{left} left"), id = 6, size = Size::Small,
-            input content = input, id = 9, size = Size::Medium,
-            button label = "add", id = 7, color = Color::Positive, size = Size::Medium,
-            button label = "clear done", id = 8, color = Color::Negative, size = Size::Medium,
+        row id = 6, {
+            text content = format!("{left} left"), id = 7, size = Size::Small,
+            input content = input, id = 8, size = Size::Medium,
+            button label = "add", id = 9, color = Color::Positive, size = Size::Medium,
+            button label = "clear done", id = 10, color = Color::Negative, size = Size::Medium,
         }
     }
 }
 
-/// The todo list's whole UI, nested. The columns' rows are spliced into the
-/// columns' children (a list child, not one child per row).
+/// The todo list's whole UI, nested. The two lists sit in a left-align
+/// wrapper column, so their rows share a left edge while the wrapper (and
+/// the header and footer) stay centered by the outer column. The columns'
+/// rows are spliced into the columns' children (a list child, not one child
+/// per row).
 fn tree(active: &[Todo], done: &[Todo], input: &str) -> Tree {
     ui! {
         column id = 1, {
             text content = "todos", id = 2, color = Color::Accent, size = Size::Large,
-            column id = 3, { active.iter().map(row) }
-            column id = 4, { done.iter().map(row) }
+            column id = 3, align = Align::Start, {
+                column id = 4, align = Align::Start, { active.iter().map(row) }
+                column id = 5, align = Align::Start, { done.iter().map(row) }
+            }
             footer(active.len(), input),
         }
     }
@@ -195,6 +205,11 @@ fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
                 Direction::Row => wit::Direction::Row,
                 Direction::Column => wit::Direction::Column,
             },
+            align: match c.align {
+                Align::Start => wit::Align::Start,
+                Align::Center => wit::Align::Center,
+                Align::End => wit::Align::End,
+            },
         }),
     }
 }
@@ -233,7 +248,7 @@ impl Guest for TodoList {
         match id {
             // The add button: the input's text if the user typed any, else
             // the next preset; newest first.
-            7 => {
+            9 => {
                 let idx = NEXT.fetch_add(1, Ordering::Relaxed);
                 let label = {
                     let mut input = INPUT.lock().unwrap();
@@ -254,7 +269,7 @@ impl Guest for TodoList {
                 );
             }
             // The clear button: the done column empties.
-            8 => done.clear(),
+            10 => done.clear(),
             // A row's checkbox (101+4i) or delete (103+4i).
             _ => {
                 let (idx, remove) = match id % 4 {
@@ -295,13 +310,13 @@ impl Guest for TodoList {
         }
     }
 
-    // The input (9): the host's whole current buffer. The component is the
+    // The input (8): the host's whole current buffer. The component is the
     // source of truth for the field, so it stores the text verbatim; the
     // input node's content re-derives from it on the next export. `text` is
     // a string parameter the callee owns, allocated through the guest's
     // `cabi_realloc`, so the `String`'s drop is a valid free.
     fn on_text(id: u32, text: String) {
-        if id == 9 {
+        if id == 8 {
             *INPUT.lock().unwrap() = text;
         }
     }

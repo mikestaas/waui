@@ -2,14 +2,17 @@
 // Rust `component-ui` unit tests. Compiled to a core module and run via Node
 // (`make ui-test`); `run()` drives `viewOf`/`diffOf` through the structural
 // cases (bootstrap, value change, add, remove, re-parent, id-less, a
-// spliced list child, an input), decodes the diff from the arena, and
-// returns 0 on success (the first failing scenario's index otherwise).
+// spliced list child, an input, a container align), decodes the diff from
+// the arena, and returns 0 on success (the first failing scenario's index
+// otherwise).
 //
 // It is import-free after `../patch-env-abort.mjs` (the incremental runtime's
 // one import is its OOM path), so Node instantiates it directly.
 
 import { arenaReset } from '../abi/arena';
 import {
+  ALIGN_CENTER,
+  ALIGN_START,
   COLOR_NEGATIVE,
   COLOR_NEUTRAL,
   COLOR_POSITIVE,
@@ -97,6 +100,17 @@ function withInput(content: string): Widget {
   );
 }
 
+// A box (1) with one child (2), its align the only thing that varies — the
+// container's record is its direction and align, so an align change is a
+// `changed` for the box.
+function boxAlign(align: i32): Widget {
+  return (
+    <column id={1} align={align}>
+      <text id={2} label="x" color={COLOR_NEUTRAL} size={SIZE_LARGE} />
+    </column>
+  );
+}
+
 // ------------------------------------------------------------------ decoding
 
 /// One decoded mutation: the tag, and (for `changed`) the node's fields and
@@ -109,6 +123,7 @@ class Mut {
   color: i32 = -1;
   size: i32 = -1;
   direction: i32 = -1;
+  align: i32 = -1;
   label: string = '';
   index: i32 = -1; // sibling index (`changed` only)
 }
@@ -128,6 +143,7 @@ function decodeMut(rec: i32): Mut {
   if (load<i8>(n + 12) != 0) m.parent = load<i32>(n + 16);
   if (m.kind == TAG_CONTAINER) {
     m.direction = load<i8>(n + 20);
+    m.align = load<i8>(n + 21);
   } else {
     const str = load<i32>(n + 20);
     const len = load<i32>(n + 24);
@@ -290,6 +306,19 @@ export function run(): i32 {
       return c != null && c.kind == TAG_INPUT && c.label == 'hi' && c.index == 0 ? 0 : 9;
     });
     if (r != 0) return 9;
+  }
+
+  // 10. Container align: the box's align is part of its record; flipping it
+  //     (center → start) is a `changed` for the box, and only the box.
+  viewOf(boxAlign(ALIGN_CENTER)); // the reference: the box (center), the text
+  arenaReset();
+  {
+    const r = scenario(boxAlign(ALIGN_START), (m) => {
+      if (m.length != 1) return 10;
+      const c = changed(m, 1);
+      return c != null && c.kind == TAG_CONTAINER && c.align == ALIGN_START ? 0 : 10;
+    });
+    if (r != 0) return 10;
   }
 
   return 0;

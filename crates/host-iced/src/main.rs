@@ -34,7 +34,7 @@ use wasmtime::{Engine, Store};
 use host_shared::{build_tree, waui, App, AppImports, Retained, Tree};
 
 // The contract's style tokens, aliased to avoid clashing with `iced::Color`.
-use host_shared::waui::ui::widget::{Color as WColor, Size as WSize};
+use host_shared::waui::ui::widget::{Align as WAlign, Color as WColor, Size as WSize};
 
 mod theme;
 
@@ -395,9 +395,26 @@ fn size_pt(s: WSize) -> f32 {
     }
 }
 
+/// The contract's cross-axis token on a column's (horizontal) axis.
+fn column_align(a: WAlign) -> iced::alignment::Horizontal {
+    match a {
+        WAlign::Start => iced::alignment::Horizontal::Left,
+        WAlign::Center => iced::alignment::Horizontal::Center,
+        WAlign::End => iced::alignment::Horizontal::Right,
+    }
+}
+
+/// The contract's cross-axis token on a row's (vertical) axis.
+fn row_align(a: WAlign) -> iced::alignment::Vertical {
+    match a {
+        WAlign::Start => iced::alignment::Vertical::Top,
+        WAlign::Center => iced::alignment::Vertical::Center,
+        WAlign::End => iced::alignment::Vertical::Bottom,
+    }
+}
+
 /// Map the tree onto iced widgets.
 fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
-    use iced::alignment;
     use iced::widget;
     match node {
         Tree::Text(content, style) => {
@@ -454,15 +471,15 @@ fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
             }
             input.into()
         }
-        // The web page centers a column's children (align-items: center)
-        // and a row's; iced's default is start (top/left).
-        Tree::Row(children) => widget::row(children.iter().map(map_tree))
+        // The component's cross-axis token; a host default (start) would
+        // draw the contract's default (center) wrong.
+        Tree::Row(align, children) => widget::row(children.iter().map(map_tree))
             .spacing(8)
-            .align_y(alignment::Vertical::Center)
+            .align_y(row_align(*align))
             .into(),
-        Tree::Column(children) => widget::column(children.iter().map(map_tree))
+        Tree::Column(align, children) => widget::column(children.iter().map(map_tree))
             .spacing(8)
-            .align_x(alignment::Horizontal::Center)
+            .align_x(column_align(*align))
             .into(),
     }
 }

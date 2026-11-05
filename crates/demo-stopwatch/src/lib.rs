@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
-use component_ui::{ui, Color, Direction, Size, Style, Tree};
+use component_ui::{ui, Align, Color, Direction, Size, Style, Tree};
 use waui::ui::widget as wit;
 
 const NOT_RUNNING: u64 = 0;
@@ -116,6 +116,11 @@ fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
             direction: match c.direction {
                 Direction::Row => wit::Direction::Row,
                 Direction::Column => wit::Direction::Column,
+            },
+            align: match c.align {
+                Align::Start => wit::Align::Start,
+                Align::Center => wit::Align::Center,
+                Align::End => wit::Align::End,
             },
         }),
     }

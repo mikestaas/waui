@@ -47,8 +47,8 @@
 // The diff channel is a record comparison against the last export, the AS
 // twin of the Rust crate's retained `LAST_EXPORTED`: the last export is kept
 // as a flat list of records, and `diffOf(root)` reports every id'd node whose
-// record — kind, parent, label, style, or direction — differs from it, plus
-// every id it no longer contains, as `removed`. Before the first export it
+// record — kind, parent, label, style, direction, or align — differs from it,
+// plus every id it no longer contains, as `removed`. Before the first export it
 // reports every id'd node (the WIT bootstrap rule). This is the contract's
 // add, remove, and re-parent.
 //
@@ -57,6 +57,7 @@
 
 import { arenaAlloc, HOST_SCRATCH_BASE, RESULT_END } from '../abi/arena';
 import {
+  ALIGN_CENTER,
   COLOR_NEUTRAL,
   DIRECTION_COLUMN,
   DIRECTION_ROW,
@@ -118,6 +119,8 @@ export class Widget {
   size: i32 = SIZE_MEDIUM;
   /// Containers only.
   direction: i32 = DIRECTION_ROW;
+  /// Containers only: the cross-axis placement of the children.
+  align: i32 = ALIGN_CENTER;
   /// The children, in the contract's depth-first pre-order.
   children: Widget[];
   /// The label's UTF-16 source; materialized to the pool at projection.
@@ -220,6 +223,7 @@ export class Props {
   size: i32 = SIZE_MEDIUM;
   reserve: i32 = 0;
   direction: i32 = DIRECTION_ROW; // honored only by `container`
+  align: i32 = ALIGN_CENTER; // honored by `row`/`column`/`container`
 }
 
 /// The JSX factory that `../jsx.mjs` emits calls to (its `pragma`). The tag
@@ -278,8 +282,11 @@ export function h(tag: string, props: Props | null, ...children: Object[]): Widg
     if (props.reserve != 0) w = w.reserve(props.reserve);
     // Only `container` takes its direction from the props: `row`/`column`
     // fix it in their constructor, and applying the props default here would
-    // silently flip them.
+    // silently flip them. `align` is orthogonal to direction, so all three
+    // container tags take it (the props default is center, matching the
+    // factory default, so an unstated one is a no-op).
     if (tag == 'container') w.direction = props.direction;
+    if (tag == 'row' || tag == 'column' || tag == 'container') w.align = props.align;
   }
   return w;
 }
@@ -345,6 +352,7 @@ class FlatRec {
   color: i32 = COLOR_NEUTRAL;
   size: i32 = SIZE_MEDIUM;
   direction: i32 = DIRECTION_ROW;
+  align: i32 = ALIGN_CENTER;
   label: string = '';
 }
 
@@ -371,6 +379,7 @@ function flatten(w: Widget, parent: i32, out: FlatRec[]): void {
   r.color = w.color;
   r.size = w.size;
   r.direction = w.direction;
+  r.align = w.align;
   r.label = w.labelSrc;
   out.push(r);
   const id = w._id;
@@ -403,7 +412,7 @@ function isChanged(w: Widget, parent: i32, first: i32, last: FlatRec[]): i32 {
     // label and style. AS compares strings by content.
     let differs = w.kind != r.kind || parent != r.parent;
     if (w.kind == TAG_CONTAINER) {
-      differs = differs || w.direction != r.direction;
+      differs = differs || w.direction != r.direction || w.align != r.align;
     } else {
       differs = differs || w.color != r.color || w.size != r.size || w.labelSrc != r.label;
     }
@@ -461,7 +470,7 @@ function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMuta
   } else if (kind == TAG_INPUT) {
     emitInput(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size);
   } else {
-    emitContainer(node, id, parent, w.direction);
+    emitContainer(node, id, parent, w.direction, w.align);
   }
   // The `changed` mutation's index (the node's 0-based position among its
   // parent's children) sits after the 32-byte node; a plain node has none.

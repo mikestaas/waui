@@ -25,7 +25,8 @@ const [counterPath, stopwatchPath, todoPath] = [
 ];
 
 function node(n) {
-  if (n.kind === 'container') return `container{id:${n.id},parent:${n.parent},dir:${n.direction}}`;
+  if (n.kind === 'container')
+    return `container{id:${n.id},parent:${n.parent},dir:${n.direction},align:${n.align}}`;
   const style = `style:${n.style.color}:${n.style.size}`;
   if (n.kind === 'button')
     return `button{id:${n.id},parent:${n.parent},label:"${n.label}",${style}}`;
@@ -51,7 +52,7 @@ function mutation(m) {
   };
 
   expect([
-    'container{id:1,parent:null,dir:column}',
+    'container{id:1,parent:null,dir:column,align:center}',
     'button{id:2,parent:1,label:"+",style:positive:medium}',
     'text{id:3,parent:1,content:"0",style:neutral:large}',
     'button{id:4,parent:1,label:"-",style:negative:medium}',
@@ -81,7 +82,7 @@ function mutation(m) {
     'changed text{id:3,parent:1,content:"-1",style:negative:large} index:1',
   ]);
   expect([
-    'container{id:1,parent:null,dir:column}',
+    'container{id:1,parent:null,dir:column,align:center}',
     'button{id:2,parent:1,label:"+",style:positive:medium}',
     'text{id:3,parent:1,content:"-1",style:negative:large}',
     'button{id:4,parent:1,label:"-",style:negative:medium}',
@@ -113,7 +114,7 @@ function mutation(m) {
   const view = () => app.view().map(node);
 
   assert.deepEqual(view(), [
-    'container{id:1,parent:null,dir:column}',
+    'container{id:1,parent:null,dir:column,align:center}',
     'text{id:2,parent:1,content:"0 ms",style:neutral:large}',
     'button{id:3,parent:1,label:"start",style:positive:medium}',
   ]);
@@ -176,27 +177,28 @@ function mutation(m) {
 
   // Seeded: two active (newest first), one done, "2 left".
   assert.deepEqual(view(), [
-    'container{id:1,parent:null,dir:column}',
+    'container{id:1,parent:null,dir:column,align:center}',
     'text{id:2,parent:1,content:"todos",style:accent:large}',
-    'container{id:3,parent:1,dir:column}',
-    'container{id:104,parent:3,dir:row}',
+    'container{id:3,parent:1,dir:column,align:start}',
+    'container{id:4,parent:3,dir:column,align:start}',
+    'container{id:104,parent:4,dir:row,align:center}',
     'button{id:105,parent:104,label:"○",style:neutral:medium}',
     'text{id:106,parent:104,content:"walk the dog",style:neutral:medium}',
     'button{id:107,parent:104,label:"✕",style:negative:medium}',
-    'container{id:100,parent:3,dir:row}',
+    'container{id:100,parent:4,dir:row,align:center}',
     'button{id:101,parent:100,label:"○",style:neutral:medium}',
     'text{id:102,parent:100,content:"buy milk",style:neutral:medium}',
     'button{id:103,parent:100,label:"✕",style:negative:medium}',
-    'container{id:4,parent:1,dir:column}',
-    'container{id:508,parent:4,dir:row}',
+    'container{id:5,parent:3,dir:column,align:start}',
+    'container{id:508,parent:5,dir:row,align:center}',
     'button{id:109,parent:508,label:"✓",style:positive:medium}',
     'text{id:110,parent:508,content:"water plants",style:warning:medium}',
     'button{id:111,parent:508,label:"✕",style:negative:medium}',
-    'container{id:5,parent:1,dir:row}',
-    'text{id:6,parent:5,content:"2 left",style:neutral:small}',
-    'input{id:9,parent:5,content:"",style:neutral:medium}',
-    'button{id:7,parent:5,label:"add",style:positive:medium}',
-    'button{id:8,parent:5,label:"clear done",style:negative:medium}',
+    'container{id:6,parent:1,dir:row,align:center}',
+    'text{id:7,parent:6,content:"2 left",style:neutral:small}',
+    'input{id:8,parent:6,content:"",style:neutral:medium}',
+    'button{id:9,parent:6,label:"add",style:positive:medium}',
+    'button{id:10,parent:6,label:"clear done",style:negative:medium}',
   ]);
 
   // Type one char at a time: the host reports the whole buffer on each
@@ -206,22 +208,22 @@ function mutation(m) {
   let buf = '';
   for (const ch of 'buy coffee') {
     buf += ch;
-    app.text(9, buf);
+    app.text(8, buf);
   }
   assert.deepEqual(app.changes().map(mutation), [
-    'changed input{id:9,parent:5,content:"buy coffee",style:neutral:medium} index:1',
+    'changed input{id:8,parent:6,content:"buy coffee",style:neutral:medium} index:1',
   ]);
 
   // Add with the typed text: the new row and its three children, the count,
   // and the cleared field. The row lands at the top of the active column.
-  app.click(7);
+  app.click(9);
   assert.deepEqual(app.changes().map(mutation), [
-    'changed container{id:112,parent:3,dir:row} index:0',
+    'changed container{id:112,parent:4,dir:row,align:center} index:0',
     'changed button{id:113,parent:112,label:"○",style:neutral:medium} index:0',
     'changed text{id:114,parent:112,content:"buy coffee",style:neutral:medium} index:1',
     'changed button{id:115,parent:112,label:"✕",style:negative:medium} index:2',
-    'changed text{id:6,parent:5,content:"3 left",style:neutral:small} index:0',
-    'changed input{id:9,parent:5,content:"",style:neutral:medium} index:1',
+    'changed text{id:7,parent:6,content:"3 left",style:neutral:small} index:0',
+    'changed input{id:8,parent:6,content:"",style:neutral:medium} index:1',
   ]);
 
   // Toggle: the row is re-added under a new id (504), its children are
@@ -229,48 +231,49 @@ function mutation(m) {
   // removed. Six mutations.
   app.click(105);
   assert.deepEqual(app.changes().map(mutation), [
-    'changed container{id:504,parent:4,dir:row} index:0',
+    'changed container{id:504,parent:5,dir:row,align:center} index:0',
     'changed button{id:105,parent:504,label:"✓",style:positive:medium} index:0',
     'changed text{id:106,parent:504,content:"walk the dog",style:warning:medium} index:1',
     'changed button{id:107,parent:504,label:"✕",style:negative:medium} index:2',
-    'changed text{id:6,parent:5,content:"2 left",style:neutral:small} index:0',
+    'changed text{id:7,parent:6,content:"2 left",style:neutral:small} index:0',
     'removed{id:104}',
   ]);
 
   // view() is the full truth, and it is what the diff application yields:
   // the moved row at the top of the done column, newest first.
   assert.deepEqual(view(), [
-    'container{id:1,parent:null,dir:column}',
+    'container{id:1,parent:null,dir:column,align:center}',
     'text{id:2,parent:1,content:"todos",style:accent:large}',
-    'container{id:3,parent:1,dir:column}',
-    'container{id:112,parent:3,dir:row}',
+    'container{id:3,parent:1,dir:column,align:start}',
+    'container{id:4,parent:3,dir:column,align:start}',
+    'container{id:112,parent:4,dir:row,align:center}',
     'button{id:113,parent:112,label:"○",style:neutral:medium}',
     'text{id:114,parent:112,content:"buy coffee",style:neutral:medium}',
     'button{id:115,parent:112,label:"✕",style:negative:medium}',
-    'container{id:100,parent:3,dir:row}',
+    'container{id:100,parent:4,dir:row,align:center}',
     'button{id:101,parent:100,label:"○",style:neutral:medium}',
     'text{id:102,parent:100,content:"buy milk",style:neutral:medium}',
     'button{id:103,parent:100,label:"✕",style:negative:medium}',
-    'container{id:4,parent:1,dir:column}',
-    'container{id:504,parent:4,dir:row}',
+    'container{id:5,parent:3,dir:column,align:start}',
+    'container{id:504,parent:5,dir:row,align:center}',
     'button{id:105,parent:504,label:"✓",style:positive:medium}',
     'text{id:106,parent:504,content:"walk the dog",style:warning:medium}',
     'button{id:107,parent:504,label:"✕",style:negative:medium}',
-    'container{id:508,parent:4,dir:row}',
+    'container{id:508,parent:5,dir:row,align:center}',
     'button{id:109,parent:508,label:"✓",style:positive:medium}',
     'text{id:110,parent:508,content:"water plants",style:warning:medium}',
     'button{id:111,parent:508,label:"✕",style:negative:medium}',
-    'container{id:5,parent:1,dir:row}',
-    'text{id:6,parent:5,content:"2 left",style:neutral:small}',
-    'input{id:9,parent:5,content:"",style:neutral:medium}',
-    'button{id:7,parent:5,label:"add",style:positive:medium}',
-    'button{id:8,parent:5,label:"clear done",style:negative:medium}',
+    'container{id:6,parent:1,dir:row,align:center}',
+    'text{id:7,parent:6,content:"2 left",style:neutral:small}',
+    'input{id:8,parent:6,content:"",style:neutral:medium}',
+    'button{id:9,parent:6,label:"add",style:positive:medium}',
+    'button{id:10,parent:6,label:"clear done",style:negative:medium}',
   ]);
 
   // Delete: the count, then the row and its children. Five mutations.
   app.click(103);
   assert.deepEqual(app.changes().map(mutation), [
-    'changed text{id:6,parent:5,content:"1 left",style:neutral:small} index:0',
+    'changed text{id:7,parent:6,content:"1 left",style:neutral:small} index:0',
     'removed{id:100}',
     'removed{id:101}',
     'removed{id:102}',
@@ -279,7 +282,7 @@ function mutation(m) {
 
   // Clear done: only the removed rows — the count (the active list) is
   // unchanged, so it is not reported.
-  app.click(8);
+  app.click(10);
   assert.deepEqual(app.changes().map(mutation), [
     'removed{id:504}',
     'removed{id:105}',
@@ -300,7 +303,7 @@ function mutation(m) {
   // Bootstrap rule: a host that calls changes() first, without ever
   // calling view(), still gets the whole tree (as changed nodes).
   const app2 = await createApp(readFileSync(rel(todoPath)));
-  assert.equal(app2.changes().length, 21, 'first-ever changes() should export the whole tree');
+  assert.equal(app2.changes().length, 22, 'first-ever changes() should export the whole tree');
 
   // No unbounded growth: 60 more view() and 60 changes() calls must not
   // grow memory (both return guest-allocated buffers the host posts back).

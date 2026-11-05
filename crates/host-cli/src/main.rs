@@ -5,9 +5,10 @@
 //!
 //! Ignores the diff channel — it re-queries `view()` after every event,
 //! which stays correct because `view()` is always the full tree — and
-//! ignores `style` (plain ASCII has no palette). Treats `schedule` as
-//! advisory too: it has no timer, so a time-based readout advances only
-//! when a click re-queries `view()`.
+//! ignores `style` (plain ASCII has no palette) and `align` (an indented
+//! list has no cross axis to place on). Treats `schedule` as advisory too:
+//! it has no timer, so a time-based readout advances only when a click
+//! re-queries `view()`.
 
 use std::io::{self, BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -96,7 +97,7 @@ fn main() {
 fn first_input(node: &Tree) -> Option<u32> {
     match node {
         Tree::Input(id, _, _) => *id,
-        Tree::Row(children) | Tree::Column(children) => children.iter().find_map(first_input),
+        Tree::Row(_, children) | Tree::Column(_, children) => children.iter().find_map(first_input),
         _ => None,
     }
 }
@@ -120,13 +121,13 @@ fn render(node: &Tree, depth: usize, out: &mut String) {
             let id = id.map_or_else(String::new, |i| format!("{i}: "));
             out.push_str(&format!("{indent}[{id}\"{content}\"]\n"));
         }
-        Tree::Row(children) => {
+        Tree::Row(_, children) => {
             out.push_str(&format!("{indent}row:\n"));
             for child in children {
                 render(child, depth + 1, out);
             }
         }
-        Tree::Column(children) => {
+        Tree::Column(_, children) => {
             out.push_str(&format!("{indent}column:\n"));
             for child in children {
                 render(child, depth + 1, out);

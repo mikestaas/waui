@@ -81,7 +81,10 @@ interface widget {
   /// `std::boxed::Box` in generated Rust bindings.)
   ///
   /// Containers carry layout only — no `style` field; how a host decorates
-  /// one is a host concern, like focus.
+  /// one is a host concern, like focus. `direction` is the axis the children
+  /// stack along; `align` is the cross axis it places them on (a column
+  /// aligns its children horizontally, a row vertically). A host that cannot
+  /// express a token renders without it, as with `style`.
   ///
   /// A container's `id` is *required in practice*: its children name it in
   /// their `parent` field, and the host rebuilds the tree from that. A
@@ -91,11 +94,24 @@ interface widget {
     id: option<u32>,
     parent: option<u32>,
     direction: direction,
+    align: align,
   }
 
   enum direction {
     row,
     column,
+  }
+
+  /// How a container places its children along the cross axis. Each host maps
+  /// the tokens onto its own layout; a host that cannot express a token
+  /// renders without it (the default is `center`).
+  enum align {
+    /// The start of the cross axis (left for a column, top for a row).
+    start,
+    /// The middle of the cross axis.
+    center,
+    /// The end of the cross axis (right for a column, bottom for a row).
+    end,
   }
 
   variant node {

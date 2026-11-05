@@ -573,12 +573,12 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
     assert_eq!(text_with_id(&nodes, 2), Some("todos"));
     assert_eq!(style_of(&nodes, 2).unwrap().color, Color::Accent);
     assert_eq!(style_of(&nodes, 2).unwrap().size, Size::Large);
-    assert_eq!(text_with_id(&nodes, 6), Some("2 left"));
-    assert_eq!(style_of(&nodes, 6).unwrap().size, Size::Small);
+    assert_eq!(text_with_id(&nodes, 7), Some("2 left"));
+    assert_eq!(style_of(&nodes, 7).unwrap().size, Size::Small);
     // The input: empty, the host's default color, the row's size.
-    assert_eq!(input_with_id(&nodes, 9), Some(""));
-    assert_eq!(style_of(&nodes, 9).unwrap().color, Color::Neutral);
-    assert_eq!(style_of(&nodes, 9).unwrap().size, Size::Medium);
+    assert_eq!(input_with_id(&nodes, 8), Some(""));
+    assert_eq!(style_of(&nodes, 8).unwrap().color, Color::Neutral);
+    assert_eq!(style_of(&nodes, 8).unwrap().size, Size::Medium);
     // The rows: the moved-to-done row's id is 500+4i, the active's 100+4i;
     // the children keep their ids in both columns.
     assert_eq!(text_with_id(&nodes, 106), Some("walk the dog"));
@@ -588,32 +588,32 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
     assert_eq!(style_of(&nodes, 110).unwrap().color, Color::Warning);
     assert_eq!(style_of(&nodes, 109).unwrap().color, Color::Positive);
     assert_eq!(style_of(&nodes, 111).unwrap().color, Color::Negative);
-    assert_eq!(nodes.len(), 21, "the seeded tree has 21 id'd nodes");
+    assert_eq!(nodes.len(), 22, "the seeded tree has 22 id'd nodes");
 
     // Type: the host reports the whole buffer; the component stores it, and
     // the diff reports the input's content.
-    app.call_on_text(&mut *store, 9, "buy coffee")
+    app.call_on_text(&mut *store, 8, "buy coffee")
         .expect("on-text failed");
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
         mutations.iter().map(mutation_id).collect::<Vec<_>>(),
-        vec![9],
+        vec![8],
         "on-text: the input's content only"
     );
 
     // Add: the typed entry becomes the new todo; the field clears. Six
     // mutations — the new row and its three children, the count, the input.
-    app.call_on_click(&mut *store, 7).expect("on-click failed");
+    app.call_on_click(&mut *store, 9).expect("on-click failed");
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
         mutations.iter().map(mutation_id).collect::<Vec<_>>(),
-        vec![112, 113, 114, 115, 6, 9],
+        vec![112, 113, 114, 115, 7, 8],
         "add: the new row, its children, the count, the cleared input"
     );
     let nodes = app.call_view(&mut *store).expect("view failed");
     assert_eq!(text_with_id(&nodes, 114), Some("buy coffee"));
-    assert_eq!(input_with_id(&nodes, 9), Some(""));
-    assert_eq!(text_with_id(&nodes, 6), Some("3 left"));
+    assert_eq!(input_with_id(&nodes, 8), Some(""));
+    assert_eq!(text_with_id(&nodes, 7), Some("3 left"));
 
     // Toggle: the row is re-added under a new id (504), its children are
     // re-parented (same id, new parent), the count changes, and the old row
@@ -623,7 +623,7 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
         mutations.iter().map(mutation_id).collect::<Vec<_>>(),
-        vec![504, 105, 106, 107, 6, 104],
+        vec![504, 105, 106, 107, 7, 104],
         "toggle: the moved row, its re-parented children, the count, the old row"
     );
     let nodes = app.call_view(&mut *store).expect("view failed");
@@ -634,6 +634,7 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
             Some(1),
             Some(2),
             Some(3),
+            Some(4),
             Some(112),
             Some(113),
             Some(114),
@@ -642,7 +643,7 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
             Some(101),
             Some(102),
             Some(103),
-            Some(4),
+            Some(5),
             Some(504),
             Some(105),
             Some(106),
@@ -651,18 +652,18 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
             Some(109),
             Some(110),
             Some(111),
-            Some(5),
             Some(6),
-            Some(9),
             Some(7),
-            Some(8)
+            Some(8),
+            Some(9),
+            Some(10)
         ],
         "view() must be what the diff application yields"
     );
     // The move changed the row's style with its column.
     assert_eq!(style_of(&nodes, 105).unwrap().color, Color::Positive);
     assert_eq!(style_of(&nodes, 106).unwrap().color, Color::Warning);
-    assert_eq!(text_with_id(&nodes, 6), Some("2 left"));
+    assert_eq!(text_with_id(&nodes, 7), Some("2 left"));
 
     // Delete: the count, then the row and its children. Five mutations.
     app.call_on_click(&mut *store, 103)
@@ -670,13 +671,13 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
         mutations.iter().map(mutation_id).collect::<Vec<_>>(),
-        vec![6, 100, 101, 102, 103],
+        vec![7, 100, 101, 102, 103],
         "delete: the count and the row's subtree"
     );
 
     // Clear done: only the removed rows — the count (the active list) is
     // unchanged, so it is not reported.
-    app.call_on_click(&mut *store, 8).expect("on-click failed");
+    app.call_on_click(&mut *store, 10).expect("on-click failed");
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
         mutations.iter().map(mutation_id).collect::<Vec<_>>(),
@@ -748,7 +749,7 @@ fn assert_todo_bootstrap(app: &mut App, store: &mut Store<Host>) {
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
         mutations.len(),
-        21,
+        22,
         "first-ever changes() should export the whole tree: {}",
         mutations
             .iter()

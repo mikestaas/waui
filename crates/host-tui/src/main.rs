@@ -26,7 +26,9 @@ use host_shared::{build_tree, waui, App, AppImports, Retained, Tree};
 
 // The contract's style tokens, aliased to avoid clashing with ratatui's
 // `Color` and `Style`.
-use host_shared::waui::ui::widget::{Color as WColor, Size as WSize, Style as WStyle};
+use host_shared::waui::ui::widget::{
+    Align as WAlign, Color as WColor, Size as WSize, Style as WStyle,
+};
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -89,8 +91,8 @@ fn width_of(node: &Tree) -> u16 {
         Tree::Button(_, label, _) => label.chars().count() as u16 + 2, // borders
         // Framed like a button: the content plus its two border columns.
         Tree::Input(_, content, _) => content.chars().count() as u16 + 2,
-        Tree::Row(children) => children.iter().map(width_of).sum(),
-        Tree::Column(children) => children.iter().map(width_of).max().unwrap_or(0),
+        Tree::Row(_, children) => children.iter().map(width_of).sum(),
+        Tree::Column(_, children) => children.iter().map(width_of).max().unwrap_or(0),
     }
 }
 
@@ -99,8 +101,8 @@ fn height_of(node: &Tree) -> u16 {
         Tree::Text(..) => 1,
         Tree::Button(..) => 3, // border top, label, border bottom
         Tree::Input(..) => 3,  // border top, content, border bottom
-        Tree::Row(children) => children.iter().map(height_of).max().unwrap_or(0),
-        Tree::Column(children) => children.iter().map(height_of).sum(),
+        Tree::Row(_, children) => children.iter().map(height_of).max().unwrap_or(0),
+        Tree::Column(_, children) => children.iter().map(height_of).sum(),
     }
 }
 
@@ -128,6 +130,36 @@ fn node_style(s: &WStyle) -> Style {
             WSize::Medium => Modifier::empty(),
             WSize::Large => Modifier::BOLD,
         })
+}
+
+/// A child's cross-axis offset within the container's cross extent: the
+/// token's start/center/end. The extent is the container's content size
+/// along that axis (the widest/tallest child), so `center` reproduces the
+/// old full-width-rect behavior and `start`/`end` shift the child.
+fn cross_offset(align: WAlign, extent: u16, child: u16) -> u16 {
+    match align {
+        WAlign::Start => 0,
+        WAlign::Center => extent.saturating_sub(child) / 2,
+        WAlign::End => extent.saturating_sub(child),
+    }
+}
+
+/// Each child's rect: the main axis stacks children in order (flush from the
+/// container's origin); the cross axis places each child per `align`.
+fn child_rects(area: Rect, align: WAlign, row: bool, children: &[Tree]) -> Vec<Rect> {
+    let mut rects = Vec::with_capacity(children.len());
+    let mut main = 0u16;
+    for child in children {
+        let (w, h) = (width_of(child), height_of(child));
+        let (x, y) = if row {
+            (area.x + main, area.y + cross_offset(align, area.height, h))
+        } else {
+            (area.x + cross_offset(align, area.width, w), area.y + main)
+        };
+        main += if row { w } else { h };
+        rects.push(Rect::new(x, y, w, h));
+    }
+    rects
 }
 
 // --------------------------------------------------------------------------
@@ -183,18 +215,16 @@ fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>) {
                 area,
             );
         }
-        Tree::Row(children) => {
-            let layout =
-                Layout::horizontal(children.iter().map(|c| Constraint::Length(width_of(c))));
-            for (child, child_area) in children.iter().zip(layout.split(area).iter()) {
-                render(frame, child, *child_area, focus);
+        Tree::Row(align, children) => {
+            let areas = child_rects(area, *align, true, children);
+            for (child, child_area) in children.iter().zip(areas) {
+                render(frame, child, child_area, focus);
             }
         }
-        Tree::Column(children) => {
-            let layout =
-                Layout::vertical(children.iter().map(|c| Constraint::Length(height_of(c))));
-            for (child, child_area) in children.iter().zip(layout.split(area).iter()) {
-                render(frame, child, *child_area, focus);
+        Tree::Column(align, children) => {
+            let areas = child_rects(area, *align, false, children);
+            for (child, child_area) in children.iter().zip(areas) {
+                render(frame, child, child_area, focus);
             }
         }
     }
@@ -285,7 +315,7 @@ fn focusables(node: &Tree, out: &mut Vec<FocusTarget>) {
                 });
             }
         }
-        Tree::Row(children) | Tree::Column(children) => {
+        Tree::Row(_, children) | Tree::Column(_, children) => {
             for child in children {
                 focusables(child, out);
             }
@@ -298,7 +328,7 @@ fn focusables(node: &Tree, out: &mut Vec<FocusTarget>) {
 fn input_content(node: &Tree, id: u32) -> Option<&str> {
     match node {
         Tree::Input(iid, content, _) if *iid == Some(id) => Some(content),
-        Tree::Row(children) | Tree::Column(children) => {
+        Tree::Row(_, children) | Tree::Column(_, children) => {
             children.iter().find_map(|c| input_content(c, id))
         }
         _ => None,

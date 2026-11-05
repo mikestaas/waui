@@ -25,7 +25,7 @@ wasmtime::component::bindgen!({
 
 // `Node` and `Mutation` resolve to the aliases the macro emits at this
 // crate's root.
-use waui::ui::widget::{Direction, Style};
+use waui::ui::widget::{Align, Direction, Style};
 
 /// A rebuilt widget tree.
 #[derive(Debug, Clone)]
@@ -38,8 +38,10 @@ pub enum Tree {
     /// (widget id — `None` for an input a component did not give an id, the
     /// input's content, style)
     Input(Option<u32>, String, Style),
-    Row(Vec<Tree>),
-    Column(Vec<Tree>),
+    /// (the cross-axis alignment, the children)
+    Row(Align, Vec<Tree>),
+    /// (the cross-axis alignment, the children)
+    Column(Align, Vec<Tree>),
 }
 
 /// The node's id, if it has one (see the WIT identity note: a node the
@@ -69,9 +71,9 @@ fn to_tree(node: &Node) -> Tree {
         Node::Input(i) => Tree::Input(i.id, i.content.clone(), i.style),
         Node::Container(c) => {
             if c.direction == Direction::Row {
-                Tree::Row(Vec::new())
+                Tree::Row(c.align, Vec::new())
             } else {
-                Tree::Column(Vec::new())
+                Tree::Column(c.align, Vec::new())
             }
         }
     }
@@ -119,7 +121,7 @@ pub fn build_tree(nodes: &[Node]) -> Tree {
         }
         let (head, tail) = trees.split_at_mut(first);
         match head[i].as_mut() {
-            Some(Tree::Row(children) | Tree::Column(children)) => {
+            Some(Tree::Row(_, children) | Tree::Column(_, children)) => {
                 for k in kids {
                     if let Some(child) = tail[k - first].take() {
                         children.push(child);
@@ -141,9 +143,9 @@ pub fn build_tree(nodes: &[Node]) -> Tree {
         }
     }
     match roots.len() {
-        0 => Tree::Column(Vec::new()),
+        0 => Tree::Column(Align::Center, Vec::new()),
         1 => roots.pop().unwrap(),
-        _ => Tree::Column(roots),
+        _ => Tree::Column(Align::Center, roots),
     }
 }
 
@@ -305,6 +307,7 @@ mod tests {
             id: Some(id),
             parent,
             direction: Direction::Column,
+            align: Align::Center,
         })
     }
 
@@ -463,12 +466,34 @@ mod tests {
         ]);
         assert!(r.apply(&[changed(text(3, Some(1), "-1"), 0)]));
         let tree = build_tree(r.nodes());
-        if let Tree::Column(children) = &tree {
+        if let Tree::Column(_, children) = &tree {
             // List order: the readout first, then the two buttons.
             assert_eq!(children.len(), 3);
             assert!(matches!(&children[0], Tree::Text(c, _) if c.as_str() == "-1"));
         } else {
             panic!("expected a column of three children");
+        }
+    }
+
+    #[test]
+    fn rebuild_carries_a_container_align() {
+        // The todo's shape: a centered root with a start-align wrapper.
+        let tree = build_tree(&[
+            cont(1, None),
+            Node::Container(Container {
+                id: Some(3),
+                parent: Some(1),
+                direction: Direction::Column,
+                align: Align::Start,
+            }),
+            text(4, Some(3), "a"),
+        ]);
+        match &tree {
+            Tree::Column(Align::Center, children) => match &children[0] {
+                Tree::Column(Align::Start, kids) => assert_eq!(kids.len(), 1),
+                _ => panic!("the wrapper should keep its start align"),
+            },
+            _ => panic!("expected the centered root column"),
         }
     }
 }
