@@ -4,11 +4,18 @@
 //! the ABI. The flat list is the WIT's (see `wit/`); the nested tree spares
 //! authors hand-assigning parent ids and pre-order.
 //!
-//! This crate is dependency-free: its token enums ([`Color`], [`Size`],
-//! [`Direction`], [`Align`]) are plain Rust mirrors of the WIT contract's,
-//! and [`lower`] is generic over the output type. Each `wit-bindgen
-//! generate!` is crate-local, so a component passes a projection that builds
-//! *its own* generated `Node` — written once per component.
+//! This crate has no runtime dependencies: its token enums ([`Color`],
+//! [`Size`], [`Direction`], [`Align`]) are plain Rust mirrors of the WIT
+//! contract's, and [`lower`] is generic over the output type. Its one
+//! dependency is a proc-macro crate, compile-time only: it generates the
+//! [`to_node`] projection and never lands in the component's wasm.
+//!
+//! **Projection.** Each `wit-bindgen generate!` is crate-local, so the
+//! generated `Node` and `widget` records differ per component and the
+//! projection onto them can't be a shared `fn`. The [`to_node`] macro takes
+//! the component's `widget` module (`component_ui::to_node!(wit)`) and
+//! generates the `fn to_node` to pass to [`lower`] and the `changes` diff,
+//! in terms of the component's own generated types.
 //!
 //! Trees are usually written with the [`ui`] macro, a JSX-like literal:
 //! `ui! { column id = 1, { button label = "+", ... } }` builds the same
@@ -373,6 +380,12 @@ where
         }
     }
 }
+
+// ------------------------------------------------------------------ projection
+
+/// The projection from the ergonomic [`Tree`] to a component's generated
+/// `Node` — see the crate docs, *Projection*.
+pub use component_ui_macros::to_node;
 
 // ------------------------------------------------------------------ the diff
 

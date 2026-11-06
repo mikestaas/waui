@@ -10,11 +10,14 @@
 //! (cargo + wit-bindgen) and its AssemblyScript one (asc + the hand-rolled
 //! ABI). The assertions are shared.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::component::*;
 use wasmtime::{Engine, Store};
+use waui_test::{
+    as_toolchain_available, build_component, build_component_as, component_path, component_path_as,
+    AS_BUILD_LOCK, RUST_BUILD_LOCK,
+};
 
 wasmtime::component::bindgen!({
     world: "app",
@@ -45,186 +48,6 @@ impl AppImports for Host {
 // The `widget` interface is pulled into the world, so the generated
 // bindings require this empty marker impl.
 impl waui::ui::widget::Host for Host {}
-
-fn waui_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-}
-
-fn component_path(demo: &str) -> PathBuf {
-    waui_root()
-        .join("target/components")
-        .join(format!("{demo}.component.wasm"))
-}
-
-fn component_path_as(demo: &str) -> PathBuf {
-    waui_root()
-        .join("target/components")
-        .join(format!("{demo}-as.component.wasm"))
-}
-
-/// Build the component and lift it, so the test is self-contained. Cargo
-/// names the artifact with `_` where the crate name has `-`.
-fn build_component(demo: &str) {
-    let root = waui_root();
-    let wasm = root
-        .join("target/wasm32-unknown-unknown/release")
-        .join(format!("{}{}", demo.replace('-', "_"), ".wasm"));
-    let out = component_path(demo);
-    if let Some(parent) = out.parent() {
-        std::fs::create_dir_all(parent).expect("failed to create target/components");
-    }
-
-    let status = Command::new("cargo")
-        .args([
-            "build",
-            "-p",
-            demo,
-            "--release",
-            "--target",
-            "wasm32-unknown-unknown",
-        ])
-        .current_dir(&root)
-        .status()
-        .expect("failed to run cargo");
-    assert!(status.success(), "failed to build {demo}");
-
-    let status = Command::new("wasm-tools")
-        .args([
-            "component",
-            "new",
-            wasm.to_str().unwrap(),
-            "--output",
-            out.to_str().unwrap(),
-        ])
-        .status()
-        .expect("failed to run wasm-tools");
-    assert!(status.success(), "failed to lift {demo} into a component");
-}
-
-// The AssemblyScript build needs node + the local npm toolchain (asc, babel);
-// without it the AS tests skip rather than fail.
-fn as_toolchain_available() -> bool {
-    waui_root().join("node_modules/.bin/asc").exists()
-        && waui_root().join("node_modules/@babel/core").exists()
-        && Command::new("node")
-            .arg("--version")
-            .output()
-            .is_ok_and(|o| o.status.success())
-}
-
-// The tests share their built artifacts on disk, and run on parallel
-// threads: the build *and* load window must be serialized per artifact
-// file, so that one test's lift cannot clobber the file while a sibling
-// test is reading it.
-static RUST_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-static AS_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Build the AssemblyScript component and lift it:
-/// jsx (babel lowers the `.tsx` to `h()` calls — asc has no JSX parser)
-/// -> asc (the incremental runtime) -> the `env.abort` patch -> export rename
-/// -> component embed (the WIT) -> component new.
-/// (Callers hold `AS_BUILD_LOCK` across the build *and* the load, so a
-/// sibling test cannot lift over the file while we read it.)
-fn build_component_as(demo: &str) {
-    let root = waui_root();
-    std::fs::create_dir_all(root.join("target/assembly"))
-        .expect("failed to create target/assembly");
-    std::fs::create_dir_all(root.join("target/components"))
-        .expect("failed to create target/components");
-
-    let src = format!("assembly/{demo}/index.tsx");
-    let gen = format!("assembly/{demo}/index.gen.ts");
-    let raw = root
-        .join("target/assembly")
-        .join(format!("{demo}.raw.wasm"));
-    let core = root
-        .join("target/assembly")
-        .join(format!("{demo}.core.wasm"));
-    let renamed = root.join("target/assembly").join(format!("{demo}-as.wasm"));
-    let embedded = root
-        .join("target/assembly")
-        .join(format!("{demo}-as.embedded.wasm"));
-    let out = component_path_as(demo);
-
-    let mut steps: Vec<Command> = Vec::new();
-    {
-        let mut c = Command::new("node");
-        c.args(["assembly/jsx.mjs", src.as_str(), gen.as_str()]);
-        steps.push(c);
-    }
-    {
-        let mut c = Command::new("npx");
-        c.args(["asc", gen.as_str(), "--outFile", raw.to_str().unwrap()]);
-        c.args([
-            "-O",
-            "--noAssert",
-            "--runtime",
-            "incremental",
-            "--memoryBase",
-            "65536",
-            "--initialMemory",
-            "2",
-        ]);
-        steps.push(c);
-    }
-    {
-        // The incremental runtime's one import (`env.abort`, its OOM path)
-        // is replaced with an in-module `unreachable` so the lifted
-        // component is import-free again (see assembly/patch-env-abort.mjs).
-        let mut c = Command::new("node");
-        c.args([
-            "assembly/patch-env-abort.mjs",
-            raw.to_str().unwrap(),
-            core.to_str().unwrap(),
-        ]);
-        steps.push(c);
-    }
-    {
-        let mut c = Command::new("node");
-        c.args([
-            "assembly/rename-exports.mjs",
-            core.to_str().unwrap(),
-            renamed.to_str().unwrap(),
-            "onclick=on-click",
-            "ontext=on-text",
-            "ontick=on-tick",
-        ]);
-        steps.push(c);
-    }
-    {
-        let mut c = Command::new("wasm-tools");
-        c.args([
-            "component",
-            "embed",
-            "wit/",
-            renamed.to_str().unwrap(),
-            "--output",
-            embedded.to_str().unwrap(),
-        ]);
-        steps.push(c);
-    }
-    {
-        let mut c = Command::new("wasm-tools");
-        c.args([
-            "component",
-            "new",
-            embedded.to_str().unwrap(),
-            "--output",
-            out.to_str().unwrap(),
-        ]);
-        steps.push(c);
-    }
-    for step in &mut steps {
-        step.current_dir(&root);
-        let status = step.status().expect("failed to run a build tool");
-        assert!(
-            status.success(),
-            "failed to build the AssemblyScript {demo}"
-        );
-    }
-}
 
 /// Link and instantiate a component against our world, returning the live
 /// binding. The engine and store stay in the caller (the store borrows the

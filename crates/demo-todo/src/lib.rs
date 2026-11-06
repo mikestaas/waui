@@ -39,7 +39,7 @@ use std::sync::Mutex;
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
-use component_ui::{ui, Align, Color, Direction, Size, Style, Tree};
+use component_ui::{ui, Align, Color, Size, Tree};
 use waui::ui::widget as wit;
 
 /// One todo. `idx` is its creation index, the source of its node ids (never
@@ -157,56 +157,8 @@ fn tree(active: &[Todo], done: &[Todo], input: &str) -> Tree {
     }
 }
 
-/// Project the ergonomic tree onto this crate's generated types.
-fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
-    let style = |s: Style| wit::Style {
-        color: match s.color {
-            Color::Neutral => wit::Color::Neutral,
-            Color::Accent => wit::Color::Accent,
-            Color::Positive => wit::Color::Positive,
-            Color::Negative => wit::Color::Negative,
-            Color::Warning => wit::Color::Warning,
-        },
-        size: match s.size {
-            Size::Small => wit::Size::Small,
-            Size::Medium => wit::Size::Medium,
-            Size::Large => wit::Size::Large,
-        },
-    };
-    match tree {
-        Tree::Text(t) => Node::Text(wit::Text {
-            id: t.id,
-            parent,
-            content: t.content.clone(),
-            style: style(t.style),
-        }),
-        Tree::Button(b) => Node::Button(wit::Button {
-            id: b.id,
-            parent,
-            label: b.label.clone(),
-            style: style(b.style),
-        }),
-        Tree::Input(i) => Node::Input(wit::Input {
-            id: i.id,
-            parent,
-            content: i.content.clone(),
-            style: style(i.style),
-        }),
-        Tree::Container(c) => Node::Container(wit::Container {
-            id: c.id,
-            parent,
-            direction: match c.direction {
-                Direction::Row => wit::Direction::Row,
-                Direction::Column => wit::Direction::Column,
-            },
-            align: match c.align {
-                Align::Start => wit::Align::Start,
-                Align::Center => wit::Align::Center,
-                Align::End => wit::Align::End,
-            },
-        }),
-    }
-}
+// Project the ergonomic tree onto this crate's generated types.
+component_ui::to_node!(wit);
 
 struct TodoList;
 
