@@ -27,8 +27,12 @@ allowed. The component outputs it compares stay the source of truth.
 
 ## Multiple sessions
 
-- Multiple sessions run at once. Use a git worktree, not a scratch directory:
-  a worktree is a real checkout that shares the repo's history, so `make`,
-  the tests, and the git tooling work unchanged.
+- When other sessions are active in this repo, work in your own git
+  worktree, never in the main checkout. "The main checkout is clean"
+  is not an exemption.
+- Use a worktree, not a scratch directory: a worktree shares the repo's
+  history, so `make`, the tests, and the git tooling work unchanged.
+- Create one with `git worktree add ../waui-<task> -b <branch>`, then
+  move the session there.
 - Commit work once it is done and verified. Don't leave finished work
   uncommitted.
