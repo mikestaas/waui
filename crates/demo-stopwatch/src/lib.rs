@@ -1,14 +1,13 @@
 //! A stopwatch that uses the host's clock: the component polls `now()` and
 //! renders elapsed time.
 //!
-//! Its diff is state-dependent: while running, the readout's value changes
-//! with the clock, so each `changes` reports it; while paused, it reports
-//! nothing. The refresh that makes the running readout visible is requested
-//! by the component — `schedule` at 250ms while running, 0 while paused —
-//! so the host wakes it only while the readout moves. The view is a nested
-//! `component-ui` tree projected into the contract's flat list at the ABI
-//! boundary; the diff state lives in `component-ui`, which retains the last
-//! export and reports what differs.
+//! Its diff is state-dependent: while running, the readout changes with the
+//! clock, so each `changes` reports it; while paused, it reports nothing.
+//! It requests the refresh that makes the running readout visible —
+//! `schedule` at 250ms while running, 0 while paused.
+//!
+//! The view is a nested `component-ui` tree (see that crate for the tree,
+//! the diff, and the flat-list projection).
 
 wit_bindgen::generate!({
     world: "app",
@@ -73,9 +72,7 @@ fn tree(elapsed: u64, running: bool) -> Tree {
     }
 }
 
-/// Project the ergonomic tree's tokens onto this crate's generated types:
-/// each `generate!` is crate-local, so the two type families are distinct
-/// even where identical in shape.
+/// Project the ergonomic tree onto this crate's generated types.
 fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
     let style = |s: Style| wit::Style {
         color: match s.color {
@@ -133,15 +130,12 @@ impl Guest for Stopwatch {
         let running = RUNNING.load(Ordering::Relaxed);
         let elapsed = elapsed();
         let t = tree(elapsed, running);
-        // The full snapshot becomes the reference the next diff compares
-        // against.
         component_ui::note_view(&t);
         component_ui::lower(&t, to_node)
     }
 
     fn changes() -> Vec<Mutation> {
-        // `component-ui`'s diff against its retained last export; while
-        // paused, nothing differs and this is empty.
+        // While paused, nothing differs and this is empty.
         component_ui::diff(
             &tree(elapsed(), RUNNING.load(Ordering::Relaxed)),
             |c| match c {
@@ -170,8 +164,6 @@ impl Guest for Stopwatch {
             START.store(now, Ordering::Relaxed);
             RUNNING.store(true, Ordering::Relaxed);
         }
-        // The refresh follows `running`: the host wakes the component at
-        // the period while running, never while paused.
         schedule(if RUNNING.load(Ordering::Relaxed) {
             REFRESH_PERIOD
         } else {
@@ -179,15 +171,9 @@ impl Guest for Stopwatch {
         });
     }
 
-    // A tick changes no state: while running, the next `changes` re-derives
-    // the readout and reports it; while paused, the value is frozen and the
-    // diff is empty.
     fn on_tick() {}
 
-    // The world's text-input channel: the stopwatch has no input, so the
-    // host's buffer is ignored (the export is required on every component).
-    // The buffer is a string parameter the callee owns; the `String`'s drop
-    // frees it (it came through the guest's `cabi_realloc`).
+    // No input, so the buffer is ignored; the `String`'s drop frees it.
     fn on_text(_id: u32, _text: String) {}
 }
 

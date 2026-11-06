@@ -1,20 +1,11 @@
 //! A counter whose UI and logic live entirely in the component.
 //!
-//! The host is a plain renderer: it draws what `view()` returns and
-//! forwards clicks via `on-click`. `on-text` is the world's text-input
-//! channel; the counter has no input, so it is a no-op here (the world
-//! requires the export on every component).
+//! The view is a nested `component-ui` tree (see that crate for the tree,
+//! the diff, and the flat-list projection). Only the readout depends on
+//! state; the handler mutates state only, and the diff reports it.
 //!
-//! The view is a nested `component-ui` tree projected into the contract's
-//! flat node list at the ABI boundary.
-//!
-//! The diff: only the readout depends on state, so after an event the
-//! component reports that node (the whole tree on first contact). The diff
-//! state lives in `component-ui`, which retains the last export and reports
-//! what differs; the handler mutates state only.
-//!
-//! It never calls `schedule` (it changes only on a click), so the host
-//! never wakes it.
+//! The counter has no input and never calls `schedule` (it changes only on
+//! a click).
 
 wit_bindgen::generate!({
     world: "app",
@@ -51,9 +42,7 @@ fn tree(value: i32) -> Tree {
     }
 }
 
-/// Project the ergonomic tree's tokens onto this crate's generated types:
-/// each `generate!` is crate-local, so the two type families are distinct
-/// even where identical in shape.
+/// Project the ergonomic tree onto this crate's generated types.
 fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
     let style = |s: Style| wit::Style {
         color: match s.color {
@@ -110,15 +99,12 @@ impl Guest for Counter {
     fn view() -> Vec<Node> {
         let value = VALUE.load(Ordering::Relaxed);
         let t = tree(value);
-        // The full snapshot becomes the reference the next diff compares
-        // against.
         component_ui::note_view(&t);
         component_ui::lower(&t, to_node)
     }
 
     fn changes() -> Vec<Mutation> {
-        // Bootstrap, a value change, a removal: `component-ui`'s diff
-        // against its retained last export.
+        // Reports the changed readout (the whole tree on first contact).
         component_ui::diff(&tree(VALUE.load(Ordering::Relaxed)), |c| match c {
             component_ui::DiffNode::Changed(node, parent, index) => {
                 Mutation::Changed(wit::Changed {
@@ -136,17 +122,13 @@ impl Guest for Counter {
             4 => -1,
             _ => 0,
         };
-        // State only: the next build re-derives the readout, and the diff
-        // compares.
+        // State only: the next build re-derives the readout, the diff reports it.
         if delta != 0 {
             VALUE.fetch_add(delta, Ordering::Relaxed);
         }
     }
 
-    // The world's text-input channel: the counter has no input, so the
-    // host's buffer is ignored (the export is required on every component).
-    // The buffer is a string parameter the callee owns; the `String`'s drop
-    // frees it (it came through the guest's `cabi_realloc`).
+    // No input, so the buffer is ignored; the `String`'s drop frees it.
     fn on_text(_id: u32, _text: String) {}
 
     fn on_tick() {}

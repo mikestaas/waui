@@ -1,11 +1,8 @@
 //! The component-side widget tree: a nested [`Tree`] that authors write and
 //! [`lower`], which projects it into the contract's flat, pre-ordered node
 //! list — the mirror of `host-shared`'s `build_tree` on the other side of
-//! the ABI.
-//!
-//! The WIT contract has no recursive types, so the tree crosses the ABI as
-//! a flat list; hand-assigning parent ids and pre-order is what authors
-//! would otherwise do.
+//! the ABI. The flat list is the WIT's (see `wit/`); the nested tree spares
+//! authors hand-assigning parent ids and pre-order.
 //!
 //! This crate is dependency-free: its token enums ([`Color`], [`Size`],
 //! [`Direction`], [`Align`]) are plain Rust mirrors of the WIT contract's,
@@ -19,11 +16,10 @@
 //! spliced into the container's children (the JSX array idiom), so a
 //! variable number of rows is part of the literal.
 //!
-//! **Identity.** A node's `id` (optional, mirroring the WIT) is its handle:
-//! what `on-click` targets and what the `changes` diff channel keys on. A
-//! node that is never clicked, diffed, or removed may omit its id. But a
-//! node must *have* one if it has children (its children name it in their
-//! `parent` field) — asserted in debug builds.
+//! **Identity.** Per the WIT, a node's `id` (optional) is its handle: what
+//! `on-click` targets and what the diff keys on. A node with children must
+//! have one (its children name it in their `parent` field) — asserted in
+//! debug builds.
 //!
 //! **Diff.** The `changes` channel is owned by the layer, not the component:
 //! the last export this component made is retained ([`note_view`] for a full

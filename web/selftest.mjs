@@ -88,8 +88,7 @@ function mutation(m) {
     'button{id:4,parent:1,label:"-",style:negative:medium}',
   ]);
 
-  // Bootstrap rule: a host that calls changes() first, without ever
-  // calling view(), still gets the whole tree (as changed nodes).
+  // The WIT bootstrap rule.
   const app2 = await createApp(readFileSync(rel(counterPath)));
   assert.equal(app2.changes().length, 4, 'first-ever changes() should export the whole tree');
 
@@ -300,8 +299,7 @@ function mutation(m) {
   app.tick();
   assert.deepEqual(app.changes(), []);
 
-  // Bootstrap rule: a host that calls changes() first, without ever
-  // calling view(), still gets the whole tree (as changed nodes).
+  // The WIT bootstrap rule.
   const app2 = await createApp(readFileSync(rel(todoPath)));
   assert.equal(app2.changes().length, 22, 'first-ever changes() should export the whole tree');
 

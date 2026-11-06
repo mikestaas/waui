@@ -6,8 +6,8 @@
 // the arena, and returns 0 on success (the first failing scenario's index
 // otherwise).
 //
-// It is import-free after `../patch-env-abort.mjs` (the incremental runtime's
-// one import is its OOM path), so Node instantiates it directly.
+// It is import-free after `../patch-env-abort.mjs`, so Node instantiates it
+// directly.
 
 import { arenaReset } from '../abi/arena';
 import {

@@ -392,8 +392,6 @@ fn counter_dump_as() {
     build_component_as("demo-counter");
     let path = component_path_as("demo-counter");
 
-    // The counter's content is deterministic, so the two producers must
-    // render byte-identical PNGs.
     let rust = {
         let _g = RUST_BUILD_LOCK
             .lock()

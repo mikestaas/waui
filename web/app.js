@@ -1,15 +1,14 @@
 // The DOM host: rebuilds the widget tree from the flat node list (the same
 // contract the other hosts use) and renders it as plain elements.
 //
-// It follows the diff protocol: the initial `view()` is a full snapshot,
-// and after each click, text-input edit, or scheduled wake the host applies
-// the component's `changes()` to a retained copy of the node list.
-// Content-only mutations (a text, button, or input whose position in the
-// tree is unchanged) are applied in place — the existing element is
-// updated, no DOM rebuild, and the delegated click and input listeners
-// survive. Anything structural (removals, additions, re-parenting,
-// container changes) falls back to a full rebuild from the retained tree;
-// an empty diff does nothing.
+// It follows the diff protocol (see `../wit/`): after each click,
+// text-input edit, or scheduled wake the host applies the component's
+// `changes()` to a retained copy of the node list. Content-only mutations
+// (a text, button, or input whose position in the tree is unchanged) are
+// applied in place — the existing element is updated, no DOM rebuild, and
+// the delegated click and input listeners survive. Anything structural
+// (removals, additions, re-parenting, container changes) falls back to a
+// full rebuild from the retained tree; an empty diff does nothing.
 //
 // Time-based refresh is requested by the component: its `schedule` import
 // arms (or stops, with 0) the host's wake loop, which calls `on-tick()`
@@ -195,10 +194,9 @@ function restyle(n) {
     el.textContent = n.content;
     el.className = `waui waui-text waui-${n.style.color} waui-${n.style.size}`;
   } else if (n.kind === 'input') {
-    // The component is the source of truth for the buffer; apply its
-    // answer, but skip the field when it echoes the buffer the user just
-    // typed (setting .value to the same text moves the caret in some
-    // browsers).
+    // Apply the component's answer, but skip the field when it just echoes
+    // the buffer the user typed (setting .value to the same text moves the
+    // caret in some browsers).
     if (el.value !== n.content) el.value = n.content;
     el.className = `waui waui-input waui-${n.style.color} waui-${n.style.size}`;
   }
@@ -238,8 +236,8 @@ rootEl.addEventListener('click', (e) => {
 });
 
 // The `input` event bubbles, so one delegated listener covers every field.
-// The component is the source of truth for the buffer: its answer (echo,
-// transform, or ignore) lands through the diff like any other change.
+// The component's answer for the buffer lands through the diff, like any
+// other change.
 rootEl.addEventListener('input', (e) => {
   const field = e.target.closest('input[data-id]');
   if (!field) return;

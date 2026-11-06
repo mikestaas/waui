@@ -8,67 +8,24 @@ component changes.
 
 ## The contract (`wit/`, package `waui:ui`)
 
-- **`widget` interface** — `text`, `button`, `input`, `container`
-  (row/column) records, a `node` variant (one case per record), a semantic
-  `style` (a `color` token and a `size` token), and a `mutation` variant:
-  `changed` (the `node` and its 0-based sibling `index`) and `removed(u32)`.
-  - WIT types cannot be recursive, so the tree is a **flat list of nodes in
-    depth-first pre-order**; each node carries a `parent` id and hosts rebuild
-    the tree from the list (Rust hosts: `host-shared`; web: `web/app.js`).
-  - A node's `id` is what `on-click` targets and what `changed` keys on. A
-    node never clicked, diffed, or removed may omit it; a node with children
-    must have one (they name it); a `changed` for an id-less node is
-    unaddressable, and hosts ignore it.
-  - `style` is intent, not pixels: hosts map the tokens onto their own
-    palette, and a host that cannot express a token renders without it. WIT
-    enums with ≤256 variants lay out as one byte, so `style` costs two bytes
-    per node.
-  - A container's `direction` (row/column) sets the axis its children stack
-    along; its `align` (start/center/end) places them on the cross axis. Like
-    `style`, it is intent: a host that cannot express a token renders without
-    it (the default is `center`).
-- **`app` world** — exports `view() -> list<node>` (the current tree),
-  `changes() -> list<mutation>` (the diff since the last export),
-  `on-click(u32)`, `on-text(u32, string)` (the host's whole input buffer on
-  every edit; the component is the source of truth for the field), and
-  `on-tick()`; imports `now() -> u64` (host clock, ms) and `schedule(u64)`
-  (the component's refresh request, in ms).
+- **`widget` interface** — a minimal, renderer-agnostic widget tree: `text`,
+  `button`, `input`, and `container` (row/column) records, a `node` variant,
+  a semantic `style` (a color and a size token), and a `mutation` variant
+  (`changed`, `removed`). The tree crosses the ABI as a flat, pre-ordered node
+  list; the rules for the list, node identity, and the diff are documented in
+  [`widget.wit`](wit/widget.wit).
+- **`app` world** — the component/host protocol: the component exports `view`
+  (the current tree) and `changes` (the diff), and the host calls `on-click`,
+  `on-text`, and `on-tick`; the component imports `now` (a clock) and
+  `schedule` (a refresh request). The protocol rules are documented in
+  [`app.wit`](wit/app.wit). Hosts may ignore parts of the contract (host-cli
+  ignores `style`, `align`, `changes`, and `schedule`); components cannot,
+  because the node layout is part of the ABI.
 
-Protocol rules:
-
-- `view()` is always the full tree; a host may re-query it after every event.
-- `changes()` is empty when nothing changed; a component that has never
-  exported its tree reports every node as `changed`, so a host may bootstrap
-  from `changes` alone.
-- The host calls `on-text(id, text)` on every edit to the input `id`, with
-  the whole current buffer; the component stores it, and the input node's
-  content re-derives from it (the component is the source of truth for the
-  field).
-- The host calls `on-tick` only at the period the component requests with
-  `schedule` (a new request restarts it; 0 cancels); a component that never
-  schedules is never woken.
-- Hosts may ignore parts of the contract (host-cli ignores `style`, `align`,
-  `changes`, and `schedule`). Components cannot: the node layout is part of
-  the ABI, so a component must be built against the WIT it targets.
-
-**Authoring.** Hand-writing the flat list (parent ids, pre-order) is
-error-prone, so component authors write a nested tree and project it:
-
-- Rust: the [`component-ui`](crates/component-ui/) crate — a nested `Tree`
-  with `.id()`/`.style()` builders, a `lower` that emits the flat list, and
-  a `diff` that reports what changed since the last export. It is
-  dependency-free; `lower` is generic over the output type because each
-  `wit-bindgen generate!` is crate-local, so each demo writes one small
-  projection onto its own generated `Node`.
-- AssemblyScript: `assembly/ui/tree` — the same shape in AS: chainable
-  `.id()`/`.label()`/`.style()` builders and the same diff (a record
-  comparison against the retained last export). See
-  [`assembly/README.md`](assembly/README.md).
-
-The demos author their trees with these layers: Rust in the `ui!` macro (a
-JSX-like literal; a list of trees is spliced into a container's children),
-AssemblyScript in JSX (lowered to `h` calls; a dynamic list of children is a
-child the factory splices in).
+**Authoring.** Component authors write a nested tree and project it onto the
+flat list. Rust uses the [`component-ui`](crates/component-ui/) crate;
+AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
+[`assembly/README.md`](assembly/README.md).
 
 ## Layout
 

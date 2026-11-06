@@ -19,12 +19,9 @@
 //                              string's pointer + length, in the *guest's*
 //                              memory (the canonical ABI). The host has no
 //                              memory of its own, so `text()` allocates the
-//                              buffer through the guest's `cabi_realloc`
-//                              (the canonical allocator) and writes to it.
-//                              The buffer is a live allocation the callee
-//                              owns: a Rust component wraps it into a String
-//                              and frees it on drop, so it must come from the
-//                              guest's allocator, not a fixed region.
+//                              buffer through the guest's `cabi_realloc` and
+//                              writes to it (see the `text` doc for why the
+//                              buffer must come from the guest's allocator).
 //   on-tick()                : `on-tick()`.
 //   schedule(p: u64)         : `$root"."schedule"`, `(i64)` — the
 //                              component's refresh request in ms (0 = no

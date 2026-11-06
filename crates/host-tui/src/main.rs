@@ -482,9 +482,9 @@ fn main() {
     // The ring's targets, in pre-order: the key handler reads the previous
     // iteration's list, and the loop recomputes it after every rebuild.
     let mut targets: Vec<FocusTarget> = Vec::new();
-    // The host's copy of the focused input's buffer: the component is the
-    // source of truth for the field, so this re-syncs from the tree each
-    // iteration and only the keystrokes between syncs are local.
+    // The host's copy of the focused input's buffer (the component owns the
+    // field, per the WIT): re-synced from the tree each iteration; only the
+    // keystrokes between syncs are local.
     let mut input_buf = String::new();
 
     while !quit {
@@ -577,9 +577,7 @@ fn main() {
             let n = targets.len();
             focus_idx = ((focus_idx % n) + n) % n;
             let target = &targets[focus_idx];
-            // The component is the source of truth for the field: it may
-            // have transformed or cleared the buffer, so the host's copy
-            // follows the tree.
+            // Re-sync the host's copy from the tree (the component's answer).
             if target.is_input {
                 if let Some(content) = input_content(&tree, target.id) {
                     input_buf = content.to_string();

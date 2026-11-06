@@ -287,8 +287,7 @@ fn style_of(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&waui::ui::widg
 }
 
 /// The counter's full contract: initial rendering, click-driven content and
-/// color changes, and the diff channel. Language-agnostic: it runs against
-/// whichever producer language built the component.
+/// color changes, and the diff channel.
 fn assert_counter_roundtrip(app: &mut App, store: &mut Store<Host>) {
     use waui::ui::widget::{Color, Size};
 
@@ -322,8 +321,7 @@ fn assert_counter_roundtrip(app: &mut App, store: &mut Store<Host>) {
     assert_eq!(text_with_id(&nodes, 3), Some("-1"));
     assert_eq!(style_of(&nodes, 3).unwrap().color, Color::Negative);
 
-    // The diff channel: the component reports only what it changed. A
-    // `view()` call above reset its diff reference, so the next click is the
+    // The `view()` above reset the diff reference, so the next click is the
     // only pending change.
     app.call_on_click(&mut *store, 4).expect("on-click failed"); // 0 -> ...-2
     let mutations = app.call_changes(&mut *store).expect("changes failed");
@@ -384,14 +382,10 @@ fn assert_counter_roundtrip(app: &mut App, store: &mut Store<Host>) {
         _ => panic!("expected a changed node"),
     }
 
-    // The counter changes only on a click: it never requests a refresh, so
-    // a host that honors `schedule` never wakes it.
     assert_eq!(store.data().calls, 0, "a counter never calls schedule");
 }
 
-/// A host that never calls view() still gets the whole tree from the first
-/// changes() call: before anything has been exported, every node is new to
-/// the host.
+/// The WIT bootstrap rule: a first `changes()` exports the whole tree.
 fn assert_changes_bootstrap(app: &mut App, store: &mut Store<Host>) {
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
@@ -422,8 +416,7 @@ fn assert_stopwatch_roundtrip(app: &mut App, store: &mut Store<Host>) {
     use std::time::Duration;
     use waui::ui::widget::Color;
 
-    // Fresh: paused, reading 0 ms — and no refresh requested: a host that
-    // honors `schedule` never wakes a paused stopwatch.
+    // Fresh: paused, reading 0 ms, and no refresh requested.
     let nodes = app.call_view(&mut *store).expect("view failed");
     assert_eq!(text_with_id(&nodes, 2), Some("0 ms"));
     assert_eq!(
@@ -563,8 +556,7 @@ fn changes_bootstraps_without_view_as() {
 
 /// The todo's contract: the structural diff — add (a new row and its
 /// children), remove (a row and its children), and re-parent (a moved row's
-/// children keep their ids, new parent) — plus the count. Language-agnostic:
-/// it runs against whichever producer language built the component.
+/// children keep their ids, new parent) — plus the count.
 fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
     use waui::ui::widget::{Color, Size};
 
@@ -590,8 +582,7 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
     assert_eq!(style_of(&nodes, 111).unwrap().color, Color::Negative);
     assert_eq!(nodes.len(), 22, "the seeded tree has 22 id'd nodes");
 
-    // Type: the host reports the whole buffer; the component stores it, and
-    // the diff reports the input's content.
+    // Type: the component stores the buffer.
     app.call_on_text(&mut *store, 8, "buy coffee")
         .expect("on-text failed");
     let mutations = app.call_changes(&mut *store).expect("changes failed");
@@ -701,8 +692,6 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
         "a no-op tick must produce no changes"
     );
 
-    // The todo changes only on a click: it never requests a refresh, so a
-    // host that honors `schedule` never wakes it.
     assert_eq!(store.data().calls, 0, "a todo list never calls schedule");
 }
 
@@ -743,8 +732,7 @@ fn mutation_summary(m: &waui::ui::widget::Mutation) -> String {
     }
 }
 
-/// The todo's bootstrap rule: a host that never calls view() still gets the
-/// whole tree from the first changes() call.
+/// The WIT bootstrap rule: a first `changes()` exports the whole tree.
 fn assert_todo_bootstrap(app: &mut App, store: &mut Store<Host>) {
     let mutations = app.call_changes(&mut *store).expect("changes failed");
     assert_eq!(
