@@ -130,15 +130,25 @@ web-as: components-as
 	done
 	@echo "wrote target/web/*-as.html — open them directly (no server needed)"
 
-# The GitHub Pages site: the desktop launcher (site/) plus the six
-# self-contained demo pages, assembled in target/site/. It runs straight
-# from disk; .github/workflows/site.yml deploys it on push to main.
-site: web web-as
+# The GitHub Pages site: the desktop launcher (site/) plus the six demo
+# pages and their wasm modules, assembled in target/site/. The pages fetch
+# the modules as blobs, so the site needs a server (GitHub Pages, or
+# python3 -m http.server); the launcher itself runs from disk.
+# .github/workflows/site.yml deploys it on push to main.
+site: components components-as
 	@mkdir -p target/site/icons
 	@cp site/index.html site/desktop.js site/desktop.css target/site/
 	@cp site/icons/*.svg target/site/icons/
-	@cp target/web/*.html target/site/
-	@echo "wrote target/site/ — open target/site/index.html (no server needed)"
+	@for c in $(COMPONENTS); do \
+		lib=$$(printf '%s' "$$c" | tr '-' '_'); \
+		cp target/$(WASM_TARGET)/release/$$lib.wasm target/site/$$c.wasm || exit 1; \
+		node web/build.mjs target/$(WASM_TARGET)/release/$$lib.wasm target/site/$$c.html --url $$c.wasm || exit 1; \
+	done
+	@for c in $(AS_COMPONENTS); do \
+		cp target/assembly/$$c-as.wasm target/site/$$c-as.wasm || exit 1; \
+		node web/build.mjs target/assembly/$$c-as.wasm target/site/$$c-as.html --url $$c-as.wasm || exit 1; \
+	done
+	@echo "wrote target/site/ — serve it over http; .github/workflows/site.yml deploys it"
 
 # Headless check of the web host's ABI layer (Node).
 web-test: components

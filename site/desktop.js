@@ -1,11 +1,11 @@
 // The desktop: a grid of demo icons, and the windows they open.
 //
-// Each window embeds the self-contained demo page (make web / make web-as)
-// in an iframe, so the demo runs exactly as it does standalone, and a trap
-// in one window (the Rust todo can run out of heap) is contained to it.
+// Each window embeds a demo page (make site) in an iframe, so the demo runs
+// exactly as it does standalone, and a trap in one window (the Rust todo can
+// run out of heap) is contained to it.
 //
 // This is a classic script, not a module: Chrome blocks file:// module
-// *files*, and the site must run straight from disk.
+// *files*, and the launcher must run straight from disk.
 
 const MENUBAR_H = 34;
 
