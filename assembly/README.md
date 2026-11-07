@@ -149,13 +149,13 @@ Behavior:
   AS twin of the Rust `component-ui`'s retained `LAST_EXPORTED`). The last
   export is kept as a flat list of records; `changes` calls `diffOf(root)`,
   which reports every id'd node whose record — kind, parent, label, style, or
-  direction — differs from it as `changed` (in depth-first pre-order, each carrying the
-   node's index among its parent's children), and
-  every id it no longer contains as `removed` (in the last export's
-  pre-order). `viewOf` records the full snapshot as the next reference, so a
-  diff after a view sees nothing. Before the first export, `diffOf` reports
-  every id'd node (the WIT bootstrap rule). This expresses the contract's
-  add, remove, and re-parent, as the Rust diff does.
+  direction — differs from it as `changed` (in depth-first pre-order, each
+  carrying the node's index among its parent's children), and every id it no
+  longer contains as `removed` (in the last export's pre-order). `viewOf`
+  records the full snapshot as the next reference, so a diff after a view
+  sees nothing. Before the first export, `diffOf` reports every id'd node
+  (the WIT bootstrap rule). This expresses the contract's add, remove, and
+  re-parent, as the Rust diff does.
 
 The diff is checked by a standalone module (`make ui-test`): it drives
 `viewOf`/`diffOf` through the structural cases and decodes the result from

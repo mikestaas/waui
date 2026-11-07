@@ -9,6 +9,8 @@ members = [
     "crates/host-tui",
     "crates/host-shared",
     "crates/component-ui",
+    "crates/component-ui-macros",
+    "crates/waui-test",
 ]
 
 [workspace.dependencies]

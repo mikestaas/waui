@@ -2,55 +2,9 @@
 // an author writes, projected through the `../abi` emitters into the
 // contract's flat, pre-ordered node list and its diff channel.
 //
-// Nodes are `Widget` objects on the incremental runtime heap (in-module
-// TLSF allocator + conservative GC), nested through their `children` arrays —
-// the same shape as the Rust `Tree::column(vec![...])`. Tree size is limited
-// only by the heap. The readout is state-dependent, so it is a persistent
-// object (a module global in the demos); the buttons are rebuilt with the
-// column. In a `.tsx` source the structure is JSX (lowered to `h` calls by
-// `../jsx.mjs`):
-//
-//   var readout = text('', COLOR_NEUTRAL, SIZE_LARGE).id(3);
-//   <column id={1}>
-//     <button id={2} label="+" color={COLOR_POSITIVE} size={SIZE_MEDIUM} />
-//     {readout}
-//     <button id={4} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />
-//   </column>
-//
-// A dynamic list of children (a variable number of rows) is a child of its
-// own: `<column id={3}>{rows}</column>`. The factory's rest arguments each
-// take a widget or a list of widgets and normalize it — a widget is kept, a
-// list is spliced in — so the list reads like its single-widget siblings.
-// AssemblyScript has no union types, so the rest is Object[] and the factory
-// discriminates each child.
-//
-// The heap costs one import: the incremental runtime pulls in `env.abort`
-// (its OOM path), which `../patch-env-abort.mjs` replaces with an in-module
-// `unreachable` after compilation, so the lifted component is import-free.
-//
-// Page 0 (see `abi/arena`):
-//
-//   [0 ......... RESULT_END)          result arena, reset by cabi_post_*
-//   [RESULT_END . HOST_SCRATCH_BASE)  label pool, one partition per stable
-//                                      id
-//   [HOST_SCRATCH_BASE . 64 KiB)      the host's scratch region (the
-//                                      web host's `on-text` buffer)
-//
-// A projected record carries a *pointer* into a node's label bytes, and the
-// host keeps the result, so the bytes must outlive the tree (which is
-// rebuilt from state on every export and the GC reclaims it). The pool is
-// raw linear memory the GC never scans: a partition is allocated at the id's
-// first build, sized by `reserve`, never moves or grows, and later content
-// overwrites it in place, clamped to fit. A labeled node without an id gets
-// a fresh partition per build.
-//
-// The diff channel is a record comparison against the last export, the AS
-// twin of the Rust crate's retained `LAST_EXPORTED`: the last export is kept
-// as a flat list of records, and `diffOf(root)` reports every id'd node whose
-// record — kind, parent, label, style, direction, or align — differs from it,
-// plus every id it no longer contains, as `removed`. Before the first export it
-// reports every id'd node (the WIT bootstrap rule). This is the contract's
-// add, remove, and re-parent.
+// The design lives in `../README.md`: nodes on the incremental runtime heap,
+// the JSX factory, the page-0 label pool, and the diff (a record comparison
+// against the retained last export).
 //
 // This module provides the tree, the pool, the JSX factory (`h`), and the
 // projection (`viewOf`, `diffOf`, `count`).
@@ -226,13 +180,10 @@ export class Props {
   align: i32 = ALIGN_CENTER; // honored by `row`/`column`/`container`
 }
 
-/// The JSX factory that `../jsx.mjs` emits calls to (its `pragma`). The tag
+/// The JSX factory that `../jsx.mjs` emits calls to (its `pragma`): the tag
 /// picks the constructor, the props bag (null when the element has no
-/// attributes) is applied on top, and the rest arguments are the element's
-/// children, in order. Each child is a widget or a list of widgets: a widget
-/// is kept, a list is spliced into the children (the JSX array idiom).
-/// AssemblyScript has no union types, so the rest is Object[] and the factory
-/// discriminates each child with `instanceof`.
+/// attributes) is applied on top, and the children — a widget or a spliced
+/// list — normalize to a `Widget[]` (see `../README.md`).
 export function h(tag: string, props: Props | null, ...children: Object[]): Widget {
   // The children, normalized to a list. The common case — every child a
   // widget — reuses the rest array as is (a Widget and a Widget[] are both
@@ -331,7 +282,7 @@ function materializeLabel(w: Widget): void {
       buf.cap = cap;
       pool.set(w._id, buf);
     }
-    // id-less: fresh partition per build (documented in the header)
+    // id-less: fresh partition per build (see `../README.md`)
   }
   w.labelPtr = off;
   w.labelLen = writeUtf8(off, src, off + cap) - off;
@@ -532,9 +483,8 @@ function lowerRemoved(last: FlatRec[], newRecs: FlatRec[], buf: i32, off: i32): 
 }
 
 /// Project the whole tree as a `view()` result: every node as a 32-byte node
-/// record in depth-first pre-order, behind a list descriptor. The full
-/// snapshot becomes the reference the next diff compares against (the Rust
-/// crate's `note_view`); `everExported` is set.
+/// record in depth-first pre-order, behind a list descriptor. The snapshot
+/// becomes the next diff's reference (see `../README.md`).
 export function viewOf(root: Widget): i32 {
   everExported = 1;
   const recs = new Array<FlatRec>();
@@ -546,12 +496,9 @@ export function viewOf(root: Widget): i32 {
   return makeList(buf, n);
 }
 
-/// Project the diff channel: the record comparison against the last export.
-/// Before the first export, every id'd node is `changed` (the WIT bootstrap
-/// rule); otherwise, every id'd node whose record differs is `changed` (in
-/// depth-first pre-order), then every id in the last export that is no longer
-/// in the tree is `removed` (in the last export's pre-order). The new tree
-/// becomes the next reference (the Rust crate's `diff`).
+/// Project the diff channel: the record comparison against the last export,
+/// with the bootstrap rule and the ordering in `../README.md`. The new tree
+/// becomes the next reference.
 export function diffOf(root: Widget): i32 {
   const first = everExported == 0;
   const last = lastExport; // the reference, captured before it is replaced

@@ -81,9 +81,8 @@ fn to_tree(node: &Node) -> Tree {
 
 /// Rebuild the tree from the flat node list exported by `view()`.
 ///
-/// The list is depth-first pre-ordered: a parent always precedes its
-/// children and siblings appear in visual order, so children of each node
-/// can be linked in list order.
+/// The list is depth-first pre-ordered (see `wit/`), so children of each
+/// node can be linked in list order.
 pub fn build_tree(nodes: &[Node]) -> Tree {
     use std::collections::HashMap;
 

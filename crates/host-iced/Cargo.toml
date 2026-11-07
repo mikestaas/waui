@@ -15,3 +15,6 @@ host-shared = { path = "../host-shared" }
 iced_runtime = "0.14"
 # PNG encoding for the `--dump` output.
 png = "0.17"
+
+[dev-dependencies]
+waui-test = { path = "../waui-test" }

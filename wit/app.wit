@@ -33,9 +33,7 @@ world app {
   /// The widget with the given id is a text input whose content is now
   /// `text`: the host's whole current buffer, after the user's latest edit.
   /// The component is the source of truth for the buffer — it may echo it,
-  /// transform it, or ignore the edit — and reports the result in its tree;
-  /// a host that cannot keep up re-queries `view`, which stays the full
-  /// truth.
+  /// transform it, or ignore the edit — and reports the result in its tree.
   export on-text: func(id: u32, text: string);
 
   /// The host calls this at the component's scheduled period, so

@@ -4,3 +4,6 @@ version = "0.0.1"
 edition = "2021"
 
 [dependencies]
+# Compile-time only: generates the `to_node` projection, never lands in the
+# component's wasm.
+component-ui-macros = { path = "../component-ui-macros" }

@@ -63,11 +63,9 @@ interface widget {
   }
 
   /// A single-line text input. The host renders it as an editable field and
-  /// reports the user's edits through the `app` world's `on-text` (the host
-  /// sends its whole current buffer on every edit). `content` is the text as
-  /// the component last saw it: the component is the source of truth for the
-  /// buffer (it may echo, transform, or ignore an edit) and reports the
-  /// result in its tree.
+  /// reports the user's edits through the `app` world's `on-text` (see there
+  /// for the buffer contract). `content` is the text as the component last
+  /// saw it.
   record input {
     id: option<u32>,
     parent: option<u32>,
@@ -86,10 +84,9 @@ interface widget {
   /// aligns its children horizontally, a row vertically). A host that cannot
   /// express a token renders without it, as with `style`.
   ///
-  /// A container's `id` is *required in practice*: its children name it in
-  /// their `parent` field, and the host rebuilds the tree from that. A
-  /// host that sees a child with a parent it does not have will treat the
-  /// child as a root.
+  /// A container's `id` is *required in practice* (see the identity note
+  /// above). A host that sees a child with a parent it does not have will
+  /// treat the child as a root.
   record container {
     id: option<u32>,
     parent: option<u32>,
@@ -124,8 +121,9 @@ interface widget {
   /// The `changed` mutation's payload: the node, plus its `index` — the
   /// node's 0-based position among its parent's children in the component's
   /// tree (0 for a root). The host places a new or re-parented node at that
-  /// index among the parent's children; a node keeping its parent is
-  /// replaced in place and the index is ignored.
+  /// index among the parent's children, clamped to the parent's current
+  /// children (0 is the front, the newest-first slot); a node keeping its
+  /// parent is replaced in place and the index is ignored.
   record changed {
     node: node,
     index: u32,
@@ -134,18 +132,13 @@ interface widget {
   /// One entry of a `changes` diff (see the `app` world): what is new for
   /// the host since it last saw the tree.
   ///
-  /// A `changed` mutation carries the node and its index. With the same
-  /// parent as the retained copy, the host replaces the node in place (the
-  /// index is ignored); if the host has never seen the node, or the
-  /// component re-parents it (same id, new parent), the host places it at
-  /// that index among the new parent's children (clamped to the parent's
-  /// current children: 0 is the front, the newest-first slot). A `removed`
-  /// id deletes a node — and, if it is a container, the whole subtree under
-  /// it. Deeper restructuring is composed from these: a component that moves
-  /// a container should remove the subtree and re-add it, since the flat
-  /// pre-order list gives each retained node a stable home. A `changed`
-  /// mutation for an id-less node is unaddressable (see the identity note
-  /// above): hosts may ignore it.
+  /// A `changed` mutation is placed as its `changed` record documents. A
+  /// `removed` id deletes a node — and, if it is a container, the whole
+  /// subtree under it. Deeper restructuring is composed from these: a
+  /// component that moves a container should remove the subtree and re-add
+  /// it, since the flat pre-order list gives each retained node a stable
+  /// home. A `changed` mutation for an id-less node is unaddressable (see
+  /// the identity note above): hosts may ignore it.
   variant mutation {
     changed(changed),
     removed(u32),

@@ -8,3 +8,6 @@ wasmtime = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
 host-shared = { path = "../host-shared" }
+
+[dev-dependencies]
+waui-test = { path = "../waui-test" }

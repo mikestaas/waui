@@ -1,12 +1,11 @@
-//! A todo list — the structural demo. The contract's diff expresses add,
-//! remove, and re-parent, and the unit tests cover both sides in isolation;
-//! this is the demo that drives them through a real component.
+//! A todo list — the structural demo: the contract's diff expresses add,
+//! remove, and re-parent (see `wit/`), and this drives them through a real
+//! component.
 //!
 //! The footer's "add" button uses the text input: it adds a todo with the
 //! input's text and clears the field, or — when the field is empty — cycles
-//! a preset list of labels. The input's text is component state: the host
-//! reports each edit through `on-text` (the whole current buffer), the
-//! component stores it, and the input node's content re-derives from it.
+//! a preset list of labels. The input's text is component state, stored on
+//! each edit (`on-text`).
 //!
 //! The layout: a centered column with the "todos" header, a left-align
 //! wrapper holding the active and done columns, and a footer (the count, the
@@ -17,21 +16,18 @@
 //!
 //! **The ids.** A todo created i-th gets its row 100+4i while active and
 //! 500+4i while done; its checkbox, label, and delete keep 101+4i, 102+4i,
-//! and 103+4i in both columns. The row's id changes with the column because
-//! the contract moves a container by removing the subtree and re-adding it
-//! (a host links a container's children in list order, and a re-parented
-//! container would leave them behind); the children's ids do not, so a move
-//! re-parents them — same id, new parent. The static structure is 1 (the
-//! outer column), 2 (the header), 3 (the left-align wrapper), 4 and 5 (the
-//! lists), and 6 (the footer); the footer's count, input, add, and clear are
-//! 7, 8, 9, and 10.
+//! and 103+4i in both columns. The row's id changes with the column, because
+//! a container move is a subtree removal + re-add (see `wit/`); the
+//! children's ids do not, so a move re-parents them. The static structure is
+//! 1 (the outer column), 2 (the header), 3 (the left-align wrapper), 4 and 5
+//! (the lists), and 6 (the footer); the footer's count, input, add, and clear
+//! are 7, 8, 9, and 10.
 //!
-//! **The order.** Both columns are newest-first: the component keeps that
-//! order and the host places a new or moved node at its index among the
-//! parent's children, so `view()` and the retained list agree.
+//! **The order.** Both columns are newest-first (a new or moved node lands at
+//! its index among the parent's children, per `wit/`), so `view()` and the
+//! retained list agree.
 //!
-//! It never calls `schedule` (it changes only on a click or a text edit), so
-//! the host never wakes it.
+//! It never calls `schedule` (it changes only on a click or a text edit).
 
 wit_bindgen::generate!({
     world: "app",
@@ -43,7 +39,7 @@ use std::sync::Mutex;
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
-use component_ui::{ui, Align, Color, Direction, Size, Style, Tree};
+use component_ui::{ui, Align, Color, Size, Tree};
 use waui::ui::widget as wit;
 
 /// One todo. `idx` is its creation index, the source of its node ids (never
@@ -161,58 +157,8 @@ fn tree(active: &[Todo], done: &[Todo], input: &str) -> Tree {
     }
 }
 
-/// Project the ergonomic tree's tokens onto this crate's generated types:
-/// each `generate!` is crate-local, so the two type families are distinct
-/// even where identical in shape.
-fn to_node(tree: &Tree, parent: Option<u32>) -> Node {
-    let style = |s: Style| wit::Style {
-        color: match s.color {
-            Color::Neutral => wit::Color::Neutral,
-            Color::Accent => wit::Color::Accent,
-            Color::Positive => wit::Color::Positive,
-            Color::Negative => wit::Color::Negative,
-            Color::Warning => wit::Color::Warning,
-        },
-        size: match s.size {
-            Size::Small => wit::Size::Small,
-            Size::Medium => wit::Size::Medium,
-            Size::Large => wit::Size::Large,
-        },
-    };
-    match tree {
-        Tree::Text(t) => Node::Text(wit::Text {
-            id: t.id,
-            parent,
-            content: t.content.clone(),
-            style: style(t.style),
-        }),
-        Tree::Button(b) => Node::Button(wit::Button {
-            id: b.id,
-            parent,
-            label: b.label.clone(),
-            style: style(b.style),
-        }),
-        Tree::Input(i) => Node::Input(wit::Input {
-            id: i.id,
-            parent,
-            content: i.content.clone(),
-            style: style(i.style),
-        }),
-        Tree::Container(c) => Node::Container(wit::Container {
-            id: c.id,
-            parent,
-            direction: match c.direction {
-                Direction::Row => wit::Direction::Row,
-                Direction::Column => wit::Direction::Column,
-            },
-            align: match c.align {
-                Align::Start => wit::Align::Start,
-                Align::Center => wit::Align::Center,
-                Align::End => wit::Align::End,
-            },
-        }),
-    }
-}
+// Project the ergonomic tree onto this crate's generated types.
+component_ui::to_node!(wit);
 
 struct TodoList;
 
@@ -220,15 +166,12 @@ impl Guest for TodoList {
     fn view() -> Vec<Node> {
         let (active, done, input) = snapshot();
         let t = tree(&active, &done, &input);
-        // The full snapshot becomes the reference the next diff compares
-        // against.
         component_ui::note_view(&t);
         component_ui::lower(&t, to_node)
     }
 
     fn changes() -> Vec<Mutation> {
-        // Bootstrap, a move, a removal: `component-ui`'s diff against its
-        // retained last export.
+        // The diff (the structural cases: add, remove, re-parent).
         let (active, done, input) = snapshot();
         component_ui::diff(&tree(&active, &done, &input), |c| match c {
             component_ui::DiffNode::Changed(node, parent, index) => {
@@ -310,11 +253,8 @@ impl Guest for TodoList {
         }
     }
 
-    // The input (8): the host's whole current buffer. The component is the
-    // source of truth for the field, so it stores the text verbatim; the
-    // input node's content re-derives from it on the next export. `text` is
-    // a string parameter the callee owns, allocated through the guest's
-    // `cabi_realloc`, so the `String`'s drop is a valid free.
+    // The input (8): the component stores the buffer; the input node's
+    // content re-derives from it. The `String`'s drop frees the buffer.
     fn on_text(id: u32, text: String) {
         if id == 8 {
             *INPUT.lock().unwrap() = text;

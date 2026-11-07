@@ -19,20 +19,10 @@ components:
 	done
 	@echo "wrote target/components/*.component.wasm"
 
-# Build the AssemblyScript demos and lift them.
-#
-# No wit-bindgen exists for AssemblyScript, so the lift is typed explicitly:
-# the WIT in `wit/` is embedded into the module (`component embed`) and the
-# result lifted (`component new`).
-#
-#   jsx (babel lowers the .tsx JSX to h() calls — asc has no JSX parser)
-#   → asc (incremental runtime — the ui/tree object tree needs a heap)
-#   → patch-env-abort (the runtime's one import becomes an in-module
-#     unreachable, so the module stays import-free)
-#   → rename exports (world names with hyphens are not AS identifiers)
-#   → component embed wit/ → component new
-#
-# Needs node + `npm install` (asc, babel) and wabt on the PATH (the patch step).
+# Build the AssemblyScript demos and lift them. The pipeline (jsx → asc →
+# patch-env-abort → rename-exports → component embed/new) is documented in
+# assembly/README.md. Needs node + `npm install` (asc, babel) and wabt on the
+# PATH (the patch step).
 components-as:
 	@command -v node >/dev/null 2>&1 || { echo "components-as needs node/npm — run: npm install"; exit 1; }
 	@test -x node_modules/.bin/asc || { echo "assemblyscript not installed — run: npm install"; exit 1; }
