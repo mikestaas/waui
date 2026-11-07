@@ -135,9 +135,53 @@ function openWindow(demo) {
 
   win.addEventListener('pointerdown', (e) => {
     if (e.target === frame) return; // the focus event covers the iframe
+    if (e.target === grip) return; // the grip resizes (see below)
     raise(win);
     startDrag(e, win, bar);
   });
+
+  // The corner grip resizes the window. The browser's own resize is
+  // suppressed by startDrag's preventDefault, so the grip drives its own
+  // pointer handler.
+  const grip = document.createElement('div');
+  grip.className = 'grip';
+  grip.setAttribute('aria-hidden', 'true');
+  grip.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // Keep the moves flowing to this document: without the capture, moves
+    // over the iframe (a separate document) would not reach the listeners.
+    grip.setPointerCapture(e.pointerId);
+    raise(win);
+    const startW = win.offsetWidth;
+    const startH = win.offsetHeight;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    grip.classList.add('dragging');
+    const move = (ev) => {
+      // A min size keeps the demo usable; the viewport keeps the title bar
+      // reachable.
+      const w = Math.max(
+        220,
+        Math.min(startW + ev.clientX - startX, innerWidth - win.offsetLeft - 8),
+      );
+      const h = Math.max(
+        260,
+        Math.min(startH + ev.clientY - startY, innerHeight - win.offsetTop - 8),
+      );
+      win.style.width = w + 'px';
+      win.style.height = h + 'px';
+    };
+    const up = () => {
+      removeEventListener('pointermove', move);
+      removeEventListener('pointerup', up);
+      grip.classList.remove('dragging');
+    };
+    addEventListener('pointermove', move);
+    addEventListener('pointerup', up);
+  });
+  win.append(grip);
 
   windows.append(win);
   raise(win);
@@ -145,10 +189,13 @@ function openWindow(demo) {
 }
 
 // Drag by the title bar, clamped so the bar stays on screen and clear of
-// the menu bar.
+// the menu bar. The capture keeps the moves flowing to this document:
+// without it, moves over the iframe (a separate document) would not reach
+// the window-level listeners.
 function startDrag(e, win, bar) {
   if (e.button !== 0) return;
   e.preventDefault();
+  bar.setPointerCapture(e.pointerId);
   const rect = win.getBoundingClientRect();
   const dx = e.clientX - rect.left;
   const dy = e.clientY - rect.top;
