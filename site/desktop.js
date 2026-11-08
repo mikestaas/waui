@@ -125,17 +125,22 @@ function openWindow(demo) {
     win.append(note);
   }
 
-  // Clicks inside the iframe do not reach this document, so the window is
-  // raised when the iframe element itself gains focus.
+  // Clicks inside the iframe land in its own document, and the iframe element
+  // gains no focus events in this one. The demo is same-origin, so a
+  // pointerdown on the frame's document raises the window.
   const frame = document.createElement('iframe');
   frame.src = demo.page;
   frame.title = title.textContent;
-  frame.addEventListener('focus', () => raise(win));
+  frame.addEventListener('load', () => {
+    const doc = frame.contentDocument;
+    if (doc) doc.addEventListener('pointerdown', () => raise(win), true);
+  });
   win.append(frame);
 
   win.addEventListener('pointerdown', (e) => {
-    if (e.target === frame) return; // the focus event covers the iframe
+    if (e.target === frame) return; // the frame's document raises the window
     if (e.target === grip) return; // the grip resizes (see below)
+    if (e.target === close) return; // startDrag's capture would retarget its click
     raise(win);
     startDrag(e, win, bar);
   });
