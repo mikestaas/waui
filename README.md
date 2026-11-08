@@ -36,9 +36,11 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG (CI) |
 | `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame (CI) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
-| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm)             |
-| `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the self-contained page in   |
-|                          | a small window, several at once; deployed by `.github/workflows/site.yml`                              |
+| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a       |
+|                          | page that fetches the `.wasm` file when `--url` is passed (the site's mode)                           |
+| `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window,  |
+|                          | several at once; the pages fetch their `.wasm` files, so the site needs a server; deployed by          |
+|                          | `.github/workflows/site.yml`                                                                          |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests    |
 |                          | a refresh (the host never wakes it)                                                                   |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one    |
@@ -88,13 +90,15 @@ it runs from disk with no server and no network.
 ## GitHub Pages
 
 `make site` assembles the demo site in `target/site/`: the desktop launcher
-(`site/`) plus the six self-contained demo pages. The launcher is a desktop —
-an icon per demo, title underneath; double-clicking one opens the demo in a
-small window (an iframe over the self-contained page), and several windows may
-be open at once. It runs straight from disk (`open target/site/index.html`)
-and is deployed to GitHub Pages by `.github/workflows/site.yml` on every push
-to main. Enabling it needs one manual step: repository Settings → Pages →
-Source: *GitHub Actions*.
+(`site/`), the six demo pages, and their `.wasm` modules. The launcher is a
+desktop — an icon per demo, title underneath; double-clicking one opens the
+demo in a small window (an iframe over the page), and several windows may be
+open at once. The pages fetch their `.wasm` file instead of inlining it, so
+the site needs a server (GitHub Pages, or `python3 -m http.server`); the
+launcher itself runs from disk, its demo windows do not (their fetch fails on
+file://). It is deployed to GitHub Pages by `.github/workflows/site.yml` on
+every push to main. Enabling it needs one manual step: repository
+Settings → Pages → Source: *GitHub Actions*.
 
 ## Tests
 

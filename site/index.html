@@ -3,13 +3,14 @@
   The waui demo site — a desktop.
 
   The six icons are the demos (three per language). Double-clicking one
-  opens the self-contained demo page in a small window; several windows may
-  be open at once. The demo pages are the `make web` / `make web-as`
-  artifacts, copied next to this file by `make site`.
+  opens the demo page in a small window; several windows may be open at
+  once. The demo pages and their .wasm modules are built by `make site`
+  next to this file; the pages fetch the modules, so the site needs a
+  server (GitHub Pages serves it; locally, python3 -m http.server).
 
-  Deployed to GitHub Pages by .github/workflows/site.yml; it also runs
-  straight from disk (open target/site/index.html). The script is a classic
-  file, not a module: Chrome blocks file:// module scripts.
+  The launcher itself runs straight from disk (open target/site/index.html);
+  the demo windows do not (their fetch fails on file://). The script is a
+  classic file, not a module: Chrome blocks file:// module scripts.
 -->
 <html>
   <head>
@@ -18,7 +19,7 @@
     <title>waui — demos</title>
     <link
       rel="icon"
-      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237aa2f7'/><path d='M9 21 L12.5 11 L16 18 L19.5 11 L23 21' fill='none' stroke='%231a1b26' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/></svg>"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%231a1b26'/><path d='M9 21 L12.5 11 L16 18 L19.5 11 L23 21' fill='none' stroke='%237aa2f7' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/></svg>"
     />
     <link rel="stylesheet" href="desktop.css" />
   </head>

@@ -75,7 +75,10 @@
 // can be exercised headlessly (see selftest.mjs).
 
 export async function createApp(wasmBytes, hooks = {}) {
-  const { instance } = await WebAssembly.instantiate(wasmBytes, {
+  // `wasmBytes` may be a promise of the bytes (the site's fetch boot);
+  // awaiting a non-promise is the identity, so the inlined form works too.
+  const bytes = await wasmBytes;
+  const { instance } = await WebAssembly.instantiate(bytes, {
     $root: {
       // The world's `now: func() -> u64` import, in host milliseconds.
       now: () => BigInt(Date.now()),
