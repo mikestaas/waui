@@ -31,23 +31,17 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 
 | path                     | what it is                                                                                          |
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
-| `wit/`                   | the WIT contract (`widget` + `app`)                                                                   |
-| `crates/host-shared`     | wasmtime host core: the bindings, the list→tree rebuild, the retained tree diffs apply against        |
+| `wit/`                   | the WIT contract (`widget` + `app`)                                                                 |
+| `crates/host-shared`     | wasmtime host core: the bindings, the list→tree rebuild, the retained tree diffs apply against      |
 | `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG (CI) |
 | `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame (CI) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
-| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a       |
-|                          | page that fetches the `.wasm` file when `--url` is passed (the site's mode)                           |
-| `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window,  |
-|                          | several at once; the pages fetch their `.wasm` files, so the site needs a server; deployed by          |
-|                          | `.github/workflows/site.yml`                                                                          |
-| `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests    |
-|                          | a refresh (the host never wakes it)                                                                   |
-| `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one    |
-|                          | mutation                                                                                               |
-| `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component;   |
-|                          | the footer's input takes typed text, and "add" uses it (a preset label when it is empty)                |
-| `assembly/`              | the same three demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`), no bindings |
+| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode) |
+| `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
+| `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests a refresh (the host never wakes it) |
+| `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one mutation |
+| `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component; the footer's input takes typed text, and "add" uses it (a preset label when it is empty) |
+| `assembly/`              | the same three demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`)         |
 
 The three wasmtime hosts load the same component file. The web host runs the
 *pre-lift* core module instead (browsers instantiate core wasm, not components)
