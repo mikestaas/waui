@@ -112,6 +112,15 @@ jobs:
           npx playwright install --with-deps chromium
           make e2e E2E_ARGS=${{ inputs.update_snapshots && '--update-snapshots' || '' }}
 
+      # The regenerated goldens, for download and commit (the
+      # update_snapshots input).
+      - name: Upload the regenerated goldens
+        if: inputs.update_snapshots
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-goldens
+          path: e2e/screenshots
+
       - name: host-cli smoke (one view, then quit)
         run: |
           printf 'q\n' | cargo run -p host-cli -- target/components/demo-counter.component.wasm
