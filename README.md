@@ -36,8 +36,9 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG (CI) |
 | `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame (CI) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
-| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode) |
+| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); `expect.mjs` holds the expected views, shared with the selftest and the browser suite |
 | `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
+| `e2e/`                   | the Playwright browser suite: the six demo pages and the site desktop in chromium, with the screenshot goldens |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests a refresh (the host never wakes it) |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one mutation |
 | `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component; the footer's input takes typed text, and "add" uses it (a preset label when it is empty) |
@@ -66,6 +67,7 @@ make run-todo-iced   # todo, window
 make web             # self-contained HTML pages in target/web/
 make site            # the demo site in target/site/ (GitHub Pages)
 make web-test        # headless (Node) check of the web host's ABI layer
+make e2e             # the Playwright browser suite (needs `npx playwright install chromium`)
 make test            # cargo test, all crates
 make fmt             # format all sources (rustfmt + prettier)
 make hooks           # point git at .githooks (the pre-commit gate)
@@ -120,6 +122,14 @@ Settings → Pages → Source: *GitHub Actions*.
 - `make ui-test`: the tree layer's diff channel, as a standalone module run
   via Node: the structural cases (add, remove, re-parent) plus the bootstrap,
   id-less, and input rules — the AS twin of the `component-ui` unit tests.
+- `make e2e`: the Playwright browser suite (chromium) against the built
+  site: the six demo pages and the desktop in a real browser — the
+  rendered DOM against the same expectations as the web selftest
+  (`web/expect.mjs`), the computed styles, the in-place-vs-rebuild
+  behavior, and the window management (open, raise, drag, resize, close).
+  Screenshot goldens compare in CI only (font rendering is
+  platform-specific); locally a one-time `npx playwright install chromium`
+  is needed.
 - `make fmt-check`: all sources are formatter-clean (`cargo fmt --check`
   for the Rust crates, prettier for the assembly/ and web/ trees). A
   pre-commit hook runs it on every commit (`make hooks` installs it);

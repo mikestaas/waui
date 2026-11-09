@@ -7,11 +7,13 @@
 #                                     AS components), the headless --dump renders
 #   make ui-test                      the AssemblyScript tree/diff unit tests
 #   make web-test / web-test-as       the Node selftest: the Rust/AS byte-parity gate
+#   make e2e                          the Playwright browser suite: the demo pages
+#                                     and the site desktop, plus the screenshot goldens
 #   host-cli smoke                    one view, then quit, on each built component
 #
 # Everything runs headless: the iced render is a tiny-skia software frame, the
-# tui render goes to ratatui's TestBackend, the roundtrip is plain wasmtime.
-# No display, no window, no GPU.
+# tui render goes to ratatui's TestBackend, the roundtrip is plain wasmtime,
+# the browser is chromium. No display, no window, no GPU.
 
 name: CI
 
@@ -19,6 +21,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+    inputs:
+      # Regenerate the screenshot goldens (e2e/visual.spec.mjs) — run after
+      # a CI runner image change shifts the font rendering.
+      update_snapshots:
+        description: Regenerate the screenshot goldens
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -92,6 +102,15 @@ jobs:
         run: |
           make web-test
           make web-test-as
+
+      # Browser E2E (Playwright, chromium): the six demo pages and the site
+      # desktop in a real browser — the rendered DOM against the selftest's
+      # expectations, the computed styles, the window management, and the
+      # screenshot goldens (CI-only: font rendering is platform-specific).
+      - name: Browser E2E (Playwright)
+        run: |
+          npx playwright install --with-deps chromium
+          make e2e E2E_ARGS=${{ inputs.update_snapshots && '--update-snapshots' || '' }}
 
       - name: host-cli smoke (one view, then quit)
         run: |

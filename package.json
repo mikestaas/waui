@@ -6,6 +6,7 @@
   "devDependencies": {
     "@babel/core": "^8.0.10",
     "@babel/plugin-transform-react-jsx": "^8.0.1",
+    "@playwright/test": "^1.65.0",
     "assemblyscript": "0.28.20",
     "assemblyscript-prettier": "^3.0.4",
     "prettier": "^3.9.10"

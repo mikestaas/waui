@@ -20,6 +20,8 @@
 Before calling a change done: `make components-as`, `make components`,
 `make web-test-as`, `make web-test`, `cargo test`, `make ui-test`,
 `make site`, and a `host-cli` smoke run on the built components.
+Changes touching `web/` or `site/` also need `make e2e` (the Playwright
+browser suite).
 The web selftest is the byte-parity gate between the Rust and
 AssemblyScript demos. Do not weaken an assertion to make a failing
 check pass; extending the gate to cover a new contract field is

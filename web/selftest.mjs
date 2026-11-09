@@ -9,11 +9,15 @@
 // The paths default to the Rust components; passing other core modules
 // (e.g. the AssemblyScript builds, `make web-test-as`) runs the same checks
 // against them — same glue.js, same assertions, a different producer.
+//
+// The expected views come from ./expect.mjs, shared with the browser suite
+// (e2e/): the same strings, the rendered DOM as a second producer of them.
 
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './glue.js';
+import { counter, stopwatch, todo } from './expect.mjs';
 
 // Resolve paths relative to the repository root (this file lives in web/);
 // absolute paths (a non-default target) pass through.
@@ -51,12 +55,7 @@ function mutation(m) {
     );
   };
 
-  expect([
-    'container{id:1,parent:null,dir:column,align:center}',
-    'button{id:2,parent:1,label:"+",style:positive:medium}',
-    'text{id:3,parent:1,content:"0",style:neutral:large}',
-    'button{id:4,parent:1,label:"-",style:negative:medium}',
-  ]);
+  expect(counter.zero);
 
   // The diff channel: a click dirties exactly the readout — never the
   // whole tree.
@@ -81,12 +80,7 @@ function mutation(m) {
   assert.deepEqual(app.changes().map(mutation), [
     'changed text{id:3,parent:1,content:"-1",style:negative:large} index:1',
   ]);
-  expect([
-    'container{id:1,parent:null,dir:column,align:center}',
-    'button{id:2,parent:1,label:"+",style:positive:medium}',
-    'text{id:3,parent:1,content:"-1",style:negative:large}',
-    'button{id:4,parent:1,label:"-",style:negative:medium}',
-  ]);
+  expect(counter.minusOne);
 
   // The WIT bootstrap rule.
   const app2 = await createApp(readFileSync(rel(counterPath)));
@@ -112,11 +106,7 @@ function mutation(m) {
   const app = await createApp(readFileSync(rel(stopwatchPath)));
   const view = () => app.view().map(node);
 
-  assert.deepEqual(view(), [
-    'container{id:1,parent:null,dir:column,align:center}',
-    'text{id:2,parent:1,content:"0 ms",style:neutral:large}',
-    'button{id:3,parent:1,label:"start",style:positive:medium}',
-  ]);
+  assert.deepEqual(view(), stopwatch.idle);
 
   // Start: both the readout (its color) and the button (label + color)
   // change — two mutations.
@@ -175,30 +165,7 @@ function mutation(m) {
   const view = () => app.view().map(node);
 
   // Seeded: two active (newest first), one done, "2 left".
-  assert.deepEqual(view(), [
-    'container{id:1,parent:null,dir:column,align:center}',
-    'text{id:2,parent:1,content:"todos",style:accent:large}',
-    'container{id:3,parent:1,dir:column,align:start}',
-    'container{id:4,parent:3,dir:column,align:start}',
-    'container{id:104,parent:4,dir:row,align:center}',
-    'button{id:105,parent:104,label:"○",style:neutral:medium}',
-    'text{id:106,parent:104,content:"walk the dog",style:neutral:medium}',
-    'button{id:107,parent:104,label:"✕",style:negative:medium}',
-    'container{id:100,parent:4,dir:row,align:center}',
-    'button{id:101,parent:100,label:"○",style:neutral:medium}',
-    'text{id:102,parent:100,content:"buy milk",style:neutral:medium}',
-    'button{id:103,parent:100,label:"✕",style:negative:medium}',
-    'container{id:5,parent:3,dir:column,align:start}',
-    'container{id:508,parent:5,dir:row,align:center}',
-    'button{id:109,parent:508,label:"✓",style:positive:medium}',
-    'text{id:110,parent:508,content:"water plants",style:warning:medium}',
-    'button{id:111,parent:508,label:"✕",style:negative:medium}',
-    'container{id:6,parent:1,dir:row,align:center}',
-    'text{id:7,parent:6,content:"2 left",style:neutral:small}',
-    'input{id:8,parent:6,content:"",style:neutral:medium}',
-    'button{id:9,parent:6,label:"add",style:positive:medium}',
-    'button{id:10,parent:6,label:"clear done",style:negative:medium}',
-  ]);
+  assert.deepEqual(view(), todo.seeded);
 
   // Type one char at a time: the host reports the whole buffer on each
   // keystroke, so each is a fresh buffer the guest owns, and the previous
@@ -240,34 +207,7 @@ function mutation(m) {
 
   // view() is the full truth, and it is what the diff application yields:
   // the moved row at the top of the done column, newest first.
-  assert.deepEqual(view(), [
-    'container{id:1,parent:null,dir:column,align:center}',
-    'text{id:2,parent:1,content:"todos",style:accent:large}',
-    'container{id:3,parent:1,dir:column,align:start}',
-    'container{id:4,parent:3,dir:column,align:start}',
-    'container{id:112,parent:4,dir:row,align:center}',
-    'button{id:113,parent:112,label:"○",style:neutral:medium}',
-    'text{id:114,parent:112,content:"buy coffee",style:neutral:medium}',
-    'button{id:115,parent:112,label:"✕",style:negative:medium}',
-    'container{id:100,parent:4,dir:row,align:center}',
-    'button{id:101,parent:100,label:"○",style:neutral:medium}',
-    'text{id:102,parent:100,content:"buy milk",style:neutral:medium}',
-    'button{id:103,parent:100,label:"✕",style:negative:medium}',
-    'container{id:5,parent:3,dir:column,align:start}',
-    'container{id:504,parent:5,dir:row,align:center}',
-    'button{id:105,parent:504,label:"✓",style:positive:medium}',
-    'text{id:106,parent:504,content:"walk the dog",style:warning:medium}',
-    'button{id:107,parent:504,label:"✕",style:negative:medium}',
-    'container{id:508,parent:5,dir:row,align:center}',
-    'button{id:109,parent:508,label:"✓",style:positive:medium}',
-    'text{id:110,parent:508,content:"water plants",style:warning:medium}',
-    'button{id:111,parent:508,label:"✕",style:negative:medium}',
-    'container{id:6,parent:1,dir:row,align:center}',
-    'text{id:7,parent:6,content:"2 left",style:neutral:small}',
-    'input{id:8,parent:6,content:"",style:neutral:medium}',
-    'button{id:9,parent:6,label:"add",style:positive:medium}',
-    'button{id:10,parent:6,label:"clear done",style:negative:medium}',
-  ]);
+  assert.deepEqual(view(), todo.afterToggle);
 
   // Delete: the count, then the row and its children. Five mutations.
   app.click(103);

@@ -5,7 +5,7 @@ AS_COMPONENTS := demo-counter demo-stopwatch demo-todo
 .PHONY: components components-as run-cli run-stop-cli run-todo-cli run-tui run-stop-tui run-todo-tui \
          run-iced run-stop-iced run-todo-iced run-cli-as run-stop-cli-as run-todo-cli-as \
          run-tui-as run-stop-tui-as run-todo-tui-as run-iced-as run-stop-iced-as run-todo-iced-as \
-         web web-as web-test web-test-as site ui-test fmt fmt-check hooks test
+         web web-as web-test web-test-as site ui-test e2e fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model.
 components:
@@ -163,6 +163,13 @@ ui-test:
 		-O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2 || exit 1; \
 	node assembly/patch-env-abort.mjs target/assembly/tree-test.raw.wasm target/assembly/tree-test.core.wasm || exit 1; \
 	node assembly/ui/tree.test.mjs target/assembly/tree-test.core.wasm
+
+# Browser E2E (Playwright, chromium): the six demo pages and the site
+# desktop, served from target/site/ (make site). Needs `npm install` and a
+# one-time `npx playwright install chromium`.
+e2e: site
+	@test -d node_modules/@playwright/test || { echo "e2e needs node/npm — run: npm install"; exit 1; }
+	npx playwright test $(E2E_ARGS)
 
 # Format all sources: the Rust workspace with rustfmt, and the
 # AssemblyScript (assembly/) + web (web/) trees with prettier. The
