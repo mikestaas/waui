@@ -13,15 +13,17 @@ test.beforeEach(async ({ page }) => {
 // The z-order counter (site/desktop.js's raise()).
 const z = (win) => win.evaluate((el) => Number(el.dataset.z));
 
-test('renders the six demo tiles', async ({ page }) => {
+test('renders the nine demo tiles', async ({ page }) => {
   const tiles = page.locator('#grid .tile');
-  await expect(tiles).toHaveCount(6);
+  await expect(tiles).toHaveCount(9);
   await expect(tiles.nth(0).locator('.tile-name')).toHaveText('Counter');
   await expect(tiles.nth(0).locator('.tile-lang')).toHaveText('Rust');
   await expect(tiles.nth(1).locator('.tile-lang')).toHaveText('AssemblyScript');
-  await expect(tiles.nth(2).locator('.tile-name')).toHaveText('Stopwatch');
-  await expect(tiles.nth(4).locator('.tile-name')).toHaveText('Todo');
-  await expect(tiles.nth(5).locator('.tile-lang')).toHaveText('AssemblyScript');
+  await expect(tiles.nth(2).locator('.tile-lang')).toHaveText('WAT');
+  await expect(tiles.nth(3).locator('.tile-name')).toHaveText('Stopwatch');
+  await expect(tiles.nth(5).locator('.tile-lang')).toHaveText('WAT');
+  await expect(tiles.nth(6).locator('.tile-name')).toHaveText('Todo');
+  await expect(tiles.nth(8).locator('.tile-lang')).toHaveText('WAT');
   await expect(page.locator('#window-count')).toHaveText('0 windows');
 });
 
@@ -44,7 +46,7 @@ test('Enter opens a focused tile', async ({ page }) => {
 test('windows raise on click', async ({ page }) => {
   const tiles = page.locator('#grid .tile');
   await tiles.nth(0).dblclick(); // counter
-  await tiles.nth(2).dblclick(); // stopwatch
+  await tiles.nth(3).dblclick(); // stopwatch
   await expect(page.locator('#window-count')).toHaveText('2 windows');
   const counterWin = page.locator('.window').first();
   const stopWin = page.locator('.window').last();
@@ -70,7 +72,7 @@ test('windows raise on click', async ({ page }) => {
 test('close button and Escape close windows', async ({ page }) => {
   const tiles = page.locator('#grid .tile');
   await tiles.nth(0).dblclick();
-  await tiles.nth(2).dblclick();
+  await tiles.nth(3).dblclick();
   await expect(page.locator('#window-count')).toHaveText('2 windows');
 
   // The frontmost (last opened) closes by its button.
@@ -125,7 +127,7 @@ test('the grip resizes, clamped to a minimum', async ({ page }) => {
 });
 
 test('the Rust todo window shows its heap note', async ({ page }) => {
-  await page.locator('#grid .tile').nth(4).dblclick();
+  await page.locator('#grid .tile').nth(6).dblclick();
   await expect(page.locator('.window .note')).toHaveText(
     'note: the Rust web todo can run out of heap after a few adds',
   );

@@ -18,14 +18,15 @@
 ## Verification
 
 Before calling a change done: `make components-as`, `make components`,
-`make web-test-as`, `make web-test`, `cargo test`, `make ui-test`,
-`make site`, and a `host-cli` smoke run on the built components.
+`make components-wat`, `make web-test-as`, `make web-test`,
+`make web-test-wat`, `cargo test`, `make ui-test`, `make site`, and a
+`host-cli` smoke run on the built components.
 Changes touching `web/` or `site/` also need `make e2e` (the Playwright
 browser suite).
-The web selftest is the byte-parity gate between the Rust and
-AssemblyScript demos. Do not weaken an assertion to make a failing
-check pass; extending the gate to cover a new contract field is
-allowed. The component outputs it compares stay the source of truth.
+The web selftest is the byte-parity gate between the Rust, AssemblyScript,
+and WAT demos. Do not weaken an assertion to make a failing check pass;
+extending the gate to cover a new contract field is allowed. The component
+outputs it compares stay the source of truth.
 
 ## Multiple sessions
 

@@ -6,17 +6,19 @@
 //! stopwatch runs, 0 while it pauses; the counter and the todo never call
 //! it).
 //!
-//! Each scenario runs against both producer languages: the Rust component
-//! (cargo + wit-bindgen) and its AssemblyScript one (asc + the hand-rolled
-//! ABI). The assertions are shared.
+//! Each scenario runs against all three producer languages: the Rust
+//! component (cargo + wit-bindgen), its AssemblyScript one (asc + the
+//! hand-rolled ABI), and its hand-rolled WAT one (WASM GC + the canonical
+//! ABI, lifted the same way). The assertions are shared.
 
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 use wasmtime::component::*;
 use wasmtime::{Engine, Store};
 use waui_test::{
-    as_toolchain_available, build_component, build_component_as, component_path, component_path_as,
-    AS_BUILD_LOCK, RUST_BUILD_LOCK,
+    as_toolchain_available, build_component, build_component_as, build_component_wat,
+    component_path, component_path_as, component_path_wat, wat_toolchain_available, AS_BUILD_LOCK,
+    RUST_BUILD_LOCK, WAT_BUILD_LOCK,
 };
 
 wasmtime::component::bindgen!({
@@ -377,6 +379,44 @@ fn changes_bootstraps_without_view_as() {
     assert_changes_bootstrap(&mut app, &mut store);
 }
 
+// The same two contracts, against the hand-rolled WAT clone of the counter.
+
+#[test]
+fn counter_roundtrip_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = WAT_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_wat("demo-counter");
+        instantiate(&engine, &mut store, &component_path_wat("demo-counter"))
+    };
+    assert_counter_roundtrip(&mut app, &mut store);
+}
+
+#[test]
+fn changes_bootstraps_without_view_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = WAT_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_wat("demo-counter");
+        instantiate(&engine, &mut store, &component_path_wat("demo-counter"))
+    };
+    assert_changes_bootstrap(&mut app, &mut store);
+}
+
 /// The todo's contract: the structural diff — add (a new row and its
 /// children), remove (a row and its children), and re-parent (a moved row's
 /// children keep their ids, new parent) — plus the count.
@@ -650,6 +690,44 @@ fn todo_bootstrap_as() {
     assert_todo_bootstrap(&mut app, &mut store);
 }
 
+// And the todo's structural diff, in hand-rolled WAT.
+
+#[test]
+fn todo_roundtrip_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = WAT_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_wat("demo-todo");
+        instantiate(&engine, &mut store, &component_path_wat("demo-todo"))
+    };
+    assert_todo_roundtrip(&mut app, &mut store);
+}
+
+#[test]
+fn todo_bootstrap_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = WAT_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_wat("demo-todo");
+        instantiate(&engine, &mut store, &component_path_wat("demo-todo"))
+    };
+    assert_todo_bootstrap(&mut app, &mut store);
+}
+
 // And the stopwatch's refresh-request contract, both languages.
 
 #[test]
@@ -680,6 +758,24 @@ fn stopwatch_roundtrip_as() {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         build_component_as("demo-stopwatch");
         instantiate(&engine, &mut store, &component_path_as("demo-stopwatch"))
+    };
+    assert_stopwatch_roundtrip(&mut app, &mut store);
+}
+
+#[test]
+fn stopwatch_roundtrip_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(&engine, Host::default());
+    let mut app = {
+        let _guard = WAT_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_wat("demo-stopwatch");
+        instantiate(&engine, &mut store, &component_path_wat("demo-stopwatch"))
     };
     assert_stopwatch_roundtrip(&mut app, &mut store);
 }

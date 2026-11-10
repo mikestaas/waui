@@ -27,6 +27,14 @@ const DEMOS = [
     h: 380,
   },
   {
+    name: 'Counter',
+    lang: 'WAT',
+    page: 'demo-counter-wat.html',
+    icon: 'icons/counter-wat.svg',
+    w: 300,
+    h: 380,
+  },
+  {
     name: 'Stopwatch',
     lang: 'Rust',
     page: 'demo-stopwatch.html',
@@ -39,6 +47,14 @@ const DEMOS = [
     lang: 'AssemblyScript',
     page: 'demo-stopwatch-as.html',
     icon: 'icons/stopwatch-as.svg',
+    w: 300,
+    h: 380,
+  },
+  {
+    name: 'Stopwatch',
+    lang: 'WAT',
+    page: 'demo-stopwatch-wat.html',
+    icon: 'icons/stopwatch-wat.svg',
     w: 300,
     h: 380,
   },
@@ -56,6 +72,14 @@ const DEMOS = [
     lang: 'AssemblyScript',
     page: 'demo-todo-as.html',
     icon: 'icons/todo-as.svg',
+    w: 460,
+    h: 500,
+  },
+  {
+    name: 'Todo',
+    lang: 'WAT',
+    page: 'demo-todo-wat.html',
+    icon: 'icons/todo-wat.svg',
     w: 460,
     h: 500,
   },
@@ -93,7 +117,7 @@ function openWindow(demo) {
 
   // New windows cascade down-right, then wrap back to the top-left.
   const step = 28;
-  const n = cascade++ % 6;
+  const n = cascade++ % 9;
   const left = Math.max(8, Math.min(24 + n * step, innerWidth - demo.w - 8));
   const top = Math.max(MENUBAR_H + 4, Math.min(48 + n * step, innerHeight - demo.h - 8));
   win.style.left = left + 'px';

@@ -10,8 +10,9 @@
 use std::path::Path;
 use std::process::Command;
 use waui_test::{
-    as_toolchain_available, build_component, build_component_as, component_path, component_path_as,
-    AS_BUILD_LOCK, RUST_BUILD_LOCK,
+    as_toolchain_available, build_component, build_component_as, build_component_wat,
+    component_path, component_path_as, component_path_wat, wat_toolchain_available, AS_BUILD_LOCK,
+    RUST_BUILD_LOCK, WAT_BUILD_LOCK,
 };
 
 /// Run the host binary in `--dump` mode: one frame, printed as text with
@@ -206,6 +207,19 @@ fn counter_dump_as() {
 }
 
 #[test]
+fn counter_dump_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let _guard = WAT_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_wat("demo-counter");
+    assert_counter_frame(&component_path_wat("demo-counter"));
+}
+
+#[test]
 fn stopwatch_dump() {
     let _guard = RUST_BUILD_LOCK
         .lock()
@@ -225,4 +239,17 @@ fn stopwatch_dump_as() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_as("demo-stopwatch");
     assert_stopwatch_frame(&component_path_as("demo-stopwatch"));
+}
+
+#[test]
+fn stopwatch_dump_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let _guard = WAT_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_wat("demo-stopwatch");
+    assert_stopwatch_frame(&component_path_wat("demo-stopwatch"));
 }

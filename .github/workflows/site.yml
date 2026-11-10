@@ -1,5 +1,5 @@
 # Deploys the demo site to GitHub Pages: the desktop launcher (site/) plus
-# the six demo pages and their .wasm modules, assembled by `make site` in
+# the nine demo pages and their .wasm modules, assembled by `make site` in
 # target/site/.
 #
 # Needs Pages enabled once: Settings → Pages → Source: GitHub Actions.

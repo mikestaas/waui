@@ -1,14 +1,18 @@
 # The CI gate: the AGENTS.md verification list, run on every push to main
 # and on pull requests.
 #
-#   make components / components-as   build + lift the demos (Rust, AssemblyScript)
+#   make components / components-as / components-wat
+#                                     build + lift the demos (Rust,
+#                                     AssemblyScript, hand-rolled WAT)
 #   make fmt-check                    the pre-commit formatter gate, backstopped
-#   cargo test                        unit tests, the wasmtime roundtrip (Rust and
-#                                     AS components), the headless --dump renders
+#   cargo test                        unit tests, the wasmtime roundtrip (Rust,
+#                                     AS, and WAT components), the headless
+#                                     --dump renders
 #   make ui-test                      the AssemblyScript tree/diff unit tests
-#   make web-test / web-test-as       the Node selftest: the Rust/AS byte-parity gate
-#   make e2e                          the Playwright browser suite: the demo pages
-#                                     and the site desktop, plus the screenshot goldens
+#   make web-test / -as / -wat        the Node selftest: the byte-parity gate
+#   make e2e                          the Playwright browser suite: the demo
+#                                     pages and the site desktop, plus the
+#                                     screenshot goldens
 #   host-cli smoke                    one view, then quit, on each built component
 #
 # Everything runs headless: the iced render is a tiny-skia software frame, the
@@ -87,6 +91,7 @@ jobs:
         run: |
           make components
           make components-as
+          make components-wat
 
       - name: Test (unit, roundtrip, headless dumps)
         run: cargo test
@@ -98,12 +103,13 @@ jobs:
       - name: UI tree tests (AssemblyScript)
         run: make ui-test
 
-      - name: Web selftest (Rust and AS)
+      - name: Web selftest (Rust, AS, and WAT)
         run: |
           make web-test
           make web-test-as
+          make web-test-wat
 
-      # Browser E2E (Playwright, chromium): the six demo pages and the site
+      # Browser E2E (Playwright, chromium): the nine demo pages and the site
       # desktop in a real browser — the rendered DOM against the selftest's
       # expectations, the computed styles, the window management, and the
       # screenshot goldens (CI-only: font rendering is platform-specific).
@@ -126,3 +132,6 @@ jobs:
           printf 'q\n' | cargo run -p host-cli -- target/components/demo-counter.component.wasm
           printf 'q\n' | cargo run -p host-cli -- target/components/demo-stopwatch.component.wasm
           printf 'q\n' | cargo run -p host-cli -- target/components/demo-todo.component.wasm
+          printf 'q\n' | cargo run -p host-cli -- target/components/demo-counter-wat.component.wasm
+          printf 'q\n' | cargo run -p host-cli -- target/components/demo-stopwatch-wat.component.wasm
+          printf 'q\n' | cargo run -p host-cli -- target/components/demo-todo-wat.component.wasm

@@ -7,17 +7,19 @@
 //! Text renders with the bundled Fira Sans, so the pixels are stable on a
 //! machine with no system fonts.
 //!
-//! Each scenario runs against both producer languages: the Rust component
-//! and its AssemblyScript one. The counter's content is deterministic, so
-//! the two producers must render byte-identical PNGs; the stopwatch's
-//! readout is wall-clock time, so only its colors are asserted.
+//! Each scenario runs against all three producer languages: the Rust
+//! component, its AssemblyScript one, and its hand-rolled WAT one. The
+//! counter's content is deterministic, so the producers must render
+//! byte-identical PNGs; the stopwatch's readout is wall-clock time, so only
+//! its colors are asserted.
 
 use std::path::Path;
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use waui_test::{
-    as_toolchain_available, build_component, build_component_as, component_path, component_path_as,
-    AS_BUILD_LOCK, RUST_BUILD_LOCK,
+    as_toolchain_available, build_component, build_component_as, build_component_wat,
+    component_path, component_path_as, component_path_wat, wat_toolchain_available, AS_BUILD_LOCK,
+    RUST_BUILD_LOCK, WAT_BUILD_LOCK,
 };
 
 // The dump file: unique per call, so parallel tests do not collide.
@@ -233,6 +235,35 @@ fn counter_dump_as() {
 }
 
 #[test]
+fn counter_dump_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let _guard = WAT_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_wat("demo-counter");
+    let path = component_path_wat("demo-counter");
+
+    let rust = {
+        let _g = RUST_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component("demo-counter");
+        let (w, h, buf) = dump(&component_path("demo-counter"), &[]);
+        assert_counter(w, h, &buf, 0);
+        buf
+    };
+    let (w, h, buf) = dump(&path, &[]);
+    assert_counter(w, h, &buf, 0);
+    assert_eq!(
+        rust, buf,
+        "the Rust and WAT counters must render identically"
+    );
+}
+
+#[test]
 fn stopwatch_dump() {
     let _guard = RUST_BUILD_LOCK
         .lock()
@@ -284,6 +315,41 @@ fn stopwatch_dump_as() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_as("demo-stopwatch");
     let path = component_path_as("demo-stopwatch");
+
+    let (w, h, buf) = dump(&path, &[]);
+    assert_chrome(w, h, &buf);
+    assert!(
+        count_near(&buf, w, h, NEUTRAL, 24) > 0,
+        "a paused readout should be neutral"
+    );
+    assert!(
+        count_near(&buf, w, h, POSITIVE, 24) > 0,
+        "the start button should be positive"
+    );
+
+    let (w, h, buf) = dump(&path, &[3]);
+    assert_chrome(w, h, &buf);
+    assert!(
+        count_near(&buf, w, h, ACCENT, 24) > 0,
+        "a running readout should be accent"
+    );
+    assert!(
+        count_near(&buf, w, h, WARNING, 24) > 0,
+        "the pause button should be warning"
+    );
+}
+
+#[test]
+fn stopwatch_dump_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let _guard = WAT_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_wat("demo-stopwatch");
+    let path = component_path_wat("demo-stopwatch");
 
     let (w, h, buf) = dump(&path, &[]);
     assert_chrome(w, h, &buf);

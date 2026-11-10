@@ -34,6 +34,13 @@ pub fn component_path_as(demo: &str) -> PathBuf {
         .join(format!("{demo}-as.component.wasm"))
 }
 
+/// The lifted hand-rolled WAT component for a demo.
+pub fn component_path_wat(demo: &str) -> PathBuf {
+    waui_root()
+        .join("target/components")
+        .join(format!("{demo}-wat.component.wasm"))
+}
+
 /// Build the component and lift it, so the test is self-contained. Cargo
 /// names the artifact with `_` where the crate name has `-`.
 pub fn build_component(demo: &str) {
@@ -85,10 +92,21 @@ pub fn as_toolchain_available() -> bool {
             .is_ok_and(|o| o.status.success())
 }
 
+// The WAT build needs wasm-tools on the PATH (parse + the lifts); without
+// it the WAT tests skip rather than fail.
+pub fn wat_toolchain_available() -> bool {
+    Command::new("wasm-tools")
+        .arg("--version")
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
 // Serialize the Rust build+load window per artifact file (see the crate docs).
 pub static RUST_BUILD_LOCK: Mutex<()> = Mutex::new(());
 // Serialize the AssemblyScript build+load window per artifact file.
 pub static AS_BUILD_LOCK: Mutex<()> = Mutex::new(());
+// Serialize the WAT build+load window per artifact file.
+pub static WAT_BUILD_LOCK: Mutex<()> = Mutex::new(());
 
 /// Build the AssemblyScript component and lift it:
 /// jsx (babel lowers the `.tsx` to `h()` calls — asc has no JSX parser)
@@ -192,5 +210,59 @@ pub fn build_component_as(demo: &str) {
             status.success(),
             "failed to build the AssemblyScript {demo}"
         );
+    }
+}
+
+/// Build the WAT component and lift it:
+/// wasm-tools parse (WAT -> core wasm) -> component embed (the WIT)
+/// -> component new.
+/// (Callers hold [`WAT_BUILD_LOCK`] across the build *and* the load, so a
+/// sibling test cannot lift over the file while we read it.)
+pub fn build_component_wat(demo: &str) {
+    let root = waui_root();
+    std::fs::create_dir_all(root.join("target/wat")).expect("failed to create target/wat");
+    std::fs::create_dir_all(root.join("target/components"))
+        .expect("failed to create target/components");
+
+    let src = format!("wat/{demo}.wat");
+    let core = root.join("target/wat").join(format!("{demo}.wasm"));
+    let embedded = root
+        .join("target/wat")
+        .join(format!("{demo}-wat.embedded.wasm"));
+    let out = component_path_wat(demo);
+
+    let mut steps: Vec<Command> = Vec::new();
+    {
+        let mut c = Command::new("wasm-tools");
+        c.args(["parse", src.as_str(), "--output", core.to_str().unwrap()]);
+        steps.push(c);
+    }
+    {
+        let mut c = Command::new("wasm-tools");
+        c.args([
+            "component",
+            "embed",
+            "wit/",
+            core.to_str().unwrap(),
+            "--output",
+            embedded.to_str().unwrap(),
+        ]);
+        steps.push(c);
+    }
+    {
+        let mut c = Command::new("wasm-tools");
+        c.args([
+            "component",
+            "new",
+            embedded.to_str().unwrap(),
+            "--output",
+            out.to_str().unwrap(),
+        ]);
+        steps.push(c);
+    }
+    for step in &mut steps {
+        step.current_dir(&root);
+        let status = step.status().expect("failed to run wasm-tools");
+        assert!(status.success(), "failed to build the WAT {demo}");
     }
 }

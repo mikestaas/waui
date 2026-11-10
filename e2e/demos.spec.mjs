@@ -1,4 +1,4 @@
-// The six demo pages (three demos, two producers) in a real browser.
+// The nine demo pages (three demos, three producers) in a real browser.
 //
 // The rendered DOM is asserted against the same node strings the Node
 // selftest uses (web/expect.mjs) — the byte-parity gate, extended from the
@@ -12,13 +12,13 @@ import { expectView, loadDemo, palette, sizes, widgetStyle } from './helpers.mjs
 
 // Each demo's page, per producer.
 const pages = {
-  counter: ['/demo-counter.html', '/demo-counter-as.html'],
-  stopwatch: ['/demo-stopwatch.html', '/demo-stopwatch-as.html'],
-  todo: ['/demo-todo.html', '/demo-todo-as.html'],
+  counter: ['/demo-counter.html', '/demo-counter-as.html', '/demo-counter-wat.html'],
+  stopwatch: ['/demo-stopwatch.html', '/demo-stopwatch-as.html', '/demo-stopwatch-wat.html'],
+  todo: ['/demo-todo.html', '/demo-todo-as.html', '/demo-todo-wat.html'],
 };
-const labels = ['Rust', 'AssemblyScript'];
+const labels = ['Rust', 'AssemblyScript', 'WAT'];
 
-for (let i = 0; i < 2; i++) {
+for (let i = 0; i < 3; i++) {
   test(`counter (${labels[i]})`, async ({ page }) => {
     await loadDemo(page, pages.counter[i]);
     await expectView(page, counter.zero, 'initial view');

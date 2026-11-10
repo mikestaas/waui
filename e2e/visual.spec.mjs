@@ -14,12 +14,15 @@ test.skip(!process.env.CI, 'screenshot goldens are CI-only (font rendering is pl
 for (const [name, path] of [
   ['counter', '/demo-counter.html'],
   ['counter-as', '/demo-counter-as.html'],
+  ['counter-wat', '/demo-counter-wat.html'],
   ['stopwatch', '/demo-stopwatch.html'],
   ['stopwatch-as', '/demo-stopwatch-as.html'],
+  ['stopwatch-wat', '/demo-stopwatch-wat.html'],
   ['todo', '/demo-todo.html'],
   ['todo-as', '/demo-todo-as.html'],
+  ['todo-wat', '/demo-todo-wat.html'],
 ]) {
-  // All six pages are static at rest: the counter and todo request no
+  // All nine pages are static at rest: the counter and todo request no
   // refresh, and the stopwatch only runs while started.
   test(`${name} page`, async ({ page }) => {
     await loadDemo(page, path);
@@ -31,7 +34,7 @@ test('desktop with two windows', async ({ page }) => {
   await page.goto('/');
   const tiles = page.locator('#grid .tile');
   await tiles.nth(0).dblclick(); // Counter (Rust)
-  await tiles.nth(5).dblclick(); // Todo (AssemblyScript)
+  await tiles.nth(7).dblclick(); // Todo (AssemblyScript)
   // Both windows' demos are static at rest; wait for the top one to boot.
   await expect(
     page.locator('.window').last().frameLocator('iframe').locator('[data-id="2"]'),
