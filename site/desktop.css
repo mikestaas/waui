@@ -61,6 +61,16 @@ body {
   flex: 1;
 }
 
+/* The repo link, right of the status spans. */
+.menubar-link {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.menubar-link:hover {
+  text-decoration: underline;
+}
+
 /* The icon grid, centered on the wallpaper below the menu bar. */
 #grid {
   position: absolute;
