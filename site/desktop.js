@@ -47,7 +47,7 @@ const DEMOS = [
     lang: 'Rust',
     page: 'demo-todo.html',
     icon: 'icons/todo-rust.svg',
-    w: 360,
+    w: 460,
     h: 500,
     note: 'note: the Rust web todo can run out of heap after a few adds',
   },
@@ -56,7 +56,7 @@ const DEMOS = [
     lang: 'AssemblyScript',
     page: 'demo-todo-as.html',
     icon: 'icons/todo-as.svg',
-    w: 360,
+    w: 460,
     h: 500,
   },
 ];
