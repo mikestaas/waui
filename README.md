@@ -1,5 +1,7 @@
 # waui
 
+### WebAssembly User Interface types
+
 A WIT world for UI components. The component owns all UI state and logic; it
 exports its widget tree, and any host renders it. Adding a host requires no
 component changes.
