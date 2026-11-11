@@ -139,6 +139,15 @@ jobs:
             crates/host-iced/tests/goldens
             e2e/screenshots
 
+      # The e2e failure evidence (the parity spec's screenshots and DOM
+      # dumps, the Playwright traces), for inspection.
+      - name: Upload the e2e failure diagnostics
+        if: failure() && hashFiles('test-results') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: test-results
+
       - name: host-cli smoke (one view, then quit)
         run: |
           printf 'q\n' | cargo run -p host-cli -- target/components/demo-counter.component.wasm
