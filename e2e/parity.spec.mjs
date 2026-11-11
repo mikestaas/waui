@@ -12,17 +12,26 @@
 
 import { expect, test } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
+import config from '../playwright.config.mjs';
 import { demoPages, demoStates, pixelDiff, producers, settle } from './helpers.mjs';
 
 // The iced host's window size (crates/host-iced's WINDOW_WIDTH/HEIGHT) —
 // the goldens' viewport.
 test.describe('producer parity', () => {
-  test.use({ viewport: { width: 360, height: 340 } });
-
   for (const [demo, paths] of Object.entries(demoPages)) {
     for (const state of Object.keys(demoStates[demo])) {
-      test(`${demo} ${state}: the producers render identically`, async ({ context }, testInfo) => {
-        const pages = await Promise.all(paths.map(() => context.newPage()));
+      test(`${demo} ${state}: the producers render identically`, async ({ browser }, testInfo) => {
+        // One context per page: the clock mock (page.clock) is per-context,
+        // so pages in one context share a clock — the drivers' fastForwards
+        // would accumulate on it and desync the stopwatch readout.
+        // Manually created contexts do not inherit the config's `use`
+        // options, so the viewport and baseURL are passed explicitly.
+        const options = {
+          viewport: { width: 360, height: 340 },
+          baseURL: config.use.baseURL,
+        };
+        const contexts = await Promise.all(paths.map(() => browser.newContext(options)));
+        const pages = await Promise.all(contexts.map((c) => c.newPage()));
         try {
           await Promise.all(paths.map((path, i) => demoStates[demo][state](pages[i], path)));
           await Promise.all(pages.map(settle));
@@ -70,6 +79,7 @@ test.describe('producer parity', () => {
           }
         } finally {
           await Promise.all(pages.map((p) => p.close()));
+          await Promise.all(contexts.map((c) => c.close()));
         }
       });
     }

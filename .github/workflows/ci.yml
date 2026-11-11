@@ -128,9 +128,13 @@ jobs:
 
       # The regenerated goldens, for download and commit (the
       # update_snapshots input): the cargo dump goldens and the e2e
-      # screenshots.
+      # screenshots. `success() || failure()` uploads them when the e2e
+      # step completed either way (a bare `if:` is ANDed with the implicit
+      # success check, so a failing parity test would skip the upload);
+      # both are false when the step was skipped or the run cancelled, so
+      # unregenerated or partial goldens stay put.
       - name: Upload the regenerated goldens
-        if: inputs.update_snapshots
+        if: inputs.update_snapshots && (success() || failure())
         uses: actions/upload-artifact@v4
         with:
           name: goldens
