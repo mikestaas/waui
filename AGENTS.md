@@ -15,6 +15,15 @@
 - When in doubt, cut the sentence; a reader can ask.
 - When generating Git commits, do not include any 'Co-Authored-By' trailers or external attributions.
 
+## Working style
+
+- Decide, then commit. Pick the most sensible option and move; do not
+  re-litigate a settled choice or drift between alternatives.
+- Reason in one pass. No "wait, but what if" / "actually, on second thought"
+  loops; state the call once and proceed.
+- Ask only when the choice changes the result and the code cannot settle it.
+  Otherwise decide, proceed, and name what you chose.
+
 ## Verification
 
 Before calling a change done: `make components-as`, `make components`,
