@@ -8,19 +8,19 @@
 
 import { expect, test } from '@playwright/test';
 import { counter, stopwatch, todo } from '../web/expect.mjs';
-import { expectView, loadDemo, palette, sizes, widgetStyle } from './helpers.mjs';
-
-// Each demo's page, per producer.
-const pages = {
-  counter: ['/demo-counter.html', '/demo-counter-as.html', '/demo-counter-wat.html'],
-  stopwatch: ['/demo-stopwatch.html', '/demo-stopwatch-as.html', '/demo-stopwatch-wat.html'],
-  todo: ['/demo-todo.html', '/demo-todo-as.html', '/demo-todo-wat.html'],
-};
-const labels = ['Rust', 'AssemblyScript', 'WAT'];
+import {
+  demoPages,
+  expectView,
+  loadDemo,
+  palette,
+  producers,
+  sizes,
+  widgetStyle,
+} from './helpers.mjs';
 
 for (let i = 0; i < 3; i++) {
-  test(`counter (${labels[i]})`, async ({ page }) => {
-    await loadDemo(page, pages.counter[i]);
+  test(`counter (${producers[i]})`, async ({ page }) => {
+    await loadDemo(page, demoPages.counter[i]);
     await expectView(page, counter.zero, 'initial view');
 
     // The palette: the readout inherits the body color, the buttons take
@@ -56,13 +56,13 @@ for (let i = 0; i < 3; i++) {
     await expectView(page, counter.minusOne, 'after two decrements');
   });
 
-  test(`stopwatch (${labels[i]})`, async ({ page }) => {
+  test(`stopwatch (${producers[i]})`, async ({ page }) => {
     // The host clock is mocked: installed before the load, then paused, so
     // the 250ms wake loop and the now() samples are exact (the selftest
     // uses real time). The jump to a fixed time parks the start sample on
     // a known value; only the deltas matter.
     await page.clock.install({ time: new Date(1_700_000_000_000) });
-    await loadDemo(page, pages.stopwatch[i]);
+    await loadDemo(page, demoPages.stopwatch[i]);
     await page.clock.pauseAt(new Date(1_700_000_000_000 + 60_000));
     await expectView(page, stopwatch.idle, 'initial view');
 
@@ -83,8 +83,8 @@ for (let i = 0; i < 3; i++) {
     await expect(page.locator('button[data-id="3"]')).toHaveText('start');
   });
 
-  test(`todo (${labels[i]})`, async ({ page }) => {
-    await loadDemo(page, pages.todo[i]);
+  test(`todo (${producers[i]})`, async ({ page }) => {
+    await loadDemo(page, demoPages.todo[i]);
     await expectView(page, todo.seeded, 'initial view');
 
     // Type one char at a time, like the selftest: each keystroke is a fresh

@@ -111,9 +111,10 @@ jobs:
 
       # Browser E2E (Playwright, chromium): the nine demo pages and the site
       # desktop in a real browser — the rendered DOM against the selftest's
-      # expectations, the computed styles, the window management, and the
-      # screenshot goldens (the demos' states; CI-only, because font
-      # rendering is platform-specific).
+      # expectations, the computed styles, the window management, the
+      # pixel-level producer parity (runs everywhere), and the screenshot
+      # goldens (the demos' states; CI-only, because font rendering is
+      # platform-specific).
       - name: Browser E2E (Playwright)
         run: |
           npx playwright install --with-deps chromium

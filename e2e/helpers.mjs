@@ -113,3 +113,141 @@ export async function widgetStyle(page, id) {
     };
   }, id);
 }
+
+// The demo pages, per demo: the three producers, in order (the Rust page,
+// the AssemblyScript one, the WAT one).
+export const demoPages = {
+  counter: ['/demo-counter.html', '/demo-counter-as.html', '/demo-counter-wat.html'],
+  stopwatch: ['/demo-stopwatch.html', '/demo-stopwatch-as.html', '/demo-stopwatch-wat.html'],
+  todo: ['/demo-todo.html', '/demo-todo-as.html', '/demo-todo-wat.html'],
+};
+
+// The producer labels, in demoPages order.
+export const producers = ['Rust', 'AssemblyScript', 'WAT'];
+
+// The demo states, as a setup function per state: drive a page into the
+// state from a fresh load (a page's component keeps its state across
+// clicks, so each state reloads). The visual and parity specs share these.
+// The stopwatch's clock is mocked inside (installed before the load, then
+// paused), so its readout is exact.
+export const demoStates = {
+  counter: {
+    0: async (page, path) => {
+      await loadDemo(page, path);
+    },
+    // + + - = 1.
+    1: async (page, path) => {
+      await loadDemo(page, path);
+      await page.locator('button[data-id="2"]').click();
+      await page.locator('button[data-id="2"]').click();
+      await page.locator('button[data-id="4"]').click();
+    },
+    // - - - = -3.
+    '-3': async (page, path) => {
+      await loadDemo(page, path);
+      await page.locator('button[data-id="4"]').click();
+      await page.locator('button[data-id="4"]').click();
+      await page.locator('button[data-id="4"]').click();
+    },
+  },
+  stopwatch: {
+    paused: async (page, path) => {
+      await page.clock.install({ time: new Date(1_700_000_000_000) });
+      await loadDemo(page, path);
+      await page.clock.pauseAt(new Date(1_700_000_000_000 + 60_000));
+    },
+    // Started, then a second passed: the readout is a fixed 1000 ms.
+    running: async (page, path) => {
+      await page.clock.install({ time: new Date(1_700_000_000_000) });
+      await loadDemo(page, path);
+      await page.clock.pauseAt(new Date(1_700_000_000_000 + 60_000));
+      await page.locator('button[data-id="3"]').click();
+      await page.clock.fastForward(1000);
+    },
+  },
+  todo: {
+    seeded: async (page, path) => {
+      await loadDemo(page, path);
+    },
+    // A typed add: the new row at the top, the cleared field, the count.
+    added: async (page, path) => {
+      await loadDemo(page, path);
+      await page.locator('input[data-id="8"]').type('buy coffee');
+      await page.locator('button[data-id="9"]').click();
+    },
+  },
+};
+
+// Settle the frame before a screenshot: move the mouse off the last-clicked
+// widget (its :hover style) and drop focus (the browser's focus ring).
+export async function settle(page) {
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => document.activeElement?.blur());
+}
+
+// The per-channel tolerance of the pixel comparison. Zero: pages rendered
+// in one browser yield identical pixels for identical content, so any
+// difference is a real divergence.
+const PIXEL_TOL = 0;
+
+// Compare two screenshots pixel by pixel: a canvas in the browser decodes
+// the PNGs (the suite has no PNG dependency). Returns the differing-pixel
+// count and their bounding box, or a size mismatch.
+export async function pixelDiff(page, a, b) {
+  return page.evaluate(
+    ([a, b, tol]) => {
+      const load = (dataUrl) =>
+        new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(new Error('failed to decode the screenshot'));
+          img.src = dataUrl;
+        });
+      return Promise.all([load(a), load(b)]).then(([ia, ib]) => {
+        if (ia.width !== ib.width || ia.height !== ib.height) {
+          return {
+            sizeA: [ia.width, ia.height],
+            sizeB: [ib.width, ib.height],
+            n: 0,
+            box: null,
+          };
+        }
+        const c = document.createElement('canvas');
+        c.width = ia.width;
+        c.height = ia.height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(ia, 0, 0);
+        const pa = ctx.getImageData(0, 0, ia.width, ia.height).data;
+        ctx.clearRect(0, 0, ia.width, ia.height);
+        ctx.drawImage(ib, 0, 0);
+        const pb = ctx.getImageData(0, 0, ia.width, ib.height).data;
+        let n = 0;
+        let minX = ia.width,
+          minY = ia.height,
+          maxX = -1,
+          maxY = -1;
+        for (let i = 0; i < pa.length; i += 4) {
+          if (
+            Math.abs(pa[i] - pb[i]) > tol ||
+            Math.abs(pa[i + 1] - pb[i + 1]) > tol ||
+            Math.abs(pa[i + 2] - pb[i + 2]) > tol
+          ) {
+            n += 1;
+            const x = (i / 4) % ia.width;
+            const y = (i / 4 / ia.width) | 0;
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+          }
+        }
+        return { sizeA: null, sizeB: null, n, box: n > 0 ? [minX, minY, maxX, maxY] : null };
+      });
+    },
+    [
+      `data:image/png;base64,${Buffer.from(a).toString('base64')}`,
+      `data:image/png;base64,${Buffer.from(b).toString('base64')}`,
+      PIXEL_TOL,
+    ],
+  );
+}
