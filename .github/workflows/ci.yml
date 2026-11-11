@@ -93,7 +93,7 @@ jobs:
           make components-as
           make components-wat
 
-      - name: Test (unit, roundtrip, headless dumps)
+      - name: Test (unit, roundtrip, headless dumps + frame goldens)
         run: cargo test
 
       # The AS twin of the Rust `component-ui` unit tests: the tree layer's

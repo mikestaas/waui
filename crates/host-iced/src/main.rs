@@ -22,6 +22,8 @@
 //! window's own render path with the surface replaced by iced's software
 //! (`tiny-skia`) backend, so no window, display, or GPU is needed and the
 //! check runs in CI. `--click` applies before the frame, as in the window.
+//! `--now <ms>` freezes the host clock, so a `--dump` frame that reads the
+//! clock is deterministic.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -51,16 +53,27 @@ struct Wake {
 #[derive(Clone, Default)]
 struct Host {
     wake: Arc<Mutex<Wake>>,
+    /// A frozen clock (`--now <ms>`): `now` returns this constant, so a
+    /// `--dump` frame that reads the clock is deterministic. `None` = wall
+    /// time.
+    frozen_now: Option<u64>,
+}
+
+impl Host {
+    /// The host clock: the frozen value when set, else wall time.
+    fn clock(&self) -> u64 {
+        self.frozen_now.unwrap_or_else(now_ms)
+    }
 }
 
 impl AppImports for Host {
     fn now(&mut self) -> u64 {
-        now_ms()
+        self.clock()
     }
     fn schedule(&mut self, period: u64) {
         *self.wake.lock().unwrap() = Wake {
             rate_ms: period,
-            last_wake_ms: now_ms(),
+            last_wake_ms: self.clock(),
         };
     }
 }
@@ -102,17 +115,20 @@ const WINDOW_WIDTH: f32 = 360.0;
 const WINDOW_HEIGHT: f32 = 340.0;
 
 /// The host's arguments: `--click <id>` flags, an optional `--dump <file>`,
-/// and the component path. A bad argument exits with usage.
+/// an optional `--now <ms>`, and the component path. A bad argument exits
+/// with usage.
 struct Args {
     path: String,
     clicks: Vec<u32>,
     dump: Option<String>,
+    now: Option<u64>,
 }
 
 fn parse_args() -> Args {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut clicks = Vec::new();
     let mut dump = None;
+    let mut now = None;
     let mut path = None;
     let mut i = 0;
     while i < args.len() {
@@ -137,6 +153,16 @@ fn parse_args() -> Args {
                     std::process::exit(2);
                 }
             },
+            "--now" => match args.get(i + 1) {
+                Some(v) => {
+                    now = Some(v.parse().expect("--now takes a numeric millisecond value"));
+                    i += 1;
+                }
+                None => {
+                    eprintln!("--now takes a numeric millisecond value");
+                    std::process::exit(2);
+                }
+            },
             other if !other.starts_with('-') => path = Some(other.to_string()),
             _ => {}
         }
@@ -145,11 +171,18 @@ fn parse_args() -> Args {
     let path = match path {
         Some(p) => p,
         None => {
-            eprintln!("usage: host-iced [--click <id>] [--dump <file.png>] <component.wasm>");
+            eprintln!(
+                "usage: host-iced [--click <id>] [--dump <file.png>] [--now <ms>] <component.wasm>"
+            );
             std::process::exit(2);
         }
     };
-    Args { path, clicks, dump }
+    Args {
+        path,
+        clicks,
+        dump,
+        now,
+    }
 }
 
 fn main() -> iced::Result {
@@ -157,7 +190,7 @@ fn main() -> iced::Result {
     if let Some(file) = &args.dump {
         // Headless: apply the injected clicks, render one frame to a PNG,
         // and exit — no window, so it runs in CI.
-        let mut state = new_state(&args.path, args.clicks.clone());
+        let mut state = new_state(&args.path, args.clicks.clone(), args.now);
         apply_pending_clicks(&mut state);
         return render_dump(&state, file);
     }
@@ -176,12 +209,12 @@ fn main() -> iced::Result {
 // matches `main`'s parse of the same arguments.
 fn boot() -> State {
     let args = parse_args();
-    new_state(&args.path, args.clicks)
+    new_state(&args.path, args.clicks, args.now)
 }
 
 /// Instantiate the component and build the initial retained node list and
 /// widget tree from its `view()` snapshot.
-fn new_state(path: &str, clicks: Vec<u32>) -> State {
+fn new_state(path: &str, clicks: Vec<u32>, frozen_now: Option<u64>) -> State {
     let engine = Engine::default();
     let component = Component::from_file(&engine, path).expect("failed to load component");
 
@@ -190,7 +223,13 @@ fn new_state(path: &str, clicks: Vec<u32>) -> State {
         .expect("failed to link world imports");
 
     let wake = Arc::new(Mutex::new(Wake::default()));
-    let mut store = Store::new(&engine, Host { wake: wake.clone() });
+    let mut store = Store::new(
+        &engine,
+        Host {
+            wake: wake.clone(),
+            frozen_now,
+        },
+    );
     let app =
         App::instantiate(&mut store, &component, &linker).expect("failed to instantiate component");
 

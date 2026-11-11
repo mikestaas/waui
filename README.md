@@ -35,8 +35,8 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
 | `wit/`                   | the WIT contract (`widget` + `app`)                                                                 |
 | `crates/host-shared`     | wasmtime host core: the bindings, the list→tree rebuild, the retained tree diffs apply against      |
-| `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG (CI) |
-| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame (CI) |
+| `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG, `--now <ms>` freezes the clock (test-only) |
+| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame, `--now <ms>` freezes the clock (test-only) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
 | `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); `expect.mjs` holds the expected views, shared with the selftest and the browser suite |
 | `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
@@ -128,6 +128,15 @@ Settings → Pages → Source: *GitHub Actions*.
   one (skipped when `node_modules` is missing), and as `*_wat` the WAT one
   (skipped when `wasm-tools` is missing). The iced render is headless — no
   window, display, or GPU — so it runs in CI.
+- The dumps' goldens, the visual regression layer: each scenario's whole
+  frame — the tui's text (with the SGR codes) and the iced's PNG — is
+  byte-exact against `crates/host-{tui,iced}/tests/goldens/`, shared by the
+  three producers (they must render identically, so the shared golden is
+  also the parity check). The tui frame is text, and the iced render is
+  bundled-font software rasterization, so the goldens are platform-stable
+  and run everywhere. The stopwatch's running state reads the clock, so it
+  runs on a frozen one (`--now`). A mismatch writes the actual frame next to
+  the golden (`.actual`); regenerate with `UPDATE_GOLDENS=1 cargo test`.
 - `make web-test` (and `-as`, `-wat`): the same assertions from Node, against
   the core modules, through the same `glue.js` the browser page uses.
 - `make ui-test`: the tree layer's diff channel, as a standalone module run

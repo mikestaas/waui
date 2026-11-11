@@ -4,11 +4,15 @@
 //! this crate holds that machinery once.
 //!
 //! The tests share their built artifacts on disk and run on parallel threads,
-//! so the build *and* load window is serialized per artifact file (the two
+//! so the build *and* load window is serialized per artifact file (the
 //! locks below): one test's lift cannot clobber a file while a sibling is
 //! reading it.
+//!
+//! The `--dump` render checks also compare their frames against the golden
+//! files in each host crate's `tests/goldens/`; [`assert_golden`] holds that
+//! comparison once.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
@@ -265,4 +269,62 @@ pub fn build_component_wat(demo: &str) {
         let status = step.status().expect("failed to run wasm-tools");
         assert!(status.success(), "failed to build the WAT {demo}");
     }
+}
+
+/// Whether the goldens are rewritten in place: `UPDATE_GOLDENS=1`.
+pub fn update_goldens() -> bool {
+    std::env::var("UPDATE_GOLDENS").is_ok_and(|v| v == "1")
+}
+
+/// The file written next to `path` on a golden mismatch: `counter-0.txt`
+/// becomes `counter-0.actual.txt`.
+fn actual_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("golden");
+    let (stem, ext) = name.split_once('.').unwrap_or((name, ""));
+    let actual = if ext.is_empty() {
+        format!("{stem}.actual")
+    } else {
+        format!("{stem}.actual.{ext}")
+    };
+    let mut file = path.to_path_buf();
+    file.set_file_name(actual);
+    file
+}
+
+/// Compare `actual` against the golden file at `path`.
+///
+/// With [`update_goldens`], writes `actual` to the golden path. Otherwise,
+/// on mismatch: writes `actual` next to the golden (`.actual`) and fails,
+/// showing `diagnose(golden, actual)` — the caller's rendering of the
+/// difference (the first differing lines, the differing pixels).
+pub fn assert_golden(actual: &[u8], path: &Path, diagnose: impl Fn(&[u8], &[u8]) -> String) {
+    if update_goldens() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).expect("failed to create the goldens directory");
+        }
+        std::fs::write(path, actual)
+            .unwrap_or_else(|e| panic!("failed to write the golden {}: {e}", path.display()));
+        eprintln!("wrote golden {}", path.display());
+        return;
+    }
+    let want = std::fs::read(path).unwrap_or_else(|e| {
+        panic!(
+            "the golden {} is missing ({e}); run with UPDATE_GOLDENS=1 to create it",
+            path.display()
+        )
+    });
+    if want == *actual {
+        return;
+    }
+    let actual_file = actual_path(path);
+    std::fs::write(&actual_file, actual).expect("failed to write the .actual file");
+    panic!(
+        "golden mismatch for {} — wrote {} for inspection: {}",
+        path.display(),
+        actual_file.display(),
+        diagnose(&want, actual)
+    );
 }

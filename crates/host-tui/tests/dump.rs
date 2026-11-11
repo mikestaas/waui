@@ -3,25 +3,41 @@
 //! with ANSI SGR codes) and assert on the rendered frame — the layout, the
 //! semantic colors, and the host's focus ring.
 //!
-//! Each scenario runs against both producer languages: the Rust component
-//! (cargo + wit-bindgen) and its AssemblyScript one (asc + the hand-rolled
-//! ABI). The assertions are shared.
+//! Each scenario runs against the three producer languages: the Rust
+//! component (cargo + wit-bindgen), its AssemblyScript one (asc + the
+//! hand-rolled ABI), and its hand-rolled WAT one. The assertions are shared.
+//!
+//! The goldens in `tests/goldens/` are the visual regression layer: the
+//! whole frame, byte-exact, shared by the three producers (they must render
+//! identically, so the shared golden is also the parity check). The frame is
+//! text, so the goldens are platform-stable and run everywhere. The
+//! stopwatch's running state reads the clock, so it runs on a frozen one
+//! (`--now`). Regenerate with `UPDATE_GOLDENS=1 cargo test -p host-tui`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use waui_test::{
-    as_toolchain_available, build_component, build_component_as, build_component_wat,
-    component_path, component_path_as, component_path_wat, wat_toolchain_available, AS_BUILD_LOCK,
-    RUST_BUILD_LOCK, WAT_BUILD_LOCK,
+    as_toolchain_available, assert_golden, build_component, build_component_as,
+    build_component_wat, component_path, component_path_as, component_path_wat,
+    wat_toolchain_available, AS_BUILD_LOCK, RUST_BUILD_LOCK, WAT_BUILD_LOCK,
 };
+
+/// The frozen clock for the stopwatch's running state: the readout is
+/// `now - start`, and a frozen `now` makes it 0, so the frame is
+/// deterministic.
+const FROZEN_NOW: u64 = 1_000;
 
 /// Run the host binary in `--dump` mode: one frame, printed as text with
 /// ANSI SGR codes for the styled cells. `clicks` are injected before the
-/// frame, like a pointer would drive them.
-fn dump(path: &Path, clicks: &[u32]) -> String {
+/// frame, like a pointer would drive them; `now` freezes the host clock
+/// (`--now`), so a frame that reads the clock is deterministic.
+fn dump(path: &Path, clicks: &[u32], now: Option<u64>) -> String {
     let bin = env!("CARGO_BIN_EXE_host-tui");
     let mut cmd = Command::new(bin);
     cmd.arg("--dump");
+    if let Some(ms) = now {
+        cmd.arg("--now").arg(ms.to_string());
+    }
     for id in clicks {
         cmd.arg("--click").arg(id.to_string());
     }
@@ -86,16 +102,64 @@ fn find_containing<'a>(lines: &'a [Line], want: &str) -> &'a Line {
 }
 
 // The semantic colors, as the host's SGR codes: the focused override (cyan
-// bold), the neutral readout (white bold), and negative (red).
+// bold), the neutral readout (white bold), and the rest of the palette.
 const SGR_CYAN_BOLD: &str = "\x1b[36m\x1b[1m";
 const SGR_WHITE_BOLD: &str = "\x1b[97m\x1b[1m";
+const SGR_WHITE: &str = "\x1b[97m";
 const SGR_RED: &str = "\x1b[31m";
+const SGR_GREEN: &str = "\x1b[32m";
+const SGR_YELLOW: &str = "\x1b[33m";
+const SGR_DIM: &str = "\x1b[2m";
+
+/// The golden file for `name`, under this crate's `tests/goldens/`.
+fn golden(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/goldens")
+        .join(name)
+}
+
+/// Compare the frame against its golden: the shared byte-exact check, with
+/// the first differing lines in the failure message.
+fn assert_frame_golden(frame: &str, name: &str) {
+    assert_golden(frame.as_bytes(), &golden(name), frame_diff);
+}
+
+/// The first differing lines (and a length note), for a failure message.
+fn frame_diff(want: &[u8], actual: &[u8]) -> String {
+    let want_text = String::from_utf8_lossy(want);
+    let actual_text = String::from_utf8_lossy(actual);
+    let want_lines: Vec<&str> = want_text.lines().collect();
+    let actual_lines: Vec<&str> = actual_text.lines().collect();
+    let mut out = String::new();
+    let mut shown = 0;
+    for (i, (w, a)) in want_lines.iter().zip(&actual_lines).enumerate() {
+        if w != a {
+            out.push_str(&format!("line {i}: golden {w:?} | actual {a:?}\n"));
+            shown += 1;
+            if shown == 5 {
+                break;
+            }
+        }
+    }
+    if want_lines.len() != actual_lines.len() {
+        out.push_str(&format!(
+            "the golden has {} lines, the frame has {}\n",
+            want_lines.len(),
+            actual_lines.len()
+        ));
+    }
+    if out.is_empty() {
+        out.push_str("the frames differ, but line by line they match\n");
+    }
+    out
+}
 
 /// The counter's frame: the focus ring on the first button, the readout's
-/// color following the value's sign, and the hint bar whole.
+/// color following the value's sign, the hint bar whole, and the whole
+/// frame against the golden.
 fn assert_counter_frame(path: &Path) {
     // Fresh: 0, neutral, and the "+" button (the first focusable) focused.
-    let frame = dump(path, &[]);
+    let frame = dump(path, &[], None);
     let ls = lines(&frame);
     assert!(
         ls[0].plain.contains("q: quit"),
@@ -119,28 +183,35 @@ fn assert_counter_frame(path: &Path) {
         !minus.raw.contains(SGR_CYAN_BOLD),
         "the - button must not carry the focus ring"
     );
+    assert_frame_golden(&frame, "counter-0.txt");
 
     // + + - = 1: still non-negative, still neutral.
-    let ls = lines(&dump(path, &[2, 2, 4]));
+    let frame = dump(path, &[2, 2, 4], None);
+    let ls = lines(&frame);
     let readout = find(&ls, "1");
     assert!(readout.raw.contains(SGR_WHITE_BOLD));
     assert!(!readout.raw.contains(SGR_RED));
+    assert_frame_golden(&frame, "counter-1.txt");
 
     // - - - = -3: the readout takes the negative tone.
-    let ls = lines(&dump(path, &[4, 4, 4]));
+    let frame = dump(path, &[4, 4, 4], None);
+    let ls = lines(&frame);
     let readout = find(&ls, "-3");
     assert!(
         readout.raw.contains(SGR_RED),
         "a negative readout should be red"
     );
+    assert_frame_golden(&frame, "counter--3.txt");
 }
 
 /// The stopwatch's frame: the readout's color and the button's label follow
-/// the running state; the readout's value is a small elapsed time after a
-/// start (it is measured, so only its order of magnitude is asserted).
+/// the running state. Paused, the frame never reads the clock; running, it
+/// runs on a frozen one, so the readout is exactly 0 and the whole frame is
+/// the golden.
 fn assert_stopwatch_frame(path: &Path) {
     // Paused: 0 ms, neutral, and the start button focused.
-    let ls = lines(&dump(path, &[]));
+    let frame = dump(path, &[], None);
+    let ls = lines(&frame);
     let readout = ls
         .iter()
         .find(|l| l.plain.ends_with(" ms"))
@@ -155,24 +226,17 @@ fn assert_stopwatch_frame(path: &Path) {
         start.raw.contains(SGR_CYAN_BOLD),
         "the focused start button should be cyan bold"
     );
+    assert_frame_golden(&frame, "stopwatch-paused.txt");
 
-    // Started: the readout takes the accent tone, the button reads pause,
-    // and the value is a small elapsed time (the frame is drawn moments
-    // after the click).
-    let ls = lines(&dump(path, &[3]));
+    // Started: the frozen clock makes the readout exactly 0; the frame takes
+    // the running colors (accent readout, warning pause button).
+    let frame = dump(path, &[3], Some(FROZEN_NOW));
+    let ls = lines(&frame);
     let readout = ls
         .iter()
         .find(|l| l.plain.ends_with(" ms"))
         .unwrap_or_else(|| panic!("no readout line in the frame"));
-    let ms = readout
-        .plain
-        .trim_end_matches(" ms")
-        .parse::<u64>()
-        .unwrap_or_else(|_| panic!("readout {:?} is not a millisecond value", readout.plain));
-    assert!(
-        ms < 50,
-        "the frame is drawn moments after the start: {ms} ms"
-    );
+    assert_eq!(readout.plain, "0 ms");
     assert!(
         readout.raw.contains(SGR_CYAN_BOLD),
         "a running readout should be accent (cyan bold)"
@@ -182,6 +246,51 @@ fn assert_stopwatch_frame(path: &Path) {
         pause.raw.contains(SGR_CYAN_BOLD),
         "the focused pause button should be cyan bold"
     );
+    assert_frame_golden(&frame, "stopwatch-running.txt");
+}
+
+/// The todo's frame: the header's accent, the first row's checkbox carrying
+/// the focus ring, the done row's positive checkbox and warning label, the
+/// footer's dim count, and the whole frame against the golden.
+fn assert_todo_frame(path: &Path) {
+    let frame = dump(path, &[], None);
+    let ls = lines(&frame);
+    assert!(
+        ls[0].plain.contains("q: quit"),
+        "the hint bar is clipped: {:?}",
+        ls[0].plain
+    );
+    let header = find(&ls, "todos");
+    assert!(
+        header.raw.contains(SGR_CYAN_BOLD),
+        "the todos header should be accent (cyan bold)"
+    );
+    let first = find_containing(&ls, "walk the dog");
+    assert!(
+        first.raw.contains(SGR_CYAN_BOLD),
+        "the first row's checkbox should carry the focus ring"
+    );
+    let second = find_containing(&ls, "buy milk");
+    assert!(
+        second.raw.contains(SGR_WHITE),
+        "an active label should be neutral (white)"
+    );
+    assert!(
+        !second.raw.contains(SGR_CYAN_BOLD),
+        "the second row must not carry the focus ring"
+    );
+    let done = find_containing(&ls, "water plants");
+    assert!(
+        done.raw.contains(SGR_GREEN),
+        "a done checkbox should be positive (green)"
+    );
+    assert!(
+        done.raw.contains(SGR_YELLOW),
+        "a done label should be warning (yellow)"
+    );
+    let footer = find_containing(&ls, "2 left");
+    assert!(footer.raw.contains(SGR_DIM), "a small count should be dim");
+    assert_frame_golden(&frame, "todo.txt");
 }
 
 #[test]
@@ -252,4 +361,39 @@ fn stopwatch_dump_wat() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-stopwatch");
     assert_stopwatch_frame(&component_path_wat("demo-stopwatch"));
+}
+
+#[test]
+fn todo_dump() {
+    let _guard = RUST_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component("demo-todo");
+    assert_todo_frame(&component_path("demo-todo"));
+}
+
+#[test]
+fn todo_dump_as() {
+    if !as_toolchain_available() {
+        eprintln!("skipping: AssemblyScript toolchain not installed (run `npm install`)");
+        return;
+    }
+    let _guard = AS_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_as("demo-todo");
+    assert_todo_frame(&component_path_as("demo-todo"));
+}
+
+#[test]
+fn todo_dump_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let _guard = WAT_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_wat("demo-todo");
+    assert_todo_frame(&component_path_wat("demo-todo"));
 }

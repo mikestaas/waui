@@ -5,3 +5,6 @@
 # Playwright's run artifacts (make e2e).
 test-results/
 playwright-report/
+# The .actual files a golden mismatch writes next to the goldens
+# (crates/*/tests/goldens/).
+*.actual.*
