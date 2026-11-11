@@ -5,8 +5,10 @@
 //!
 //! The render is headless (no window, display, or GPU), so it runs in CI.
 //! Text renders with the bundled Fira Sans, and the rasterizer is pure
-//! software, so the pixels are platform-stable and the goldens run
-//! everywhere.
+//! software. A glyph the font lacks — the todo's checkbox and delete
+//! symbols — falls back to a system font, so the goldens are
+//! platform-specific: the committed ones were generated on the CI platform
+//! (the workflow's `update_snapshots` input regenerates them there).
 //!
 //! Each scenario runs against the three producer languages: the Rust
 //! component, its AssemblyScript one, and its hand-rolled WAT one. The

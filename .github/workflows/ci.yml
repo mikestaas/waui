@@ -27,10 +27,11 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      # Regenerate the screenshot goldens (e2e/visual.spec.mjs) — run after
-      # a CI runner image change shifts the font rendering.
+      # Regenerate all the goldens on the CI platform (the cargo dump
+      # goldens and the e2e screenshots) — run after a CI runner image
+      # change shifts the font rendering.
       update_snapshots:
-        description: Regenerate the screenshot goldens
+        description: Regenerate all the goldens
         type: boolean
         default: false
 
@@ -93,7 +94,12 @@ jobs:
           make components-as
           make components-wat
 
+      # The dump goldens update in place with the update_snapshots input
+      # (UPDATE_GOLDENS=1), so the committed goldens and the CI comparison
+      # come from the same platform.
       - name: Test (unit, roundtrip, headless dumps + frame goldens)
+        env:
+          UPDATE_GOLDENS: ${{ inputs.update_snapshots && '1' || '' }}
         run: cargo test
 
       # The AS twin of the Rust `component-ui` unit tests: the tree layer's
@@ -121,13 +127,17 @@ jobs:
           make e2e E2E_ARGS=${{ inputs.update_snapshots && '--update-snapshots' || '' }}
 
       # The regenerated goldens, for download and commit (the
-      # update_snapshots input).
+      # update_snapshots input): the cargo dump goldens and the e2e
+      # screenshots.
       - name: Upload the regenerated goldens
         if: inputs.update_snapshots
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-goldens
-          path: e2e/screenshots
+          name: goldens
+          path: |
+            crates/host-tui/tests/goldens
+            crates/host-iced/tests/goldens
+            e2e/screenshots
 
       - name: host-cli smoke (one view, then quit)
         run: |

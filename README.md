@@ -132,12 +132,17 @@ Settings → Pages → Source: *GitHub Actions*.
   frame — the tui's text (with the SGR codes) and the iced's PNG — is
   byte-exact against `crates/host-{tui,iced}/tests/goldens/`, shared by the
   three producers (they must render identically, so the shared golden is
-  also the parity check). The tui frame is text, and the iced render is
-  bundled-font software rasterization, so the goldens are platform-stable
-  and run everywhere. The stopwatch's running state reads the clock, so it
-  runs on a fake one that advances (`--now <base> <step>`). A mismatch writes
-  the actual frame next to the golden (`.actual`); regenerate with
-  `UPDATE_GOLDENS=1 cargo test`.
+  also the parity check). The tui frame is text, so its goldens are
+  platform-stable. The iced render is bundled-font software rasterization,
+  but a glyph the bundled font lacks — the todo's checkbox and delete
+  symbols — falls back to a system font, so the iced goldens are
+  platform-specific. The stopwatch's running state reads the clock, so it
+  runs on a fake one that advances (`--now <base> <step>`). A mismatch
+  writes the actual frame next to the golden (`.actual`). `UPDATE_GOLDENS=1
+  cargo test` regenerates the goldens with this machine's rendering; the
+  iced ones are platform-specific, so the committed goldens come from the
+  CI platform — the workflow's `update_snapshots` input regenerates them
+  there (with the e2e screenshots) for download and commit.
 - `make web-test` (and `-as`, `-wat`): the same assertions from Node, against
   the core modules, through the same `glue.js` the browser page uses.
 - `make ui-test`: the tree layer's diff channel, as a standalone module run
