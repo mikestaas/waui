@@ -335,6 +335,20 @@ fn assert_todo(width: u32, height: u32, buf: &[u8]) {
     assert!(warning > 0, "the done label should be warning");
 }
 
+/// The todo's frames: the chrome, the header's accent, and the rows'
+/// semantic colors, each against its golden. The added state is the add
+/// button with an empty field: the next preset label, newest first, the
+/// count up one.
+fn assert_todo_frame(path: &Path) {
+    let (w, h, buf, bytes) = dump(path, &[], None);
+    assert_todo(w, h, &buf);
+    assert_png_golden(&bytes, "todo.png");
+
+    let (w, h, buf, bytes) = dump(path, &[9], None);
+    assert_todo(w, h, &buf);
+    assert_png_golden(&bytes, "todo-added.png");
+}
+
 #[test]
 fn counter_dump() {
     let _guard = RUST_BUILD_LOCK
@@ -411,9 +425,7 @@ fn todo_dump() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component("demo-todo");
-    let (w, h, buf, bytes) = dump(&component_path("demo-todo"), &[], None);
-    assert_todo(w, h, &buf);
-    assert_png_golden(&bytes, "todo.png");
+    assert_todo_frame(&component_path("demo-todo"));
 }
 
 #[test]
@@ -426,9 +438,7 @@ fn todo_dump_as() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_as("demo-todo");
-    let (w, h, buf, bytes) = dump(&component_path_as("demo-todo"), &[], None);
-    assert_todo(w, h, &buf);
-    assert_png_golden(&bytes, "todo.png");
+    assert_todo_frame(&component_path_as("demo-todo"));
 }
 
 #[test]
@@ -441,7 +451,5 @@ fn todo_dump_wat() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-todo");
-    let (w, h, buf, bytes) = dump(&component_path_wat("demo-todo"), &[], None);
-    assert_todo(w, h, &buf);
-    assert_png_golden(&bytes, "todo.png");
+    assert_todo_frame(&component_path_wat("demo-todo"));
 }

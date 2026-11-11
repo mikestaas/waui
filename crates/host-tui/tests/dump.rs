@@ -251,9 +251,11 @@ fn assert_stopwatch_frame(path: &Path) {
     assert_frame_golden(&frame, "stopwatch-running.txt");
 }
 
-/// The todo's frame: the header's accent, the first row's checkbox carrying
-/// the focus ring, the done row's positive checkbox and warning label, the
-/// footer's dim count, and the whole frame against the golden.
+/// The todo's frames: the header's accent, the first row's checkbox
+/// carrying the focus ring, the done row's positive checkbox and warning
+/// label, the footer's dim count, and the whole frame against the golden.
+/// The added state is the add button with an empty field: the next preset
+/// label, newest first, the count up one.
 fn assert_todo_frame(path: &Path) {
     let frame = dump(path, &[], None);
     let ls = lines(&frame);
@@ -293,6 +295,28 @@ fn assert_todo_frame(path: &Path) {
     let footer = find_containing(&ls, "2 left");
     assert!(footer.raw.contains(SGR_DIM), "a small count should be dim");
     assert_frame_golden(&frame, "todo.txt");
+
+    // The add button with an empty field: the next preset ("write code"),
+    // at the top of the active column, the count up one.
+    let frame = dump(path, &[9], None);
+    let ls = lines(&frame);
+    let new = find_containing(&ls, "write code");
+    assert!(
+        new.raw.contains(SGR_CYAN_BOLD),
+        "the new row's checkbox should carry the focus ring"
+    );
+    assert!(
+        new.raw.contains(SGR_WHITE),
+        "an active label should be neutral (white)"
+    );
+    let done = find_containing(&ls, "water plants");
+    assert!(
+        done.raw.contains(SGR_GREEN),
+        "a done checkbox should be positive (green)"
+    );
+    let footer = find_containing(&ls, "3 left");
+    assert!(footer.raw.contains(SGR_DIM), "a small count should be dim");
+    assert_frame_golden(&frame, "todo-added.txt");
 }
 
 #[test]
