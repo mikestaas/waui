@@ -51,6 +51,34 @@ The three wasmtime hosts load the same component file. The web host runs the
 *pre-lift* core module instead (browsers instantiate core wasm, not components)
 through a hand-rolled JS layer over the same ABI.
 
+## Screenshots
+
+Each demo, on each host, in each of the three source languages.
+
+### Web
+
+| Rust | AssemblyScript | WAT |
+| :---: | :---: | :---: |
+| <img src="e2e/screenshots/visual.spec.mjs/counter-1-chromium.png" width="180" alt="counter"> | <img src="e2e/screenshots/visual.spec.mjs/counter-as-1-chromium.png" width="180" alt="counter"> | <img src="e2e/screenshots/visual.spec.mjs/counter-wat-1-chromium.png" width="180" alt="counter"> |
+| <img src="e2e/screenshots/visual.spec.mjs/stopwatch-running-chromium.png" width="180" alt="stopwatch"> | <img src="e2e/screenshots/visual.spec.mjs/stopwatch-as-running-chromium.png" width="180" alt="stopwatch"> | <img src="e2e/screenshots/visual.spec.mjs/stopwatch-wat-running-chromium.png" width="180" alt="stopwatch"> |
+| <img src="e2e/screenshots/visual.spec.mjs/todo-added-chromium.png" width="180" alt="todo"> | <img src="e2e/screenshots/visual.spec.mjs/todo-as-added-chromium.png" width="180" alt="todo"> | <img src="e2e/screenshots/visual.spec.mjs/todo-wat-added-chromium.png" width="180" alt="todo"> |
+
+### Iced
+
+| Rust | AssemblyScript | WAT |
+| :---: | :---: | :---: |
+| <img src="crates/host-iced/tests/goldens/counter-1.png" width="180" alt="counter"> | <img src="crates/host-iced/tests/goldens/counter-1-as.png" width="180" alt="counter"> | <img src="crates/host-iced/tests/goldens/counter-1-wat.png" width="180" alt="counter"> |
+| <img src="crates/host-iced/tests/goldens/stopwatch-running.png" width="180" alt="stopwatch"> | <img src="crates/host-iced/tests/goldens/stopwatch-running-as.png" width="180" alt="stopwatch"> | <img src="crates/host-iced/tests/goldens/stopwatch-running-wat.png" width="180" alt="stopwatch"> |
+| <img src="crates/host-iced/tests/goldens/todo-added.png" width="180" alt="todo"> | <img src="crates/host-iced/tests/goldens/todo-added-as.png" width="180" alt="todo"> | <img src="crates/host-iced/tests/goldens/todo-added-wat.png" width="180" alt="todo"> |
+
+### TUI
+
+| Rust | AssemblyScript | WAT |
+| :---: | :---: | :---: |
+| <img src="docs/screenshots/counter-tui.png" width="360" alt="counter"> | <img src="docs/screenshots/counter-tui-as.png" width="360" alt="counter"> | <img src="docs/screenshots/counter-tui-wat.png" width="360" alt="counter"> |
+| <img src="docs/screenshots/stopwatch-tui.png" width="360" alt="stopwatch"> | <img src="docs/screenshots/stopwatch-tui-as.png" width="360" alt="stopwatch"> | <img src="docs/screenshots/stopwatch-tui-wat.png" width="360" alt="stopwatch"> |
+| <img src="docs/screenshots/todo-tui.png" width="360" alt="todo"> | <img src="docs/screenshots/todo-tui-as.png" width="360" alt="todo"> | <img src="docs/screenshots/todo-tui-wat.png" width="360" alt="todo"> |
+
 ## Quick start
 
 Prerequisites: stable Rust with the `wasm32-unknown-unknown` target

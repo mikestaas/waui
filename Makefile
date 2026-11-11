@@ -8,7 +8,7 @@ WAT_COMPONENTS := demo-counter demo-stopwatch demo-todo
          run-tui-as run-stop-tui-as run-todo-tui-as run-iced-as run-stop-iced-as run-todo-iced-as \
          run-cli-wat run-stop-cli-wat run-todo-cli-wat run-tui-wat run-stop-tui-wat run-todo-tui-wat \
          run-iced-wat run-stop-iced-wat run-todo-iced-wat \
-         web web-as web-wat web-test web-test-as web-test-wat site ui-test e2e fmt fmt-check hooks test
+         web web-as web-wat web-test web-test-as web-test-wat site ui-test e2e screenshots fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model.
 components:
@@ -238,6 +238,13 @@ ui-test:
 e2e: site
 	@test -d node_modules/@playwright/test || { echo "e2e needs node/npm — run: npm install"; exit 1; }
 	npx playwright test $(E2E_ARGS)
+
+# The README's tui frames, rendered to PNGs via freeze. The web and iced
+# frames link straight to their committed goldens. Needs: brew install
+# charmbracelet/tap/freeze
+screenshots:
+	@mkdir -p docs/screenshots
+	@./tools/tui-screenshots.sh
 
 # Format all sources: the Rust workspace with rustfmt, and the
 # AssemblyScript (assembly/) + web (web/) trees with prettier. The
