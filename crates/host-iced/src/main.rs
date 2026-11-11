@@ -22,8 +22,8 @@
 //! window's own render path with the surface replaced by iced's software
 //! (`tiny-skia`) backend, so no window, display, or GPU is needed and the
 //! check runs in CI. `--click` applies before the frame, as in the window.
-//! `--now <ms>` freezes the host clock, so a `--dump` frame that reads the
-//! clock is deterministic.
+//! `--now <base> <step>` fakes the host clock (each call advances `step`
+//! ms), so a `--dump` frame that reads the clock is deterministic.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -53,16 +53,25 @@ struct Wake {
 #[derive(Clone, Default)]
 struct Host {
     wake: Arc<Mutex<Wake>>,
-    /// A frozen clock (`--now <ms>`): `now` returns this constant, so a
-    /// `--dump` frame that reads the clock is deterministic. `None` = wall
-    /// time.
-    frozen_now: Option<u64>,
+    /// A fake clock (`--now <base> <step>`): the n-th call to `now` returns
+    /// `base + n * step`, so a `--dump` frame that reads the clock shows a
+    /// fixed elapsed. `None` = wall time.
+    fake_now: Option<(u64, u64)>,
+    /// The fake clock's call count.
+    fake_calls: u64,
 }
 
 impl Host {
-    /// The host clock: the frozen value when set, else wall time.
-    fn clock(&self) -> u64 {
-        self.frozen_now.unwrap_or_else(now_ms)
+    /// The host clock: the fake value when set, else wall time.
+    fn clock(&mut self) -> u64 {
+        match self.fake_now {
+            Some((base, step)) => {
+                let t = base + self.fake_calls * step;
+                self.fake_calls += 1;
+                t
+            }
+            None => now_ms(),
+        }
     }
 }
 
@@ -115,13 +124,13 @@ const WINDOW_WIDTH: f32 = 360.0;
 const WINDOW_HEIGHT: f32 = 340.0;
 
 /// The host's arguments: `--click <id>` flags, an optional `--dump <file>`,
-/// an optional `--now <ms>`, and the component path. A bad argument exits
-/// with usage.
+/// an optional `--now <base> <step>`, and the component path. A bad argument
+/// exits with usage.
 struct Args {
     path: String,
     clicks: Vec<u32>,
     dump: Option<String>,
-    now: Option<u64>,
+    now: Option<(u64, u64)>,
 }
 
 fn parse_args() -> Args {
@@ -153,13 +162,16 @@ fn parse_args() -> Args {
                     std::process::exit(2);
                 }
             },
-            "--now" => match args.get(i + 1) {
-                Some(v) => {
-                    now = Some(v.parse().expect("--now takes a numeric millisecond value"));
-                    i += 1;
+            "--now" => match (args.get(i + 1), args.get(i + 2)) {
+                (Some(b), Some(s)) => {
+                    now = Some((
+                        b.parse().expect("--now takes a numeric base and step"),
+                        s.parse().expect("--now takes a numeric base and step"),
+                    ));
+                    i += 2;
                 }
-                None => {
-                    eprintln!("--now takes a numeric millisecond value");
+                _ => {
+                    eprintln!("--now takes a numeric base and step (milliseconds)");
                     std::process::exit(2);
                 }
             },
@@ -172,7 +184,7 @@ fn parse_args() -> Args {
         Some(p) => p,
         None => {
             eprintln!(
-                "usage: host-iced [--click <id>] [--dump <file.png>] [--now <ms>] <component.wasm>"
+                "usage: host-iced [--click <id>] [--dump <file.png>] [--now <base> <step>] <component.wasm>"
             );
             std::process::exit(2);
         }
@@ -214,7 +226,7 @@ fn boot() -> State {
 
 /// Instantiate the component and build the initial retained node list and
 /// widget tree from its `view()` snapshot.
-fn new_state(path: &str, clicks: Vec<u32>, frozen_now: Option<u64>) -> State {
+fn new_state(path: &str, clicks: Vec<u32>, fake_now: Option<(u64, u64)>) -> State {
     let engine = Engine::default();
     let component = Component::from_file(&engine, path).expect("failed to load component");
 
@@ -227,7 +239,8 @@ fn new_state(path: &str, clicks: Vec<u32>, frozen_now: Option<u64>) -> State {
         &engine,
         Host {
             wake: wake.clone(),
-            frozen_now,
+            fake_now,
+            fake_calls: 0,
         },
     );
     let app =

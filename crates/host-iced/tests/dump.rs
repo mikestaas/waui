@@ -12,7 +12,7 @@
 //! component, its AssemblyScript one, and its hand-rolled WAT one. The
 //! counter's content is deterministic, so the three producers must render
 //! byte-identical PNGs; the stopwatch's readout is wall-clock time, so its
-//! running state runs on a frozen clock (`--now`).
+//! running state runs on a fake clock that advances (`--now <base> <step>`).
 //!
 //! The goldens in `tests/goldens/` are the visual regression layer: the
 //! whole frame, byte-exact, shared by the three producers (the shared
@@ -28,10 +28,10 @@ use waui_test::{
     wat_toolchain_available, AS_BUILD_LOCK, RUST_BUILD_LOCK, WAT_BUILD_LOCK,
 };
 
-// The frozen clock for the stopwatch's running state: the readout is
-// `now - start`, and a frozen `now` makes it 0, so the frame is
-// deterministic.
-const FROZEN_NOW: u64 = 1_000;
+// The fake clock for the stopwatch's running state: the n-th `now` call
+// returns `base + n * step`. The host's `schedule` call and the readout's
+// `elapsed` sample both read it, so the readout is a fixed 2 * step.
+const FAKE_NOW: (u64, u64) = (1_000, 50);
 
 // The dump file: unique per call, so parallel tests do not collide.
 static DUMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -39,9 +39,9 @@ static DUMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 /// Run the host binary in `--dump` mode and read the PNG back: the decoded
 /// RGBA pixels (the property assertions) and the raw bytes (the golden
 /// compares them). `clicks` are injected before the frame, like a pointer
-/// would drive them; `now` freezes the host clock (`--now`), so a frame
-/// that reads the clock is deterministic.
-fn dump(path: &Path, clicks: &[u32], now: Option<u64>) -> (u32, u32, Vec<u8>, Vec<u8>) {
+/// would drive them; `now` is the fake clock's base and step (`--now`), so
+/// a frame that reads the clock is deterministic.
+fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>) -> (u32, u32, Vec<u8>, Vec<u8>) {
     let bin = env!("CARGO_BIN_EXE_host-iced");
     let file = std::env::temp_dir().join(format!(
         "waui-host-iced-dump-{}-{}.png",
@@ -50,8 +50,8 @@ fn dump(path: &Path, clicks: &[u32], now: Option<u64>) -> (u32, u32, Vec<u8>, Ve
     ));
     let mut cmd = Command::new(bin);
     cmd.arg("--dump").arg(&file);
-    if let Some(ms) = now {
-        cmd.arg("--now").arg(ms.to_string());
+    if let Some((base, step)) = now {
+        cmd.arg("--now").arg(base.to_string()).arg(step.to_string());
     }
     for id in clicks {
         cmd.arg("--click").arg(id.to_string());
@@ -272,7 +272,7 @@ fn assert_counter_frame(path: &Path) {
 }
 
 /// The stopwatch's two states, each against its golden. The running state
-/// runs on a frozen clock, so the readout is exactly 0.
+/// runs on a fake clock that advances, so the readout is a fixed 100 ms.
 fn assert_stopwatch_frame(path: &Path) {
     // Paused: the readout is neutral, the button reads start (positive).
     let (w, h, buf, bytes) = dump(path, &[], None);
@@ -289,8 +289,9 @@ fn assert_stopwatch_frame(path: &Path) {
     assert_png_golden(&bytes, "stopwatch-paused.png");
 
     // Started: the readout takes the accent color, the button reads pause
-    // (warning). The frozen clock makes the readout exactly 0.
-    let (w, h, buf, bytes) = dump(path, &[3], Some(FROZEN_NOW));
+    // (warning). The fake clock advances 50 ms per call, so the readout is
+    // the fixed 100 ms.
+    let (w, h, buf, bytes) = dump(path, &[3], Some(FAKE_NOW));
     assert_background(w, h, &buf);
     assert_centered(w, h, &buf);
     let (neutral, positive, accent, warning) = (

@@ -7,8 +7,9 @@
 //! keys type into the focused text input, q quits.
 //! `--dump` renders one frame with ANSI color and prints it, for headless
 //! verification of the tree-to-UI mapping; `--click <id>` injects clicks
-//! before the interactive loop; `--now <ms>` freezes the host clock, so a
-//! `--dump` frame that reads the clock is deterministic.
+//! before the interactive loop; `--now <base> <step>` fakes the host clock
+//! (each call advances `step` ms), so a `--dump` frame that reads the clock
+//! is deterministic.
 //!
 //! The loop wakes the component — `on-tick` + `changes` — at the period
 //! the component requests with `schedule` (0 = never; the 50ms event poll
@@ -57,16 +58,25 @@ struct Wake {
 #[derive(Clone, Default)]
 struct Host {
     wake: Arc<Mutex<Wake>>,
-    /// A frozen clock (`--now <ms>`): `now` returns this constant, so a
-    /// `--dump` frame that reads the clock is deterministic. `None` = wall
-    /// time.
-    frozen_now: Option<u64>,
+    /// A fake clock (`--now <base> <step>`): the n-th call to `now` returns
+    /// `base + n * step`, so a `--dump` frame that reads the clock shows a
+    /// fixed elapsed. `None` = wall time.
+    fake_now: Option<(u64, u64)>,
+    /// The fake clock's call count.
+    fake_calls: u64,
 }
 
 impl Host {
-    /// The host clock: the frozen value when set, else wall time.
-    fn clock(&self) -> u64 {
-        self.frozen_now.unwrap_or_else(now_ms)
+    /// The host clock: the fake value when set, else wall time.
+    fn clock(&mut self) -> u64 {
+        match self.fake_now {
+            Some((base, step)) => {
+                let t = base + self.fake_calls * step;
+                self.fake_calls += 1;
+                t
+            }
+            None => now_ms(),
+        }
     }
 }
 
@@ -371,7 +381,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let dump = args.iter().any(|a| a == "--dump");
     let mut clicks: Vec<u32> = Vec::new();
-    let mut frozen_now: Option<u64> = None;
+    let mut fake_now: Option<(u64, u64)> = None;
     let mut path: Option<String> = None;
     let mut i = 0;
     while i < args.len() {
@@ -387,12 +397,19 @@ fn main() {
                 }
             }
             "--now" => {
-                if let Some(v) = args.get(i + 1) {
-                    frozen_now = Some(v.parse().expect("--now takes a numeric millisecond value"));
-                    i += 1;
-                } else {
-                    eprintln!("--now takes a numeric millisecond value");
-                    std::process::exit(2);
+                let (b, s) = (args.get(i + 1), args.get(i + 2));
+                match (b, s) {
+                    (Some(b), Some(s)) => {
+                        fake_now = Some((
+                            b.parse().expect("--now takes a numeric base and step"),
+                            s.parse().expect("--now takes a numeric base and step"),
+                        ));
+                        i += 2;
+                    }
+                    _ => {
+                        eprintln!("--now takes a numeric base and step (milliseconds)");
+                        std::process::exit(2);
+                    }
                 }
             }
             other => {
@@ -406,7 +423,9 @@ fn main() {
     let path = match path {
         Some(p) => p,
         None => {
-            eprintln!("usage: host-tui [--dump] [--click <id>] [--now <ms>] <component.wasm>");
+            eprintln!(
+                "usage: host-tui [--dump] [--click <id>] [--now <base> <step>] <component.wasm>"
+            );
             std::process::exit(2);
         }
     };
@@ -419,7 +438,7 @@ fn main() {
         .expect("failed to link world imports");
 
     let mut store = Store::new(&engine, Host::default());
-    store.data_mut().frozen_now = frozen_now;
+    store.data_mut().fake_now = fake_now;
     let app =
         App::instantiate(&mut store, &component, &linker).expect("failed to instantiate component");
     // The loop's handle on the component's refresh request.

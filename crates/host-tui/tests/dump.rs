@@ -11,8 +11,9 @@
 //! whole frame, byte-exact, shared by the three producers (they must render
 //! identically, so the shared golden is also the parity check). The frame is
 //! text, so the goldens are platform-stable and run everywhere. The
-//! stopwatch's running state reads the clock, so it runs on a frozen one
-//! (`--now`). Regenerate with `UPDATE_GOLDENS=1 cargo test -p host-tui`.
+//! stopwatch's running state reads the clock, so it runs on a fake one that
+//! advances (`--now <base> <step>`). Regenerate with
+//! `UPDATE_GOLDENS=1 cargo test -p host-tui`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,21 +23,21 @@ use waui_test::{
     wat_toolchain_available, AS_BUILD_LOCK, RUST_BUILD_LOCK, WAT_BUILD_LOCK,
 };
 
-/// The frozen clock for the stopwatch's running state: the readout is
-/// `now - start`, and a frozen `now` makes it 0, so the frame is
-/// deterministic.
-const FROZEN_NOW: u64 = 1_000;
+/// The fake clock for the stopwatch's running state: the n-th `now` call
+/// returns `base + n * step`. The host's `schedule` call and the readout's
+/// `elapsed` sample both read it, so the readout is a fixed 2 * step.
+const FAKE_NOW: (u64, u64) = (1_000, 50);
 
 /// Run the host binary in `--dump` mode: one frame, printed as text with
 /// ANSI SGR codes for the styled cells. `clicks` are injected before the
-/// frame, like a pointer would drive them; `now` freezes the host clock
-/// (`--now`), so a frame that reads the clock is deterministic.
-fn dump(path: &Path, clicks: &[u32], now: Option<u64>) -> String {
+/// frame, like a pointer would drive them; `now` is the fake clock's base
+/// and step (`--now`), so a frame that reads the clock is deterministic.
+fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>) -> String {
     let bin = env!("CARGO_BIN_EXE_host-tui");
     let mut cmd = Command::new(bin);
     cmd.arg("--dump");
-    if let Some(ms) = now {
-        cmd.arg("--now").arg(ms.to_string());
+    if let Some((base, step)) = now {
+        cmd.arg("--now").arg(base.to_string()).arg(step.to_string());
     }
     for id in clicks {
         cmd.arg("--click").arg(id.to_string());
@@ -206,8 +207,8 @@ fn assert_counter_frame(path: &Path) {
 
 /// The stopwatch's frame: the readout's color and the button's label follow
 /// the running state. Paused, the frame never reads the clock; running, it
-/// runs on a frozen one, so the readout is exactly 0 and the whole frame is
-/// the golden.
+/// runs on a fake one that advances, so the readout is a fixed 100 ms and
+/// the whole frame is the golden.
 fn assert_stopwatch_frame(path: &Path) {
     // Paused: 0 ms, neutral, and the start button focused.
     let frame = dump(path, &[], None);
@@ -228,15 +229,16 @@ fn assert_stopwatch_frame(path: &Path) {
     );
     assert_frame_golden(&frame, "stopwatch-paused.txt");
 
-    // Started: the frozen clock makes the readout exactly 0; the frame takes
-    // the running colors (accent readout, warning pause button).
-    let frame = dump(path, &[3], Some(FROZEN_NOW));
+    // Started: the fake clock advances 50 ms per call, so the readout is
+    // the fixed 100 ms; the frame takes the running colors (accent readout,
+    // warning pause button).
+    let frame = dump(path, &[3], Some(FAKE_NOW));
     let ls = lines(&frame);
     let readout = ls
         .iter()
         .find(|l| l.plain.ends_with(" ms"))
         .unwrap_or_else(|| panic!("no readout line in the frame"));
-    assert_eq!(readout.plain, "0 ms");
+    assert_eq!(readout.plain, "100 ms");
     assert!(
         readout.raw.contains(SGR_CYAN_BOLD),
         "a running readout should be accent (cyan bold)"
