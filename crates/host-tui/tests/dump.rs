@@ -125,6 +125,21 @@ fn assert_frame_golden(frame: &str, name: &str) {
     assert_golden(frame.as_bytes(), &golden(name), frame_diff);
 }
 
+/// Save the frame as a per-producer reference golden: the shared golden's
+/// name with `-{producer}` before the extension, in the e2e convention
+/// (`counter-as-0`). Never compared; the Rust producer's reference is the
+/// shared golden itself, so it writes nothing.
+fn save_producer_golden(frame: &str, producer: &str, name: &str) {
+    if producer == "rust" {
+        return;
+    }
+    let p = golden(name);
+    let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = p.extension().unwrap_or_default().to_string_lossy();
+    let file = p.with_file_name(format!("{stem}-{producer}.{ext}"));
+    std::fs::write(&file, frame).expect("failed to write the producer golden");
+}
+
 /// The first differing lines (and a length note), for a failure message.
 fn frame_diff(want: &[u8], actual: &[u8]) -> String {
     let want_text = String::from_utf8_lossy(want);
@@ -158,7 +173,7 @@ fn frame_diff(want: &[u8], actual: &[u8]) -> String {
 /// The counter's frame: the focus ring on the first button, the readout's
 /// color following the value's sign, the hint bar whole, and the whole
 /// frame against the golden.
-fn assert_counter_frame(path: &Path) {
+fn assert_counter_frame(path: &Path, producer: &str) {
     // Fresh: 0, neutral, and the "+" button (the first focusable) focused.
     let frame = dump(path, &[], None);
     let ls = lines(&frame);
@@ -185,6 +200,7 @@ fn assert_counter_frame(path: &Path) {
         "the - button must not carry the focus ring"
     );
     assert_frame_golden(&frame, "counter-0.txt");
+    save_producer_golden(&frame, producer, "counter-0.txt");
 
     // + + - = 1: still non-negative, still neutral.
     let frame = dump(path, &[2, 2, 4], None);
@@ -193,6 +209,7 @@ fn assert_counter_frame(path: &Path) {
     assert!(readout.raw.contains(SGR_WHITE_BOLD));
     assert!(!readout.raw.contains(SGR_RED));
     assert_frame_golden(&frame, "counter-1.txt");
+    save_producer_golden(&frame, producer, "counter-1.txt");
 
     // - - - = -3: the readout takes the negative tone.
     let frame = dump(path, &[4, 4, 4], None);
@@ -203,13 +220,14 @@ fn assert_counter_frame(path: &Path) {
         "a negative readout should be red"
     );
     assert_frame_golden(&frame, "counter--3.txt");
+    save_producer_golden(&frame, producer, "counter--3.txt");
 }
 
 /// The stopwatch's frame: the readout's color and the button's label follow
 /// the running state. Paused, the frame never reads the clock; running, it
 /// runs on a fake one that advances, so the readout is a fixed 100 ms and
 /// the whole frame is the golden.
-fn assert_stopwatch_frame(path: &Path) {
+fn assert_stopwatch_frame(path: &Path, producer: &str) {
     // Paused: 0 ms, neutral, and the start button focused.
     let frame = dump(path, &[], None);
     let ls = lines(&frame);
@@ -228,6 +246,7 @@ fn assert_stopwatch_frame(path: &Path) {
         "the focused start button should be cyan bold"
     );
     assert_frame_golden(&frame, "stopwatch-paused.txt");
+    save_producer_golden(&frame, producer, "stopwatch-paused.txt");
 
     // Started: the fake clock advances 50 ms per call, so the readout is
     // the fixed 100 ms; the frame takes the running colors (accent readout,
@@ -249,6 +268,7 @@ fn assert_stopwatch_frame(path: &Path) {
         "the focused pause button should be cyan bold"
     );
     assert_frame_golden(&frame, "stopwatch-running.txt");
+    save_producer_golden(&frame, producer, "stopwatch-running.txt");
 }
 
 /// The todo's frames: the header's accent, the first row's checkbox
@@ -256,7 +276,7 @@ fn assert_stopwatch_frame(path: &Path) {
 /// label, the footer's dim count, and the whole frame against the golden.
 /// The added state is the add button with an empty field: the next preset
 /// label, newest first, the count up one.
-fn assert_todo_frame(path: &Path) {
+fn assert_todo_frame(path: &Path, producer: &str) {
     let frame = dump(path, &[], None);
     let ls = lines(&frame);
     assert!(
@@ -295,6 +315,7 @@ fn assert_todo_frame(path: &Path) {
     let footer = find_containing(&ls, "2 left");
     assert!(footer.raw.contains(SGR_DIM), "a small count should be dim");
     assert_frame_golden(&frame, "todo.txt");
+    save_producer_golden(&frame, producer, "todo.txt");
 
     // The add button with an empty field: the next preset ("write code"),
     // at the top of the active column, the count up one.
@@ -317,6 +338,7 @@ fn assert_todo_frame(path: &Path) {
     let footer = find_containing(&ls, "3 left");
     assert!(footer.raw.contains(SGR_DIM), "a small count should be dim");
     assert_frame_golden(&frame, "todo-added.txt");
+    save_producer_golden(&frame, producer, "todo-added.txt");
 }
 
 #[test]
@@ -325,7 +347,7 @@ fn counter_dump() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component("demo-counter");
-    assert_counter_frame(&component_path("demo-counter"));
+    assert_counter_frame(&component_path("demo-counter"), "rust");
 }
 
 #[test]
@@ -338,7 +360,7 @@ fn counter_dump_as() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_as("demo-counter");
-    assert_counter_frame(&component_path_as("demo-counter"));
+    assert_counter_frame(&component_path_as("demo-counter"), "as");
 }
 
 #[test]
@@ -351,7 +373,7 @@ fn counter_dump_wat() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-counter");
-    assert_counter_frame(&component_path_wat("demo-counter"));
+    assert_counter_frame(&component_path_wat("demo-counter"), "wat");
 }
 
 #[test]
@@ -360,7 +382,7 @@ fn stopwatch_dump() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component("demo-stopwatch");
-    assert_stopwatch_frame(&component_path("demo-stopwatch"));
+    assert_stopwatch_frame(&component_path("demo-stopwatch"), "rust");
 }
 
 #[test]
@@ -373,7 +395,7 @@ fn stopwatch_dump_as() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_as("demo-stopwatch");
-    assert_stopwatch_frame(&component_path_as("demo-stopwatch"));
+    assert_stopwatch_frame(&component_path_as("demo-stopwatch"), "as");
 }
 
 #[test]
@@ -386,7 +408,7 @@ fn stopwatch_dump_wat() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-stopwatch");
-    assert_stopwatch_frame(&component_path_wat("demo-stopwatch"));
+    assert_stopwatch_frame(&component_path_wat("demo-stopwatch"), "wat");
 }
 
 #[test]
@@ -395,7 +417,7 @@ fn todo_dump() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component("demo-todo");
-    assert_todo_frame(&component_path("demo-todo"));
+    assert_todo_frame(&component_path("demo-todo"), "rust");
 }
 
 #[test]
@@ -408,7 +430,7 @@ fn todo_dump_as() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_as("demo-todo");
-    assert_todo_frame(&component_path_as("demo-todo"));
+    assert_todo_frame(&component_path_as("demo-todo"), "as");
 }
 
 #[test]
@@ -421,5 +443,5 @@ fn todo_dump_wat() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-todo");
-    assert_todo_frame(&component_path_wat("demo-todo"));
+    assert_todo_frame(&component_path_wat("demo-todo"), "wat");
 }

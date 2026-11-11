@@ -197,6 +197,21 @@ fn assert_png_golden(bytes: &[u8], name: &str) {
     assert_golden(bytes, &golden(name), png_diff);
 }
 
+/// Save the PNG as a per-producer reference golden: the shared golden's
+/// name with `-{producer}` before the extension, in the e2e convention
+/// (`counter-as-0`). Never compared; the Rust producer's reference is the
+/// shared golden itself, so it writes nothing.
+fn save_producer_golden(bytes: &[u8], producer: &str, name: &str) {
+    if producer == "rust" {
+        return;
+    }
+    let p = golden(name);
+    let stem = p.file_stem().unwrap_or_default().to_string_lossy();
+    let ext = p.extension().unwrap_or_default().to_string_lossy();
+    let file = p.with_file_name(format!("{stem}-{producer}.{ext}"));
+    std::fs::write(&file, bytes).expect("failed to write the producer golden");
+}
+
 /// The differing pixels, for a failure message: the count and their
 /// bounding box, or a size mismatch.
 fn png_diff(want: &[u8], actual: &[u8]) -> String {
@@ -250,15 +265,17 @@ fn assert_counter(width: u32, height: u32, buf: &[u8], value: i32) {
 }
 
 /// The counter's three states, each against its golden.
-fn assert_counter_frame(path: &Path) {
+fn assert_counter_frame(path: &Path, producer: &str) {
     let (w, h, buf, bytes) = dump(path, &[], None);
     assert_counter(w, h, &buf, 0);
     let fresh_negative = count_near(&buf, w, h, NEGATIVE, 24);
     assert_png_golden(&bytes, "counter-0.png");
+    save_producer_golden(&bytes, producer, "counter-0.png");
 
     let (w, h, buf, bytes) = dump(path, &[2, 2, 4], None); // + + - = 1
     assert_counter(w, h, &buf, 1);
     assert_png_golden(&bytes, "counter-1.png");
+    save_producer_golden(&bytes, producer, "counter-1.png");
 
     let (w, h, buf, bytes) = dump(path, &[4, 4, 4], None); // - - - = -3
     assert_counter(w, h, &buf, -3);
@@ -269,11 +286,12 @@ fn assert_counter_frame(path: &Path) {
         "the negative readout should add red pixels: {fresh_negative} -> {minus3_negative}"
     );
     assert_png_golden(&bytes, "counter--3.png");
+    save_producer_golden(&bytes, producer, "counter--3.png");
 }
 
 /// The stopwatch's two states, each against its golden. The running state
 /// runs on a fake clock that advances, so the readout is a fixed 100 ms.
-fn assert_stopwatch_frame(path: &Path) {
+fn assert_stopwatch_frame(path: &Path, producer: &str) {
     // Paused: the readout is neutral, the button reads start (positive).
     let (w, h, buf, bytes) = dump(path, &[], None);
     assert_background(w, h, &buf);
@@ -287,6 +305,7 @@ fn assert_stopwatch_frame(path: &Path) {
     assert!(fresh.1 > 0, "the start button should be positive");
     assert_eq!(fresh.2, 0, "a paused readout must not be accent");
     assert_png_golden(&bytes, "stopwatch-paused.png");
+    save_producer_golden(&bytes, producer, "stopwatch-paused.png");
 
     // Started: the readout takes the accent color, the button reads pause
     // (warning). The fake clock advances 50 ms per call, so the readout is
@@ -309,6 +328,7 @@ fn assert_stopwatch_frame(path: &Path) {
     );
     assert_eq!(positive, 0, "the pause button must not be positive");
     assert_png_golden(&bytes, "stopwatch-running.png");
+    save_producer_golden(&bytes, producer, "stopwatch-running.png");
 }
 
 /// The todo's frame: the chrome, the header's accent, and the rows'
@@ -339,14 +359,16 @@ fn assert_todo(width: u32, height: u32, buf: &[u8]) {
 /// semantic colors, each against its golden. The added state is the add
 /// button with an empty field: the next preset label, newest first, the
 /// count up one.
-fn assert_todo_frame(path: &Path) {
+fn assert_todo_frame(path: &Path, producer: &str) {
     let (w, h, buf, bytes) = dump(path, &[], None);
     assert_todo(w, h, &buf);
     assert_png_golden(&bytes, "todo.png");
+    save_producer_golden(&bytes, producer, "todo.png");
 
     let (w, h, buf, bytes) = dump(path, &[9], None);
     assert_todo(w, h, &buf);
     assert_png_golden(&bytes, "todo-added.png");
+    save_producer_golden(&bytes, producer, "todo-added.png");
 }
 
 #[test]
@@ -355,7 +377,7 @@ fn counter_dump() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component("demo-counter");
-    assert_counter_frame(&component_path("demo-counter"));
+    assert_counter_frame(&component_path("demo-counter"), "rust");
 }
 
 #[test]
@@ -368,7 +390,7 @@ fn counter_dump_as() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_as("demo-counter");
-    assert_counter_frame(&component_path_as("demo-counter"));
+    assert_counter_frame(&component_path_as("demo-counter"), "as");
 }
 
 #[test]
@@ -381,7 +403,7 @@ fn counter_dump_wat() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-counter");
-    assert_counter_frame(&component_path_wat("demo-counter"));
+    assert_counter_frame(&component_path_wat("demo-counter"), "wat");
 }
 
 #[test]
@@ -390,7 +412,7 @@ fn stopwatch_dump() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component("demo-stopwatch");
-    assert_stopwatch_frame(&component_path("demo-stopwatch"));
+    assert_stopwatch_frame(&component_path("demo-stopwatch"), "rust");
 }
 
 #[test]
@@ -403,7 +425,7 @@ fn stopwatch_dump_as() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_as("demo-stopwatch");
-    assert_stopwatch_frame(&component_path_as("demo-stopwatch"));
+    assert_stopwatch_frame(&component_path_as("demo-stopwatch"), "as");
 }
 
 #[test]
@@ -416,7 +438,7 @@ fn stopwatch_dump_wat() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-stopwatch");
-    assert_stopwatch_frame(&component_path_wat("demo-stopwatch"));
+    assert_stopwatch_frame(&component_path_wat("demo-stopwatch"), "wat");
 }
 
 #[test]
@@ -425,7 +447,7 @@ fn todo_dump() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component("demo-todo");
-    assert_todo_frame(&component_path("demo-todo"));
+    assert_todo_frame(&component_path("demo-todo"), "rust");
 }
 
 #[test]
@@ -438,7 +460,7 @@ fn todo_dump_as() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_as("demo-todo");
-    assert_todo_frame(&component_path_as("demo-todo"));
+    assert_todo_frame(&component_path_as("demo-todo"), "as");
 }
 
 #[test]
@@ -451,5 +473,5 @@ fn todo_dump_wat() {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-todo");
-    assert_todo_frame(&component_path_wat("demo-todo"));
+    assert_todo_frame(&component_path_wat("demo-todo"), "wat");
 }
