@@ -13,6 +13,11 @@ iced = { workspace = true, features = ["smol", "fira-sans"] }
 host-shared = { path = "../host-shared" }
 # The window's layout+draw path, reused by the headless `--dump` render.
 iced_runtime = "0.14"
+# The dump's font database, pruned to the bundled fonts so the render is
+# platform-stable (see `pin_dump_fonts` in main.rs). `fontdb` is the
+# database type behind iced's text shaping.
+iced_graphics = "0.14"
+fontdb = { version = "0.23", default-features = false }
 # PNG encoding for the `--dump` output.
 png = "0.17"
 

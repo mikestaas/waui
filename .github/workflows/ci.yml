@@ -28,8 +28,10 @@ on:
   workflow_dispatch:
     inputs:
       # Regenerate all the goldens on the CI platform (the cargo dump
-      # goldens and the e2e screenshots) — run after a CI runner image
-      # change shifts the font rendering.
+      # goldens and the e2e screenshots). The cargo goldens are
+      # platform-stable (bundled fonts); the e2e screenshots are
+      # chromium-rendered, so run this after a runner image change shifts
+      # the browser's font rendering.
       update_snapshots:
         description: Regenerate all the goldens
         type: boolean
@@ -95,8 +97,9 @@ jobs:
           make components-wat
 
       # The dump goldens update in place with the update_snapshots input
-      # (UPDATE_GOLDENS=1), so the committed goldens and the CI comparison
-      # come from the same platform.
+      # (UPDATE_GOLDENS=1). They are platform-stable (bundled fonts), so
+      # the committed goldens compare equal on any runner; the input
+      # re-bakes them after a dependency change shifts the render.
       - name: Test (unit, roundtrip, headless dumps + frame goldens)
         env:
           UPDATE_GOLDENS: ${{ inputs.update_snapshots && '1' || '' }}

@@ -5,10 +5,10 @@
 //!
 //! The render is headless (no window, display, or GPU), so it runs in CI.
 //! Text renders with the bundled Fira Sans, and the rasterizer is pure
-//! software. A glyph the font lacks — the todo's checkbox and delete
-//! symbols — falls back to a system font, so the goldens are
-//! platform-specific: the committed ones were generated on the CI platform
-//! (the workflow's `update_snapshots` input regenerates them there).
+//! software. The dump prunes the font database to the bundled fonts (Fira
+//! Sans plus a small symbol font covering the glyphs Fira lacks — the
+//! todo's checkbox and delete symbols), so the goldens are
+//! platform-stable: the committed ones render identically on any machine.
 //!
 //! Each scenario runs against the three producer languages: the Rust
 //! component, its AssemblyScript one, and its hand-rolled WAT one. The

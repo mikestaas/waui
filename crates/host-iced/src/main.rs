@@ -284,6 +284,32 @@ fn apply_pending_clicks(state: &mut State) {
     }
 }
 
+/// The dump must render identically on every machine. Iced's font database
+/// holds the system fonts too, and the bundled Fira Sans lacks the todo's
+/// checkbox and delete symbols, so those glyphs would fall back to a system
+/// font that differs per platform. Prune the database to the bundled fonts
+/// and load the symbol font that covers the glyphs Fira lacks.
+/// The interactive window keeps the system fonts; only the dump prunes.
+fn pin_dump_fonts() {
+    let mut system = iced_graphics::text::font_system()
+        .write()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let db = system.raw().db_mut();
+    // Keep only the bundled fonts (loaded from bytes); drop the system
+    // fonts (loaded from files).
+    let drop: Vec<fontdb::ID> = db
+        .faces()
+        .filter(|face| !matches!(face.source, fontdb::Source::Binary(_)))
+        .map(|face| face.id)
+        .collect();
+    for id in drop {
+        db.remove_face(id);
+    }
+    db.load_font_source(fontdb::Source::Binary(std::sync::Arc::new(
+        include_bytes!("../fonts/waui-symbols.ttf").to_vec(),
+    )));
+}
+
 /// Render the current view to a PNG file, headless: no window, no display,
 /// no GPU.
 ///
@@ -294,10 +320,13 @@ fn apply_pending_clicks(state: &mut State) {
 ///
 /// Text renders with the bundled Fira Sans (the `fira-sans` feature)
 /// rather than a system font: a CI machine may have none, and the dump
-/// must be stable to be a useful check. The window keeps the system font;
-/// only this renderer's default changes.
+/// must be stable to be a useful check. `pin_dump_fonts` prunes the font
+/// database so the few glyphs Fira lacks also come from bundled bytes;
+/// the window keeps the system fonts.
 fn render_dump(state: &State, file: &str) -> iced::Result {
     use iced_runtime::core::renderer::Headless;
+
+    pin_dump_fonts();
 
     // The executor blocks on the renderer's creation (synchronous with the
     // tiny-skia backend; no GPU is touched).

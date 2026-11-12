@@ -1871,8 +1871,10 @@ dependencies = [
 name = "host-iced"
 version = "0.0.1"
 dependencies = [
+ "fontdb",
  "host-shared",
  "iced",
+ "iced_graphics",
  "iced_runtime",
  "png",
  "wasmtime",
