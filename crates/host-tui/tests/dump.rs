@@ -31,11 +31,16 @@ const FAKE_NOW: (u64, u64) = (1_000, 50);
 /// Run the host binary in `--dump` mode: one frame, printed as text with
 /// ANSI SGR codes for the styled cells. `clicks` are injected before the
 /// frame, like a pointer would drive them; `now` is the fake clock's base
-/// and step (`--now`), so a frame that reads the clock is deterministic.
-fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>) -> String {
+/// and step (`--now`), so a frame that reads the clock is deterministic;
+/// `width` is the buffer's column count (`--width`), the bar whole on one
+/// row when `None`.
+fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>, width: Option<u16>) -> String {
     let bin = env!("CARGO_BIN_EXE_host-tui");
     let mut cmd = Command::new(bin);
     cmd.arg("--dump");
+    if let Some(w) = width {
+        cmd.arg("--width").arg(w.to_string());
+    }
     if let Some((base, step)) = now {
         cmd.arg("--now").arg(base.to_string()).arg(step.to_string());
     }
@@ -175,7 +180,7 @@ fn frame_diff(want: &[u8], actual: &[u8]) -> String {
 /// frame against the golden.
 fn assert_counter_frame(path: &Path, producer: &str) {
     // Fresh: 0, neutral, and the "+" button (the first focusable) focused.
-    let frame = dump(path, &[], None);
+    let frame = dump(path, &[], None, None);
     let ls = lines(&frame);
     assert!(
         ls[0].plain.contains("q: quit"),
@@ -203,7 +208,7 @@ fn assert_counter_frame(path: &Path, producer: &str) {
     save_producer_golden(&frame, producer, "counter-0.txt");
 
     // + + - = 1: still non-negative, still neutral.
-    let frame = dump(path, &[2, 2, 4], None);
+    let frame = dump(path, &[2, 2, 4], None, None);
     let ls = lines(&frame);
     let readout = find(&ls, "1");
     assert!(readout.raw.contains(SGR_WHITE_BOLD));
@@ -212,7 +217,7 @@ fn assert_counter_frame(path: &Path, producer: &str) {
     save_producer_golden(&frame, producer, "counter-1.txt");
 
     // - - - = -3: the readout takes the negative tone.
-    let frame = dump(path, &[4, 4, 4], None);
+    let frame = dump(path, &[4, 4, 4], None, None);
     let ls = lines(&frame);
     let readout = find(&ls, "-3");
     assert!(
@@ -229,7 +234,7 @@ fn assert_counter_frame(path: &Path, producer: &str) {
 /// the whole frame is the golden.
 fn assert_stopwatch_frame(path: &Path, producer: &str) {
     // Paused: 0 ms, neutral, and the start button focused.
-    let frame = dump(path, &[], None);
+    let frame = dump(path, &[], None, None);
     let ls = lines(&frame);
     let readout = ls
         .iter()
@@ -251,7 +256,7 @@ fn assert_stopwatch_frame(path: &Path, producer: &str) {
     // Started: the fake clock advances 50 ms per call, so the readout is
     // the fixed 100 ms; the frame takes the running colors (accent readout,
     // warning pause button).
-    let frame = dump(path, &[3], Some(FAKE_NOW));
+    let frame = dump(path, &[3], Some(FAKE_NOW), None);
     let ls = lines(&frame);
     let readout = ls
         .iter()
@@ -277,7 +282,7 @@ fn assert_stopwatch_frame(path: &Path, producer: &str) {
 /// The added state is the add button with an empty field: the next preset
 /// label, newest first, the count up one.
 fn assert_todo_frame(path: &Path, producer: &str) {
-    let frame = dump(path, &[], None);
+    let frame = dump(path, &[], None, None);
     let ls = lines(&frame);
     assert!(
         ls[0].plain.contains("q: quit"),
@@ -319,7 +324,7 @@ fn assert_todo_frame(path: &Path, producer: &str) {
 
     // The add button with an empty field: the next preset ("write code"),
     // at the top of the active column, the count up one.
-    let frame = dump(path, &[9], None);
+    let frame = dump(path, &[9], None, None);
     let ls = lines(&frame);
     let new = find_containing(&ls, "write code");
     assert!(
@@ -374,6 +379,56 @@ fn counter_dump_wat() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-counter");
     assert_counter_frame(&component_path_wat("demo-counter"), "wat");
+}
+
+/// `--width` sizes the dump buffer like a terminal of that width: the
+/// hint bar wraps, every word of it stays visible, and no line overruns
+/// the width. Without the flag the buffer is wider (the bar whole on one
+/// row), so the flag changes the frame.
+#[test]
+fn counter_dump_width() {
+    let _guard = RUST_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component("demo-counter");
+    let path = component_path("demo-counter");
+
+    let ls = lines(&dump(&path, &[], None, Some(40)));
+    let mut words = Vec::new();
+    for l in &ls {
+        for w in l.plain.split_whitespace() {
+            words.push(w.to_string());
+        }
+    }
+    let want = [
+        "waui",
+        "(tui)",
+        "up/down",
+        "or",
+        "j/k:",
+        "focus",
+        "enter/space:",
+        "click",
+        "type:",
+        "input",
+        "q:",
+        "quit",
+    ];
+    assert!(
+        want.iter().all(|w| words.iter().any(|s| s == *w)),
+        "the hint bar lost words at 40 columns: {words:?}"
+    );
+    assert!(
+        ls.iter().all(|l| l.plain.chars().count() <= 40),
+        "a line overruns the 40-column buffer: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+
+    let default = lines(&dump(&path, &[], None, None));
+    assert!(
+        default.iter().any(|l| l.plain.chars().count() > 40),
+        "the default buffer should be wider than 40 columns"
+    );
 }
 
 #[test]

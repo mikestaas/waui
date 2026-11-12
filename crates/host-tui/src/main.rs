@@ -6,10 +6,11 @@
 //! Controls: up/down (or j/k) move focus, enter/space clicks, printable
 //! keys type into the focused text input, q quits.
 //! `--dump` renders one frame with ANSI color and prints it, for headless
-//! verification of the tree-to-UI mapping; `--click <id>` injects clicks
-//! before the interactive loop; `--now <base> <step>` fakes the host clock
-//! (each call advances `step` ms), so a `--dump` frame that reads the clock
-//! is deterministic.
+//! verification of the tree-to-UI mapping; `--width <n>` sizes the `--dump`
+//! buffer to n columns (the hint bar wraps, as on a narrow terminal);
+//! `--click <id>` injects clicks before the interactive loop; `--now
+//! <base> <step>` fakes the host clock (each call advances `step` ms), so a
+//! `--dump` frame that reads the clock is deterministic.
 //!
 //! The loop wakes the component — `on-tick` + `changes` — at the period
 //! the component requests with `schedule` (0 = never; the 50ms event poll
@@ -277,27 +278,34 @@ fn sgr_fg(c: Color) -> Option<&'static str> {
     })
 }
 
-/// The hint bar's text. Its length sets the `--dump` buffer's minimum
+/// The hint bar's text. Its length sets the default `--dump` buffer's
 /// width, so the verification frame shows the bar whole.
 const HINT: &str =
     " waui (tui)   up/down or j/k: focus   enter/space: click   type: input   q: quit ";
 
+/// The hint bar widget: dim, left-aligned, wrapping. `trim: false` keeps
+/// the hint's leading space, so a wide terminal renders the bar unchanged.
+fn hint_bar() -> Paragraph<'static> {
+    Paragraph::new(HINT)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: false })
+}
+
+/// The bar's row count at a width: as many rows as the hint wraps to, one
+/// on a wide terminal.
+fn hint_rows(width: u16) -> u16 {
+    hint_bar().line_count(width).max(1) as u16
+}
+
 /// Draw one full frame: a hint bar, then the tree centered below it.
 fn draw(frame: &mut Frame, tree: &Tree, focus: Option<u32>) {
     let area = frame.area();
-    // The bar takes as many rows as the hint wraps to at this width; on a
-    // wide terminal that is one row. `trim: false` keeps the hint's leading
-    // space, so a wide terminal renders the bar unchanged.
-    let bar = Paragraph::new(HINT)
-        .style(Style::default().fg(Color::DarkGray))
-        .alignment(Alignment::Left)
-        .wrap(Wrap { trim: false });
-    let rows = bar
-        .line_count(area.width)
-        .clamp(1, area.height.max(1) as usize) as u16;
+    // The bar takes its wrapped rows, at most the terminal's.
+    let rows = hint_rows(area.width).min(area.height.max(1));
     let bars: [Rect; 2] =
         Layout::vertical([Constraint::Length(rows), Constraint::Min(0)]).areas(area);
-    frame.render_widget(bar, bars[0]);
+    frame.render_widget(hint_bar(), bars[0]);
 
     // Center the tree's bounding box in the remaining space.
     let w = width_of(tree).min(bars[1].width);
@@ -386,6 +394,7 @@ impl Drop for TerminalGuard {
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let dump = args.iter().any(|a| a == "--dump");
+    let mut width: Option<u16> = None;
     let mut clicks: Vec<u32> = Vec::new();
     let mut fake_now: Option<(u64, u64)> = None;
     let mut path: Option<String> = None;
@@ -393,6 +402,20 @@ fn main() {
     while i < args.len() {
         match args[i].as_str() {
             "--dump" => {}
+            "--width" => {
+                if let Some(v) = args.get(i + 1) {
+                    let w: u16 = v.parse().expect("--width takes a numeric column count");
+                    if w == 0 {
+                        eprintln!("--width must be at least 1");
+                        std::process::exit(2);
+                    }
+                    width = Some(w);
+                    i += 1;
+                } else {
+                    eprintln!("--width takes a numeric column count");
+                    std::process::exit(2);
+                }
+            }
             "--click" => {
                 if let Some(v) = args.get(i + 1) {
                     clicks.push(v.parse().expect("--click takes a numeric widget id"));
@@ -430,7 +453,7 @@ fn main() {
         Some(p) => p,
         None => {
             eprintln!(
-                "usage: host-tui [--dump] [--click <id>] [--now <base> <step>] <component.wasm>"
+                "usage: host-tui [--dump] [--width <n>] [--click <id>] [--now <base> <step>] <component.wasm>"
             );
             std::process::exit(2);
         }
@@ -457,12 +480,17 @@ fn main() {
 
     if dump {
         // Headless: render one frame into an in-memory buffer and print it.
-        // The buffer fits the tree and the hint bar (a narrow tree would
-        // otherwise clip the bar, which spans the full buffer width).
+        // `--width` sizes the buffer like a terminal of that width (the
+        // hint bar wraps, the tree clips if wider); by default the buffer
+        // fits the tree and the hint bar whole.
         let nodes = app.call_view(&mut store).expect("view() failed");
         let tree = build_tree(&nodes);
-        let w = (width_of(&tree).max(10) + 2).max((HINT.chars().count() + 2) as u16);
-        let h = height_of(&tree) + 3;
+        let w = width.unwrap_or_else(|| {
+            (width_of(&tree).max(10) + 2).max((HINT.chars().count() + 2) as u16)
+        });
+        // The bar's wrapped rows, then the tree with one margin row above
+        // and below.
+        let h = height_of(&tree) + hint_rows(w) + 2;
         let mut terminal =
             Terminal::new(TestBackend::new(w, h)).expect("failed to create terminal");
         let mut targets = Vec::new();
