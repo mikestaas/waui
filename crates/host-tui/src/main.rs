@@ -41,7 +41,7 @@ use ratatui::{
     backend::{CrosstermBackend, TestBackend},
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Modifier, Style},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, Borders, Paragraph, Wrap},
     Frame, Terminal,
 };
 
@@ -285,13 +285,19 @@ const HINT: &str =
 /// Draw one full frame: a hint bar, then the tree centered below it.
 fn draw(frame: &mut Frame, tree: &Tree, focus: Option<u32>) {
     let area = frame.area();
-    let bars: [Rect; 2] = Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
-    frame.render_widget(
-        Paragraph::new(HINT)
-            .style(Style::default().fg(Color::DarkGray))
-            .alignment(Alignment::Left),
-        bars[0],
-    );
+    // The bar takes as many rows as the hint wraps to at this width; on a
+    // wide terminal that is one row. `trim: false` keeps the hint's leading
+    // space, so a wide terminal renders the bar unchanged.
+    let bar = Paragraph::new(HINT)
+        .style(Style::default().fg(Color::DarkGray))
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: false });
+    let rows = bar
+        .line_count(area.width)
+        .clamp(1, area.height.max(1) as usize) as u16;
+    let bars: [Rect; 2] =
+        Layout::vertical([Constraint::Length(rows), Constraint::Min(0)]).areas(area);
+    frame.render_widget(bar, bars[0]);
 
     // Center the tree's bounding box in the remaining space.
     let w = width_of(tree).min(bars[1].width);
@@ -643,4 +649,73 @@ fn main() {
     }
 
     let _ = terminal.show_cursor().expect("failed to show cursor");
+}
+
+#[cfg(test)]
+mod tests {
+    //! The frame is a pure function of (tree, focus, terminal size), so a
+    //! `TestBackend` pins the host-local behavior the component goldens do
+    //! not reach: the hint bar on a terminal narrower than the hint.
+
+    use super::*;
+
+    /// The words visible in the buffer, in reading order (top to bottom,
+    /// left to right).
+    fn visible_words(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let buf = terminal.backend().buffer();
+        let area = buf.area();
+        let mut words = Vec::new();
+        for y in 0..area.height {
+            let line: String = (0..area.width)
+                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect();
+            for word in line.split_whitespace() {
+                words.push(word.to_string());
+            }
+        }
+        words
+    }
+
+    /// A terminal narrower than the hint: the bar wraps and every word of
+    /// the hint stays visible — none of it clipped.
+    #[test]
+    fn the_hint_bar_wraps_on_a_narrow_terminal() {
+        let mut terminal =
+            Terminal::new(TestBackend::new(40, 12)).expect("failed to create terminal");
+        let tree = Tree::Column(WAlign::Center, Vec::new());
+        terminal
+            .draw(|f| draw(f, &tree, None))
+            .expect("draw failed");
+        let want: Vec<String> = HINT.split_whitespace().map(str::to_string).collect();
+        assert_eq!(
+            visible_words(&terminal),
+            want,
+            "the hint bar lost words on a 40-column terminal"
+        );
+    }
+
+    /// A wide terminal: the bar stays one row, byte-identical to the
+    /// pre-wrap behavior, and takes no further rows.
+    #[test]
+    fn the_hint_bar_is_one_row_on_a_wide_terminal() {
+        let mut terminal =
+            Terminal::new(TestBackend::new(100, 10)).expect("failed to create terminal");
+        let tree = Tree::Column(WAlign::Center, Vec::new());
+        terminal
+            .draw(|f| draw(f, &tree, None))
+            .expect("draw failed");
+        let buf = terminal.backend().buffer();
+        let row = |y: u16| -> String {
+            (0..buf.area().width)
+                .map(|x| buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "))
+                .collect()
+        };
+        // `trim_end` on both sides: the row is padded to the buffer width
+        // with unstyled spaces. The leading space of the hint is asserted.
+        assert_eq!(row(0).trim_end(), HINT.trim_end());
+        assert!(
+            (1..buf.area().height).all(|y| row(y).trim().is_empty()),
+            "the bar should take exactly one row on a wide terminal"
+        );
+    }
 }

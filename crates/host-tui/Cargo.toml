@@ -5,7 +5,9 @@ edition = "2021"
 
 [dependencies]
 wasmtime = { workspace = true }
-ratatui = { workspace = true }
+# `unstable-rendered-line-info` enables `Paragraph::line_count`: the rows
+# the hint bar needs at a given width.
+ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 crossterm = { workspace = true }
 host-shared = { path = "../host-shared" }
 
