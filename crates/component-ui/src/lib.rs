@@ -134,6 +134,8 @@ pub struct Input {
     pub id: Option<u32>,
     pub content: String,
     pub style: Style,
+    /// The field's width in characters; `0` leaves it to the host's default.
+    pub width: u32,
 }
 
 /// A horizontal or vertical container.
@@ -177,12 +179,14 @@ impl Tree {
         })
     }
 
-    /// A single-line text input (id-less until [`id`](Self::id) is called).
+    /// A single-line text input (id-less until [`id`](Self::id) is called;
+    /// the width is `0`, the host's default, until [`width`](Self::width)).
     pub fn input(content: impl Into<String>, style: Style) -> Self {
         Self::Input(Input {
             id: None,
             content: content.into(),
             style,
+            width: 0,
         })
     }
 
@@ -237,6 +241,13 @@ impl Tree {
         self
     }
 
+    /// Replace an input's width, in characters (`0` = the host's default).
+    /// A no-op on other nodes.
+    pub fn width(mut self, width: u32) -> Self {
+        self.set_width(width);
+        self
+    }
+
     /// Set this node's id (in place).
     pub fn set_id(&mut self, id: u32) {
         match self {
@@ -261,6 +272,14 @@ impl Tree {
     pub fn set_align(&mut self, align: Align) {
         if let Self::Container(c) = self {
             c.align = align;
+        }
+    }
+
+    /// Replace an input's width, in characters (in place). Other nodes have
+    /// none.
+    pub fn set_width(&mut self, width: u32) {
+        if let Self::Input(i) = self {
+            i.width = width;
         }
     }
 
@@ -304,6 +323,7 @@ pub enum Flat {
         parent: Option<u32>,
         content: String,
         style: Style,
+        width: u32,
     },
     Container {
         id: Option<u32>,
@@ -410,6 +430,7 @@ fn flat(node: &Tree, parent: Option<u32>) -> Flat {
             parent,
             content: i.content.clone(),
             style: i.style,
+            width: i.width,
         },
         Tree::Container(c) => Flat::Container {
             id: c.id,
@@ -539,6 +560,7 @@ mod tests {
                 parent,
                 content: i.content.clone(),
                 style: i.style,
+                width: i.width,
             },
             Tree::Container(c) => Flat::Container {
                 id: c.id,
@@ -746,18 +768,24 @@ mod tests {
     #[test]
     fn macro_builds_an_input() {
         // The input lowers like text: the same record shape, a `content`
-        // attribute, and its own tag.
+        // attribute, and its own tag; `width` is the input's own field.
         let tree = ui! {
             column id = 1, {
-                input content = "", id = 9, size = Size::Medium,
+                input content = "", id = 9, size = Size::Medium, width = 12,
             }
         };
         let flat = lower(&tree, to_flat);
         assert_eq!(ids(&flat), vec![(Some(1), None), (Some(9), Some(1))]);
         match &flat[1] {
-            Flat::Input { content, style, .. } => {
+            Flat::Input {
+                content,
+                style,
+                width,
+                ..
+            } => {
                 assert_eq!(content, "");
                 assert_eq!(style.size, Size::Medium);
+                assert_eq!(*width, 12);
             }
             _ => panic!("expected an input node"),
         }
@@ -874,9 +902,11 @@ mod tests {
 
     /// A todo-ish shape: a box (1) with an input (9) and an add button (7).
     /// The input's content is state; the button is static.
-    fn with_input(content: &str) -> Tree {
+    fn with_input(content: &str, width: u32) -> Tree {
         Tree::column(vec![
-            Tree::input(content, style(Color::Neutral, Size::Medium)).id(9),
+            Tree::input(content, style(Color::Neutral, Size::Medium))
+                .id(9)
+                .width(width),
             Tree::button("add", style(Color::Positive, Size::Medium)).id(7),
         ])
         .id(1)
@@ -885,8 +915,17 @@ mod tests {
     #[test]
     fn diff_reports_an_input_content_change() {
         // Typing into the input changes only the input node's record.
-        let last = flat_list(&with_input(""));
-        let (out, _) = diff_with(&with_input("buy milk"), Some(&last), proj);
+        let last = flat_list(&with_input("", 12));
+        let (out, _) = diff_with(&with_input("buy milk", 12), Some(&last), proj);
+        assert_eq!(out, vec![M::Changed(9, Some(1), 0)]);
+    }
+
+    #[test]
+    fn diff_reports_a_width_only_change() {
+        // The width is part of the input's record: a resize with the same
+        // content is a `changed`.
+        let last = flat_list(&with_input("", 12));
+        let (out, _) = diff_with(&with_input("", 24), Some(&last), proj);
         assert_eq!(out, vec![M::Changed(9, Some(1), 0)]);
     }
 
@@ -1000,7 +1039,9 @@ pub fn kid(c: impl Into<Kid>) -> Vec<Tree> {
 /// Tags: `text` (`content`), `button` (`label`), `input` (`content`),
 /// `row`, `column`, `container` (`direction`). Attributes in any order:
 /// `id`, `color`, `size`, `style`; an unstated color or size is
-/// [`Color::Neutral`] / [`Size::Medium`]. Containers also take an optional
+/// [`Color::Neutral`] / [`Size::Medium`]. Inputs also take an optional
+/// `width` (in characters, default `0` = the host's default); a `width` on
+/// a `text` or `button` is a no-op. Containers also take an optional
 /// `align` (a [`Align`], default [`Align::Center`]). Containers take a
 /// `{ ... }` children block; children are tags or bare expressions,
 /// comma-separated.
@@ -1070,6 +1111,9 @@ macro_rules! __ui_kids {
     ( $ctx:tt $acc:tt $t0:tt style $( $r:tt )* ) => {
         $crate::__ui_tag!($ctx $acc $t0 style $( $r )* )
     };
+    ( $ctx:tt $acc:tt $t0:tt width $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 width $( $r )* )
+    };
     ( $ctx:tt $acc:tt $t0:tt direction $( $r:tt )* ) => {
         $crate::__ui_tag!($ctx $acc $t0 direction $( $r )* )
     };
@@ -1126,13 +1170,13 @@ macro_rules! __ui_cmb {
 #[doc(hidden)]
 macro_rules! __ui_tag {
     ( $ctx:tt $acc:tt text $t1:tt $( $r:tt )* ) => {
-        $crate::__ui_leaf!(text $ctx $acc () () () () () $t1 $( $r )* )
+        $crate::__ui_leaf!(text $ctx $acc () () () () () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt button $t1:tt $( $r:tt )* ) => {
-        $crate::__ui_leaf!(button $ctx $acc () () () () () $t1 $( $r )* )
+        $crate::__ui_leaf!(button $ctx $acc () () () () () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt input $t1:tt $( $r:tt )* ) => {
-        $crate::__ui_leaf!(input $ctx $acc () () () () () $t1 $( $r )* )
+        $crate::__ui_leaf!(input $ctx $acc () () () () () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt row $t1:tt $( $r:tt )* ) => {
         $crate::__ui_cont!(row $ctx $acc ( some $crate::Direction::Row) () () $t1 $( $r )* )
@@ -1207,47 +1251,50 @@ macro_rules! __ui_leaf {
     // Attribute peels: each key consumes `key = <expr>,` and restates its
     // slot. The keys are literal in the pattern, so an unknown key or a
     // `label` on a `text` falls through to the terminals and fails there.
-    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt id = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!($kind $ctx $acc $l ( some $v) $c $s $st $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt id = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l ( some $v) $c $s $st $w $( $r )* )
     };
-    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt color = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!($kind $ctx $acc $l $i ( some $v) $s $st $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt color = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i ( some $v) $s $st $w $( $r )* )
     };
-    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt size = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!($kind $ctx $acc $l $i $c ( some $v) $st $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt size = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i $c ( some $v) $st $w $( $r )* )
     };
-    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt style = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!($kind $ctx $acc $l $i $c $s ( some $v) $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt style = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i $c $s ( some $v) $w $( $r )* )
     };
-    ( text $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt content = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!(text $ctx $acc ( some $v) $i $c $s $st $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt width = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i $c $s $st ( some $v) $( $r )* )
     };
-    ( button $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt label = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!(button $ctx $acc ( some $v) $i $c $s $st $( $r )* )
+    ( text $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt content = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(text $ctx $acc ( some $v) $i $c $s $st $w $( $r )* )
     };
-    ( input $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt content = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!(input $ctx $acc ( some $v) $i $c $s $st $( $r )* )
+    ( button $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt label = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(button $ctx $acc ( some $v) $i $c $s $st $w $( $r )* )
+    };
+    ( input $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt content = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(input $ctx $acc ( some $v) $i $c $s $st $w $( $r )* )
     };
     // Terminals: the label slot must be present (bound here, unwrapped);
     // the rest are optional.
-    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt ) => {
-        $crate::__ui_leafnode!($kind $i $c $s $st $l)
+    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt ) => {
+        $crate::__ui_leafnode!($kind $i $c $s $st $w $l)
     };
-    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt , ) => {
-        $crate::__ui_leafnode!($kind $i $c $s $st $l)
+    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt , ) => {
+        $crate::__ui_leafnode!($kind $i $c $s $st $w $l)
     };
-    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt , $x:tt $( $y:tt )* ) => {
+    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt , $x:tt $( $y:tt )* ) => {
         compile_error!("`ui!` takes a single root widget")
     };
-    ( $kind:tt kids ( $( $x:tt )* ) ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $( $r:tt )* ) => {
+    ( $kind:tt kids ( $( $x:tt )* ) ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt $( $r:tt )* ) => {
         // The acc holds finished items only (each followed by its comma, or
         // empty); a bare `*` re-emits the trailing comma, a `,*` would
         // double it.
-        $crate::__ui_kids!(kids ( $( $x )* $crate::__ui_wrap!(kids $crate::__ui_leafnode!($kind $i $c $s $st $l)) , ) $( $r )* )
+        $crate::__ui_kids!(kids ( $( $x )* $crate::__ui_wrap!(kids $crate::__ui_leafnode!($kind $i $c $s $st $w $l)) , ) $( $r )* )
     };
     // A label-less leaf: whatever follows, the required `content` /
     // `label` attribute never appeared.
-    ( $kind:tt $ctx:tt $acc:tt () $i:tt $c:tt $s:tt $st:tt $( $r:tt )* ) => {
+    ( $kind:tt $ctx:tt $acc:tt () $i:tt $c:tt $s:tt $st:tt $w:tt $( $r:tt )* ) => {
         compile_error!("`text` and `input` need a `content = ...` attribute; `button` needs a `label = ...` attribute")
     };
 }
@@ -1257,7 +1304,7 @@ macro_rules! __ui_leaf {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ui_leafnode {
-    ( $kind:tt $i:tt $c:tt $s:tt $st:tt $l:expr ) => {{
+    ( $kind:tt $i:tt $c:tt $s:tt $st:tt $w:tt $l:expr ) => {{
         let style = $crate::__ui_opt!($st).unwrap_or_else(|| {
             $crate::Style::new(
                 $crate::__ui_opt!($c).unwrap_or_default(),
@@ -1267,6 +1314,9 @@ macro_rules! __ui_leafnode {
         let mut node = $crate::__ui_leafbuild!($kind, $l, style);
         if let Some(id) = $crate::__ui_opt!($i) {
             node.set_id(id);
+        }
+        if let Some(width) = $crate::__ui_opt!($w) {
+            node.set_width(width);
         }
         node
     }};

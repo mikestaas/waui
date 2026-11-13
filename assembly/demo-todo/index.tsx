@@ -118,6 +118,7 @@ var addBtn = button('add', COLOR_POSITIVE, SIZE_MEDIUM).id(ADD);
 var clearBtn = button('clear done', COLOR_NEGATIVE, SIZE_MEDIUM).id(CLEAR);
 var inputField = input('').id(INPUT);
 inputField.reserve(64);
+inputField.width(12);
 
 /// Seed the lists once: the first three presets, the last one done, added
 /// in index order (so the newest, 1, sits at the front of the active list).

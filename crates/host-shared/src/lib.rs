@@ -36,8 +36,9 @@ pub enum Tree {
     /// give an id, label, style)
     Button(Option<u32>, String, Style),
     /// (widget id — `None` for an input a component did not give an id, the
-    /// input's content, style)
-    Input(Option<u32>, String, Style),
+    /// input's content, the field's width in characters — `0` is the host's
+    /// default, style)
+    Input(Option<u32>, String, u32, Style),
     /// (the cross-axis alignment, the children)
     Row(Align, Vec<Tree>),
     /// (the cross-axis alignment, the children)
@@ -68,7 +69,7 @@ fn to_tree(node: &Node) -> Tree {
     match node {
         Node::Text(t) => Tree::Text(t.content.clone(), t.style),
         Node::Button(b) => Tree::Button(b.id, b.label.clone(), b.style),
-        Node::Input(i) => Tree::Input(i.id, i.content.clone(), i.style),
+        Node::Input(i) => Tree::Input(i.id, i.content.clone(), i.width, i.style),
         Node::Container(c) => {
             if c.direction == Direction::Row {
                 Tree::Row(c.align, Vec::new())

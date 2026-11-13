@@ -2,7 +2,7 @@
 // the byte-level mirror of what `wit-bindgen` emits for the Rust
 // components, and of what the hosts' decoders (e.g. `web/glue.js`) read.
 //
-//   `node` (a variant; 32 bytes, the widest case):
+//   `node` (a variant; 36 bytes, the widest case):
 //     [0]       tag: 0 = text, 1 = button, 2 = container, 3 = input
 //     [4]       id option flag        [8..12)   id
 //     [12]      parent option flag    [16..20)  parent
@@ -10,11 +10,13 @@
 //               container: [20] direction byte, [21] align byte
 //     [24..28)  text/button/input: string length (UTF-8 bytes)
 //     [28]      text/button/input: style.color    [29] style.size
+//     [32..36)  input: width (u32, characters; 0 = the host's default)
+//               text/button/container: padding
 //
-//   `mutation` (a variant; 40 bytes):
+//   `mutation` (a variant; 44 bytes):
 //     [0..4)    tag: 0 = changed, 1 = removed
-//     [4..36)   changed: a 32-byte `node` | removed: the node's id (u32)
-//     [36..40)  changed: the node's index (u32) | removed: padding
+//     [4..40)   changed: a 36-byte `node` | removed: the node's id (u32)
+//     [40..44)  changed: the node's index (u32) | removed: padding
 //
 // Enum values are the WIT case order in `wit/widget.wit`. Records are
 // zeroed before their fields are written: the arena is reused, and a host
@@ -61,7 +63,7 @@ function putId(rec: i32, id: i32, parent: i32): void {
   }
 }
 
-/// A `text` node record at `rec` (32 bytes).
+/// A `text` node record at `rec` (36 bytes).
 export function emitText(
   rec: i32,
   id: i32,
@@ -71,7 +73,7 @@ export function emitText(
   color: i32,
   size: i32,
 ): void {
-  zero(rec, 32);
+  zero(rec, 36);
   store<i8>(rec + 0, TAG_TEXT);
   putId(rec, id, parent);
   store<i32>(rec + 20, str);
@@ -80,7 +82,7 @@ export function emitText(
   store<i8>(rec + 29, size);
 }
 
-/// A `button` node record at `rec` (32 bytes).
+/// A `button` node record at `rec` (36 bytes).
 export function emitButton(
   rec: i32,
   id: i32,
@@ -90,7 +92,7 @@ export function emitButton(
   color: i32,
   size: i32,
 ): void {
-  zero(rec, 32);
+  zero(rec, 36);
   store<i8>(rec + 0, TAG_BUTTON);
   putId(rec, id, parent);
   store<i32>(rec + 20, str);
@@ -99,7 +101,7 @@ export function emitButton(
   store<i8>(rec + 29, size);
 }
 
-/// An `input` node record at `rec` (32 bytes).
+/// An `input` node record at `rec` (36 bytes).
 export function emitInput(
   rec: i32,
   id: i32,
@@ -108,19 +110,21 @@ export function emitInput(
   len: i32,
   color: i32,
   size: i32,
+  width: i32,
 ): void {
-  zero(rec, 32);
+  zero(rec, 36);
   store<i8>(rec + 0, TAG_INPUT);
   putId(rec, id, parent);
   store<i32>(rec + 20, str);
   store<i32>(rec + 24, len);
   store<i8>(rec + 28, color);
   store<i8>(rec + 29, size);
+  store<i32>(rec + 32, width);
 }
 
-/// A `container` node record at `rec` (32 bytes).
+/// A `container` node record at `rec` (36 bytes).
 export function emitContainer(rec: i32, id: i32, parent: i32, direction: i32, align: i32): void {
-  zero(rec, 32);
+  zero(rec, 36);
   store<i8>(rec + 0, TAG_CONTAINER);
   putId(rec, id, parent);
   store<i8>(rec + 20, direction);
@@ -130,7 +134,7 @@ export function emitContainer(rec: i32, id: i32, parent: i32, direction: i32, al
 // The `changed` mutation's payload is a full node record at byte 4, so it
 // is written by the same node emitters, one word in.
 
-/// A `changed` mutation carrying a `text` node, at `rec` (40 bytes).
+/// A `changed` mutation carrying a `text` node, at `rec` (44 bytes).
 export function emitChangedText(
   rec: i32,
   id: i32,
@@ -140,12 +144,12 @@ export function emitChangedText(
   color: i32,
   size: i32,
 ): void {
-  zero(rec, 40);
+  zero(rec, 44);
   store<i32>(rec + 0, MUT_CHANGED);
   emitText(rec + 4, id, parent, str, len, color, size);
 }
 
-/// A `changed` mutation carrying a `button` node, at `rec` (40 bytes).
+/// A `changed` mutation carrying a `button` node, at `rec` (44 bytes).
 export function emitChangedButton(
   rec: i32,
   id: i32,
@@ -155,12 +159,12 @@ export function emitChangedButton(
   color: i32,
   size: i32,
 ): void {
-  zero(rec, 40);
+  zero(rec, 44);
   store<i32>(rec + 0, MUT_CHANGED);
   emitButton(rec + 4, id, parent, str, len, color, size);
 }
 
-/// A `changed` mutation carrying an `input` node, at `rec` (40 bytes).
+/// A `changed` mutation carrying an `input` node, at `rec` (44 bytes).
 export function emitChangedInput(
   rec: i32,
   id: i32,
@@ -169,13 +173,14 @@ export function emitChangedInput(
   len: i32,
   color: i32,
   size: i32,
+  width: i32,
 ): void {
-  zero(rec, 40);
+  zero(rec, 44);
   store<i32>(rec + 0, MUT_CHANGED);
-  emitInput(rec + 4, id, parent, str, len, color, size);
+  emitInput(rec + 4, id, parent, str, len, color, size, width);
 }
 
-/// A `changed` mutation carrying a `container` node, at `rec` (40 bytes).
+/// A `changed` mutation carrying a `container` node, at `rec` (44 bytes).
 export function emitChangedContainer(
   rec: i32,
   id: i32,
@@ -183,14 +188,14 @@ export function emitChangedContainer(
   direction: i32,
   align: i32,
 ): void {
-  zero(rec, 40);
+  zero(rec, 44);
   store<i32>(rec + 0, MUT_CHANGED);
   emitContainer(rec + 4, id, parent, direction, align);
 }
 
-/// A `removed` mutation (the node's id) at `rec` (40 bytes).
+/// A `removed` mutation (the node's id) at `rec` (44 bytes).
 export function emitRemoved(rec: i32, id: i32): void {
-  zero(rec, 40);
+  zero(rec, 44);
   store<i32>(rec + 0, MUT_REMOVED);
   store<i32>(rec + 4, id);
 }

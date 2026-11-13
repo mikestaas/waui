@@ -8,9 +8,10 @@
 //
 // The DOM carries the same facts as the ABI node: the widget id in
 // data-id, the kind and the style tokens as waui-* classes, the content as
-// text or value. Both serializers produce the selftest's string format, so
-// the expectations live here once: the component's output is the source of
-// truth, and the two suites compare against the same copy of it.
+// text or value, and the input's width in data-width. Both serializers
+// produce the selftest's string format, so the expectations live here once:
+// the component's output is the source of truth, and the two suites compare
+// against the same copy of it.
 
 // The counter (crates/demo-counter, assembly/demo-counter).
 export const counter = {
@@ -63,7 +64,7 @@ const todoSeeded = [
   'button{id:111,parent:508,label:"✕",style:negative:medium}',
   'container{id:6,parent:1,dir:row,align:center}',
   'text{id:7,parent:6,content:"2 left",style:neutral:small}',
-  'input{id:8,parent:6,content:"",style:neutral:medium}',
+  'input{id:8,parent:6,content:"",style:neutral:medium,width:12}',
   'button{id:9,parent:6,label:"add",style:positive:medium}',
   'button{id:10,parent:6,label:"clear done",style:negative:medium}',
 ];
@@ -101,7 +102,7 @@ export const todo = {
     'button{id:111,parent:508,label:"✕",style:negative:medium}',
     'container{id:6,parent:1,dir:row,align:center}',
     'text{id:7,parent:6,content:"3 left",style:neutral:small}',
-    'input{id:8,parent:6,content:"",style:neutral:medium}',
+    'input{id:8,parent:6,content:"",style:neutral:medium,width:12}',
     'button{id:9,parent:6,label:"add",style:positive:medium}',
     'button{id:10,parent:6,label:"clear done",style:negative:medium}',
   ],
@@ -131,7 +132,7 @@ export const todo = {
     'button{id:111,parent:508,label:"✕",style:negative:medium}',
     'container{id:6,parent:1,dir:row,align:center}',
     'text{id:7,parent:6,content:"2 left",style:neutral:small}',
-    'input{id:8,parent:6,content:"",style:neutral:medium}',
+    'input{id:8,parent:6,content:"",style:neutral:medium,width:12}',
     'button{id:9,parent:6,label:"add",style:positive:medium}',
     'button{id:10,parent:6,label:"clear done",style:negative:medium}',
   ],
@@ -156,7 +157,7 @@ export const todo = {
     'button{id:111,parent:508,label:"✕",style:negative:medium}',
     'container{id:6,parent:1,dir:row,align:center}',
     'text{id:7,parent:6,content:"1 left",style:neutral:small}',
-    'input{id:8,parent:6,content:"",style:neutral:medium}',
+    'input{id:8,parent:6,content:"",style:neutral:medium,width:12}',
     'button{id:9,parent:6,label:"add",style:positive:medium}',
     'button{id:10,parent:6,label:"clear done",style:negative:medium}',
   ],
@@ -174,7 +175,7 @@ export const todo = {
     'container{id:5,parent:3,dir:column,align:start}',
     'container{id:6,parent:1,dir:row,align:center}',
     'text{id:7,parent:6,content:"1 left",style:neutral:small}',
-    'input{id:8,parent:6,content:"",style:neutral:medium}',
+    'input{id:8,parent:6,content:"",style:neutral:medium,width:12}',
     'button{id:9,parent:6,label:"add",style:positive:medium}',
     'button{id:10,parent:6,label:"clear done",style:negative:medium}',
   ],

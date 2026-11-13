@@ -7,11 +7,11 @@
 //
 //   view() -> list<node>     : `view() -> i32`, a pointer to an 8-byte
 //                              little-endian {ptr, len} descriptor; the
-//                              items are a contiguous run of 32-byte
+//                              items are a contiguous run of 36-byte
 //                              nodes. The result is guest-allocated and
 //                              must be returned to the guest with
 //                              `cabi_post_view(desc)`.
-//   changes() -> list<mut.>  : same shape; the items are 40-byte
+//   changes() -> list<mut.>  : same shape; the items are 44-byte
 //                              mutations and the buffer is returned with
 //                              `cabi_post_changes(desc)`.
 //   on-click(id: u32)        : `on-click(i32)` — passes directly.
@@ -32,7 +32,7 @@
 //                              (JS BigInt). Provided unconditionally; the
 //                              counter never calls it.
 //
-// The 32-byte node (all little-endian):
+// The 36-byte node (all little-endian):
 //   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container,
 //                   3 = input (the WIT case order in waui:ui/widget)
 //   bytes [1..4]    padding
@@ -52,15 +52,16 @@
 //   bytes [29]      text/button/input: style.size (u8: 0 = small,
 //                   1 = medium, 2 = large)
 //   bytes [30..32]  padding
+//   bytes [32..36]  input: width (u32, characters; 0 = the host's default)
 //
-// The 40-byte mutation (a variant with a record- or u32-sized payload):
+// The 44-byte mutation (a variant with a record- or u32-sized payload):
 //   bytes [0]       tag: 0 = changed, 1 = removed (one byte, like the node
 //                   tag — the canonical ABI sizes a variant's discriminant
 //                   to the case count: u8 for 256 or fewer cases)
 //   bytes [1..4]    padding
-//   changed   : the 32-byte node above at byte 4, then the node's index
+//   changed   : the 36-byte node above at byte 4, then the node's index
 //               (a u32, its 0-based position among its parent's children)
-//               at byte 36
+//               at byte 40
 //   removed   : the node id, u32 at byte 4
 //
 // The tag is read as a single byte, not a word: the padding bytes are not
@@ -107,7 +108,7 @@ export async function createApp(wasmBytes, hooks = {}) {
   // demo (unbounded heap) stay byte-parity.
   const SCRATCH_CAP = 4096;
 
-  // Decode one 32-byte node record at byte offset `o`.
+  // Decode one 36-byte node record at byte offset `o`.
   const decodeNode = (i32, u8, o) => {
     const id = u8[o + 4] !== 0 ? i32[(o + 8) >> 2] : null;
     const parent = u8[o + 12] !== 0 ? i32[(o + 16) >> 2] : null;
@@ -131,7 +132,7 @@ export async function createApp(wasmBytes, hooks = {}) {
     return tag === 1
       ? { kind: 'button', id, parent, label: s, style }
       : tag === 3
-        ? { kind: 'input', id, parent, content: s, style }
+        ? { kind: 'input', id, parent, content: s, style, width: i32[(o + 32) >> 2] }
         : { kind: 'text', id, parent, content: s, style };
   };
 
@@ -153,12 +154,12 @@ export async function createApp(wasmBytes, hooks = {}) {
 
   return {
     /// Decode `view()`'s result into a flat list of node objects.
-    view: () => readList(ex.view, ex.cabi_post_view, 32, decodeNode),
+    view: () => readList(ex.view, ex.cabi_post_view, 36, decodeNode),
 
     /// Decode `changes()`'s result into a list of mutation objects:
     /// { kind: 'changed', node, index } or { kind: 'removed', id }.
     changes: () =>
-      readList(ex.changes, ex.cabi_post_changes, 40, (i32, u8, o) => {
+      readList(ex.changes, ex.cabi_post_changes, 44, (i32, u8, o) => {
         // The tag is one byte (see the layout note above); the padding after
         // it is unwritten, so it must not be read as part of the tag.
         return u8[o] === 1
@@ -166,7 +167,7 @@ export async function createApp(wasmBytes, hooks = {}) {
           : {
               kind: 'changed',
               node: decodeNode(i32, u8, o + 4),
-              index: i32[(o + 36) >> 2],
+              index: i32[(o + 40) >> 2],
             };
       }),
 

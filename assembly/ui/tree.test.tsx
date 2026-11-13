@@ -2,9 +2,9 @@
 // Rust `component-ui` unit tests. Compiled to a core module and run via Node
 // (`make ui-test`); `run()` drives `viewOf`/`diffOf` through the structural
 // cases (bootstrap, value change, add, remove, re-parent, id-less, a
-// spliced list child, an input, a container align), decodes the diff from
-// the arena, and returns 0 on success (the first failing scenario's index
-// otherwise).
+// spliced list child, an input, a container align, an input width), decodes
+// the diff from the arena, and returns 0 on success (the first failing
+// scenario's index otherwise).
 //
 // It is import-free after `../patch-env-abort.mjs`, so Node instantiates it
 // directly.
@@ -92,10 +92,10 @@ function spliced(n: i32): Widget {
 
 // A column with an input (3) — the fourth node kind, the same record shape
 // as text and button.
-function withInput(content: string): Widget {
+function withInput(content: string, width: i32): Widget {
   return (
     <column id={1}>
-      <input id={3} label={content} size={SIZE_MEDIUM} />
+      <input id={3} label={content} size={SIZE_MEDIUM} width={width} />
     </column>
   );
 }
@@ -124,11 +124,12 @@ class Mut {
   size: i32 = -1;
   direction: i32 = -1;
   align: i32 = -1;
+  width: i32 = -1; // inputs only (`changed` only)
   label: string = '';
   index: i32 = -1; // sibling index (`changed` only)
 }
 
-/// Decode one 40-byte mutation record at `rec`.
+/// Decode one 44-byte mutation record at `rec`.
 function decodeMut(rec: i32): Mut {
   const m = new Mut();
   m.tag = load<i32>(rec + 0);
@@ -149,10 +150,11 @@ function decodeMut(rec: i32): Mut {
     const len = load<i32>(n + 24);
     m.color = load<i8>(n + 28);
     m.size = load<i8>(n + 29);
+    if (m.kind == TAG_INPUT) m.width = load<i32>(n + 32);
     m.label = str != 0 ? readUtf8(str, len) : '';
   }
-  // The index sits after the 32-byte node.
-  m.index = load<i32>(rec + 36);
+  // The index sits after the 36-byte node.
+  m.index = load<i32>(rec + 40);
   return m;
 }
 
@@ -162,7 +164,7 @@ function decodeList(desc: i32): Mut[] {
   const ptr = load<i32>(desc + 0);
   const len = load<i32>(desc + 4);
   for (let i = 0; i < len; i++) {
-    out.push(decodeMut(ptr + i * 40));
+    out.push(decodeMut(ptr + i * 44));
   }
   return out;
 }
@@ -295,15 +297,18 @@ export function run(): i32 {
     if (r != 0) return 8;
   }
 
-  // 9. Input: the fourth node kind; a content change is one mutation.
-  viewOf(withInput('')); // the reference: the column (1), the input (3)
+  // 9. Input: the fourth node kind; a content change is one mutation, and
+  // the field's width rides along.
+  viewOf(withInput('', 12)); // the reference: the column (1), the input (3)
   arenaReset();
   {
-    const r = scenario(withInput('hi'), (m) => {
+    const r = scenario(withInput('hi', 12), (m) => {
       if (m.length != 1) return 9;
       const c = changed(m, 3);
       // The input is the column's only child (index 0).
-      return c != null && c.kind == TAG_INPUT && c.label == 'hi' && c.index == 0 ? 0 : 9;
+      return c != null && c.kind == TAG_INPUT && c.label == 'hi' && c.width == 12 && c.index == 0
+        ? 0
+        : 9;
     });
     if (r != 0) return 9;
   }
@@ -319,6 +324,19 @@ export function run(): i32 {
       return c != null && c.kind == TAG_CONTAINER && c.align == ALIGN_START ? 0 : 10;
     });
     if (r != 0) return 10;
+  }
+
+  // 11. Input width: the width is part of the input's record; a resize with
+  // the same content is one mutation.
+  viewOf(withInput('x', 12)); // the reference: the column (1), the input (3)
+  arenaReset();
+  {
+    const r = scenario(withInput('x', 24), (m) => {
+      if (m.length != 1) return 11;
+      const c = changed(m, 3);
+      return c != null && c.kind == TAG_INPUT && c.label == 'x' && c.width == 24 ? 0 : 11;
+    });
+    if (r != 0) return 11;
   }
 
   return 0;

@@ -112,15 +112,17 @@ API:
 
 - constructors: `text(content, color, size)`, `button(label, color, size)`,
   `input(content, color, size)`, `row(children)`, `column(children)`
-- chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`
-  (the id's storage is `_id`, set with `.id()`: AssemblyScript cannot name a
-  field and a method alike the way Rust can)
+- chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`,
+  `.width(n)` (inputs only). AssemblyScript cannot name a field and a method
+  alike the way Rust can, so the id's and width's storage is `_id` and
+  `_width`, set with `.id()` and `.width()`
 - plain fields: `children`
 - JSX: `h(tag, props, ...children)` — the factory `../jsx.mjs` emits; `tag`
   is `text`/`button`/`input`/`row`/`column`/`container`, `props` is the
   `Props` class
-  (a bag of `id`, `label`, `color`, `size`, `reserve`, `direction` — the last
-  honored only by `container`), null when the element has no attributes. Each
+  (a bag of `id`, `label`, `color`, `size`, `reserve`, `direction`, `width`
+  — the last two honored only by `container` and `input` respectively,
+  `align` by the containers), null when the element has no attributes. Each
   child is a `Widget` or a `Widget[]` — a dynamic list, spliced into the
   children: a rest argument is one value and AssemblyScript has no union
   types, so the rest is Object[] and the factory discriminates each child.
@@ -148,10 +150,11 @@ Behavior:
 - **The diff is a record comparison against the retained last export** (the
   AS twin of the Rust `component-ui`'s retained `LAST_EXPORTED`). The last
   export is kept as a flat list of records; `changes` calls `diffOf(root)`,
-  which reports every id'd node whose record — kind, parent, label, style, or
-  direction — differs from it as `changed` (in depth-first pre-order, each
-  carrying the node's index among its parent's children), and every id it no
-  longer contains as `removed` (in the last export's pre-order). `viewOf`
+  which reports every id'd node whose record — kind, parent, label, style,
+  width, or direction — differs from it as `changed` (in depth-first
+  pre-order, each carrying the node's index among its parent's children), and
+  every id it no longer contains as `removed` (in the last export's
+  pre-order). `viewOf`
   records the full snapshot as the next reference, so a diff after a view
   sees nothing. Before the first export, `diffOf` reports every id'd node
   (the WIT bootstrap rule). This expresses the contract's add, remove, and
@@ -193,7 +196,7 @@ returns the region to its base.
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it) + `cabi_realloc` (a bump allocator over the top-4 KiB scratch region) |
 | `utf8.ts`   | `writeUtf8` (surrogate pairs; stops at a whole character at the `end` bound), `readUtf8` (a UTF-8 byte run into an AS string; stops at a whole character), and `writeInt32`/`writeInt64` (a number that would not fit whole is not written) |
-| `node.ts`   | emitters for the ABI encodings: the 32-byte `node` record (text/button/input/container), the 40-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
+| `node.ts`   | emitters for the ABI encodings: the 36-byte `node` record (text/button/input/container), the 44-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
 | `root.ts`   | the world's import side: `now` and `schedule` as `@external('$root', ...)`                                                                        |
 
 AS strings are UTF-16; the ABI's are UTF-8 bytes, converted at write time.
@@ -216,7 +219,7 @@ it.
   its whole subtree forever, so the structure stays local to the call.
 - **Precedence is JavaScript's**: `!=` binds tighter than `&` (so
   `d & BIT != 0` tests the constant — parenthesize), and `<` binds tighter
-  than `?:` (so an unparenthesized `… != 0 ? 40 : 32` parses as a ternary *as*
+  than `?:` (so an unparenthesized `… != 0 ? 44 : 36` parses as a ternary *as*
   the condition, which never terminates a loop). Compute such values into
   locals first, as `lower` does.
 - **String `==` compares contents** (unlike JavaScript's reference semantics

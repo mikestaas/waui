@@ -97,6 +97,18 @@ fn input_with_id(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&str> {
         })
 }
 
+/// Find a node by id and return the width of an input node (if that's what
+/// it is).
+fn input_width(nodes: &[waui::ui::widget::Node], id: u32) -> Option<u32> {
+    nodes
+        .iter()
+        .find(|n| node_id(n) == Some(id))
+        .and_then(|n| match n {
+            waui::ui::widget::Node::Input(i) => Some(i.width),
+            _ => None,
+        })
+}
+
 /// Find a node by id and return its semantic style (text, button, and input
 /// nodes carry one; containers do not).
 fn style_of(nodes: &[waui::ui::widget::Node], id: u32) -> Option<&waui::ui::widget::Style> {
@@ -430,10 +442,12 @@ fn assert_todo_roundtrip(app: &mut App, store: &mut Store<Host>) {
     assert_eq!(style_of(&nodes, 2).unwrap().size, Size::Large);
     assert_eq!(text_with_id(&nodes, 7), Some("2 left"));
     assert_eq!(style_of(&nodes, 7).unwrap().size, Size::Small);
-    // The input: empty, the host's default color, the row's size.
+    // The input: empty, the host's default color, the row's size, and its
+    // 12-character width (all three producers emit the same record).
     assert_eq!(input_with_id(&nodes, 8), Some(""));
     assert_eq!(style_of(&nodes, 8).unwrap().color, Color::Neutral);
     assert_eq!(style_of(&nodes, 8).unwrap().size, Size::Medium);
+    assert_eq!(input_width(&nodes, 8), Some(12));
     // The rows: the moved-to-done row's id is 500+4i, the active's 100+4i;
     // the children keep their ids in both columns.
     assert_eq!(text_with_id(&nodes, 106), Some("walk the dog"));

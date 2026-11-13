@@ -35,7 +35,7 @@ function node(n) {
   if (n.kind === 'button')
     return `button{id:${n.id},parent:${n.parent},label:"${n.label}",${style}}`;
   if (n.kind === 'input')
-    return `input{id:${n.id},parent:${n.parent},content:"${n.content}",${style}}`;
+    return `input{id:${n.id},parent:${n.parent},content:"${n.content}",${style},width:${n.width}}`;
   return `text{id:${n.id},parent:${n.parent},content:"${n.content}",${style}}`;
 }
 
@@ -177,7 +177,7 @@ function mutation(m) {
     app.text(8, buf);
   }
   assert.deepEqual(app.changes().map(mutation), [
-    'changed input{id:8,parent:6,content:"buy coffee",style:neutral:medium} index:1',
+    'changed input{id:8,parent:6,content:"buy coffee",style:neutral:medium,width:12} index:1',
   ]);
 
   // Add with the typed text: the new row and its three children, the count,
@@ -189,7 +189,7 @@ function mutation(m) {
     'changed text{id:114,parent:112,content:"buy coffee",style:neutral:medium} index:1',
     'changed button{id:115,parent:112,label:"✕",style:negative:medium} index:2',
     'changed text{id:7,parent:6,content:"3 left",style:neutral:small} index:0',
-    'changed input{id:8,parent:6,content:"",style:neutral:medium} index:1',
+    'changed input{id:8,parent:6,content:"",style:neutral:medium,width:12} index:1',
   ]);
 
   // Toggle: the row is re-added under a new id (504), its children are

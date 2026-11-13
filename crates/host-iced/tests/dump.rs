@@ -175,9 +175,9 @@ fn assert_background(width: u32, height: u32, buf: &[u8]) {
 }
 
 /// The button fill's centroid sits on the canvas's center line: a demo of
-/// centered content keeps its buttons there. The todo's footer input (a
-/// fixed 80px field) shifts the fill off-center, so it does not take this
-/// check; its layout is the golden's.
+/// centered content keeps its buttons there. The todo's footer input (the
+/// component's 12-character width) shifts the fill off-center, so it does
+/// not take this check; its layout is the golden's.
 fn assert_centered(width: u32, height: u32, buf: &[u8]) {
     let cx = centroid_x(buf, width, height, BUTTON_FILL, 8).expect("no button fill pixels");
     assert!(
