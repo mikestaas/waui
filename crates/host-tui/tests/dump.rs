@@ -32,8 +32,8 @@ const FAKE_NOW: (u64, u64) = (1_000, 50);
 /// ANSI SGR codes for the styled cells. `clicks` are injected before the
 /// frame, like a pointer would drive them; `now` is the fake clock's base
 /// and step (`--now`), so a frame that reads the clock is deterministic;
-/// `width` is the buffer's column count (`--width`), the bar whole on one
-/// row when `None`.
+/// `width` is the buffer's column count (`--width`); `None` sizes the
+/// buffer to the tree, floored so the bar wraps to at most two rows.
 fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>, width: Option<u16>) -> String {
     let bin = env!("CARGO_BIN_EXE_host-tui");
     let mut cmd = Command::new(bin);
@@ -183,9 +183,9 @@ fn assert_counter_frame(path: &Path, producer: &str) {
     let frame = dump(path, &[], None, None);
     let ls = lines(&frame);
     assert!(
-        ls[0].plain.contains("q: quit"),
+        ls.iter().any(|l| l.plain.contains("q: quit")),
         "the hint bar is clipped: {:?}",
-        ls[0].plain
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     let plus = find(&ls, "│+│");
     assert!(
@@ -285,9 +285,9 @@ fn assert_todo_frame(path: &Path, producer: &str) {
     let frame = dump(path, &[], None, None);
     let ls = lines(&frame);
     assert!(
-        ls[0].plain.contains("q: quit"),
+        ls.iter().any(|l| l.plain.contains("q: quit")),
         "the hint bar is clipped: {:?}",
-        ls[0].plain
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     let header = find(&ls, "todos");
     assert!(
@@ -383,8 +383,8 @@ fn counter_dump_wat() {
 
 /// `--width` sizes the dump buffer like a terminal of that width: the
 /// hint bar wraps, every word of it stays visible, and no line overruns
-/// the width. Without the flag the buffer is wider (the bar whole on one
-/// row), so the flag changes the frame.
+/// the width. The default buffer (floored at half the hint's length) is
+/// wider than 40 columns, so the flag changes the frame.
 #[test]
 fn counter_dump_width() {
     let _guard = RUST_BUILD_LOCK

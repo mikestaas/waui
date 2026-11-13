@@ -278,8 +278,9 @@ fn sgr_fg(c: Color) -> Option<&'static str> {
     })
 }
 
-/// The hint bar's text. Its length sets the default `--dump` buffer's
-/// width, so the verification frame shows the bar whole.
+/// The hint bar's text: the host's key legend. Its length floors the
+/// default `--dump` buffer's width (half of it), so the bar wraps to at
+/// most two rows.
 const HINT: &str =
     " waui (tui)   up/down or j/k: focus   enter/space: click   type: input   q: quit ";
 
@@ -482,12 +483,11 @@ fn main() {
         // Headless: render one frame into an in-memory buffer and print it.
         // `--width` sizes the buffer like a terminal of that width (the
         // hint bar wraps, the tree clips if wider); by default the buffer
-        // fits the tree and the hint bar whole.
+        // fits the tree whole, floored at half the hint's length, so the
+        // bar wraps to at most two rows.
         let nodes = app.call_view(&mut store).expect("view() failed");
         let tree = build_tree(&nodes);
-        let w = width.unwrap_or_else(|| {
-            (width_of(&tree).max(10) + 2).max((HINT.chars().count() + 2) as u16)
-        });
+        let w = width.unwrap_or_else(|| width_of(&tree).max((HINT.chars().count() / 2) as u16) + 2);
         // The bar's wrapped rows, then the tree with one margin row above
         // and below.
         let h = height_of(&tree) + hint_rows(w) + 2;
