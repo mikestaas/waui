@@ -40,7 +40,7 @@ components-as:
 		node assembly/rename-exports.mjs target/assembly/$$c.core.wasm target/assembly/$$c-as.wasm \
 			onclick=on-click ontext=on-text ontick=on-tick || exit 1; \
 		wasm-tools component embed wit/ target/assembly/$$c-as.wasm \
-			--output target/assembly/$$c-as.embedded.wasm || exit 1; \
+			--world app --output target/assembly/$$c-as.embedded.wasm || exit 1; \
 		wasm-tools component new target/assembly/$$c-as.embedded.wasm \
 			--output target/components/$$c-as.component.wasm || exit 1; \
 	done
@@ -58,7 +58,7 @@ components-wat:
 		echo "==> building $$c (wat)"; \
 		wasm-tools parse wat/$$c.wat --output target/wat/$$c.wasm || exit 1; \
 		wasm-tools component embed wit/ target/wat/$$c.wasm \
-			--output target/wat/$$c-wat.embedded.wasm || exit 1; \
+			--world app --output target/wat/$$c-wat.embedded.wasm || exit 1; \
 		wasm-tools component new target/wat/$$c-wat.embedded.wasm \
 			--output target/components/$$c-wat.component.wasm || exit 1; \
 	done

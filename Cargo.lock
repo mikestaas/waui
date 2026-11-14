@@ -1099,6 +1099,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "demo-desktop"
+version = "0.0.1"
+dependencies = [
+ "component-ui",
+ "wasmtime",
+ "waui-test",
+ "wit-bindgen 0.63.0",
+]
+
+[[package]]
 name = "demo-stopwatch"
 version = "0.0.1"
 dependencies = [

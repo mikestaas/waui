@@ -4,6 +4,7 @@ members = [
     "crates/demo-counter",
     "crates/demo-stopwatch",
     "crates/demo-todo",
+    "crates/demo-desktop",
     "crates/host-cli",
     "crates/host-iced",
     "crates/host-tui",

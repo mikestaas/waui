@@ -1,0 +1,15 @@
+[package]
+name = "demo-desktop"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wit-bindgen = { workspace = true }
+component-ui = { path = "../component-ui" }
+
+[dev-dependencies]
+wasmtime = { workspace = true }
+waui-test = { path = "../waui-test" }

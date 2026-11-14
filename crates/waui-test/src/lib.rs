@@ -191,6 +191,8 @@ pub fn build_component_as(demo: &str) {
             "embed",
             "wit/",
             renamed.to_str().unwrap(),
+            "--world",
+            "app",
             "--output",
             embedded.to_str().unwrap(),
         ]);
@@ -248,6 +250,8 @@ pub fn build_component_wat(demo: &str) {
             "embed",
             "wit/",
             core.to_str().unwrap(),
+            "--world",
+            "app",
             "--output",
             embedded.to_str().unwrap(),
         ]);
