@@ -50,6 +50,13 @@ pub fn to_node(input: TokenStream) -> TokenStream {
                     style: style(i.style),
                     width: i.width,
                 }}),
+                component_ui::Tree::Image(i) => {wit}::Node::Image({wit}::Image {{
+                    id: i.id,
+                    parent,
+                    src: i.src.clone(),
+                    width: i.width,
+                    height: i.height,
+                }}),
                 component_ui::Tree::Container(c) => {wit}::Node::Container({wit}::Container {{
                     id: c.id,
                     parent,

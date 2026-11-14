@@ -34,7 +34,7 @@
 //
 // The 36-byte node (all little-endian):
 //   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container,
-//                   3 = input (the WIT case order in waui:ui/widget)
+//                   3 = input, 4 = image (the WIT case order in waui:ui/widget)
 //   bytes [1..4]    padding
 //   bytes [4]       id option flag: 0 = none (an unaddressable node)
 //   bytes [5..8]    padding
@@ -44,15 +44,17 @@
 //   bytes [16..20]  parent id: u32 (valid only when the flag is set)
 //   bytes [20]      container: direction (u8, 0 = row, 1 = column)
 //   bytes [21]      container: align (u8, 0 = start, 1 = center, 2 = end)
-//   bytes [20..24]  text/button/input: string pointer
-//   bytes [24..28]  text/button/input: string length (UTF-8 bytes)
+//   bytes [20..24]  text/button/input/image: string pointer
+//   bytes [24..28]  text/button/input/image: string length (UTF-8 bytes)
 //   bytes [28]      text/button/input: style.color (u8, WIT case order in
 //                   waui:ui/widget: 0 = neutral, 1 = accent, 2 = positive,
 //                   3 = negative, 4 = warning)
 //   bytes [29]      text/button/input: style.size (u8: 0 = small,
 //                   1 = medium, 2 = large)
-//   bytes [30..32]  padding
+//   bytes [30..32]  padding (text/button/input)
+//   bytes [28..32]  image: width (u32, host units; 0 = the host's default)
 //   bytes [32..36]  input: width (u32, characters; 0 = the host's default)
+//                   image: height (u32, host units; 0 = the host's default)
 //
 // The 44-byte mutation (a variant with a record- or u32-sized payload):
 //   bytes [0]       tag: 0 = changed, 1 = removed (one byte, like the node
@@ -125,6 +127,18 @@ export async function createApp(wasmBytes, hooks = {}) {
     const sp = i32[(o + 20) >> 2];
     const sl = i32[(o + 24) >> 2];
     const s = new TextDecoder().decode(u8.subarray(sp, sp + sl));
+    // An image has no style: its [28..36) is width + height, not the style
+    // bytes, so it branches before the style read. The string slot is `src`.
+    if (tag === 4) {
+      return {
+        kind: 'image',
+        id,
+        parent,
+        src: s,
+        width: i32[(o + 28) >> 2],
+        height: i32[(o + 32) >> 2],
+      };
+    }
     const style = {
       color: COLORS[u8[o + 28]] ?? 'neutral',
       size: SIZES[u8[o + 29]] ?? 'medium',

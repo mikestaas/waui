@@ -138,6 +138,21 @@ pub struct Input {
     pub width: u32,
 }
 
+/// An image.
+#[derive(Debug, Clone)]
+pub struct Image {
+    /// This node's id (see the crate docs, *Identity*).
+    pub id: Option<u32>,
+    /// A path or asset name the host resolves to pixels.
+    pub src: String,
+    /// The image's width in the host's units; `0` leaves it to the host's
+    /// default.
+    pub width: u32,
+    /// The image's height in the host's units; `0` leaves it to the host's
+    /// default.
+    pub height: u32,
+}
+
 /// A horizontal or vertical container.
 #[derive(Debug, Clone)]
 pub struct Container {
@@ -157,6 +172,7 @@ pub enum Tree {
     Text(Text),
     Button(Button),
     Input(Input),
+    Image(Image),
     Container(Container),
 }
 
@@ -187,6 +203,18 @@ impl Tree {
             content: content.into(),
             style,
             width: 0,
+        })
+    }
+
+    /// An image (id-less until [`id`](Self::id) is called; the width and
+    /// height are `0`, the host's default, until [`width`](Self::width) /
+    /// [`height`](Self::height)).
+    pub fn image(src: impl Into<String>) -> Self {
+        Self::Image(Image {
+            id: None,
+            src: src.into(),
+            width: 0,
+            height: 0,
         })
     }
 
@@ -241,10 +269,17 @@ impl Tree {
         self
     }
 
-    /// Replace an input's width, in characters (`0` = the host's default).
-    /// A no-op on other nodes.
+    /// Replace an input's width, in characters (`0` = the host's default), or
+    /// an image's width. A no-op on other nodes.
     pub fn width(mut self, width: u32) -> Self {
         self.set_width(width);
+        self
+    }
+
+    /// Replace an image's height, in the host's units (`0` = the host's
+    /// default). A no-op on other nodes.
+    pub fn height(mut self, height: u32) -> Self {
+        self.set_height(height);
         self
     }
 
@@ -254,16 +289,18 @@ impl Tree {
             Self::Text(t) => t.id = Some(id),
             Self::Button(b) => b.id = Some(id),
             Self::Input(i) => i.id = Some(id),
+            Self::Image(i) => i.id = Some(id),
             Self::Container(c) => c.id = Some(id),
         }
     }
 
-    /// Replace this node's style (in place). Containers have none.
+    /// Replace this node's style (in place). Containers and images have none.
     pub fn set_style(&mut self, style: Style) {
         match self {
             Self::Text(t) => t.style = style,
             Self::Button(b) => b.style = style,
             Self::Input(i) => i.style = style,
+            Self::Image(_) => {}
             Self::Container(_) => {}
         }
     }
@@ -275,11 +312,21 @@ impl Tree {
         }
     }
 
-    /// Replace an input's width, in characters (in place). Other nodes have
-    /// none.
+    /// Replace an input's width, in characters (in place). Also an image's
+    /// width. Other nodes have none.
     pub fn set_width(&mut self, width: u32) {
-        if let Self::Input(i) = self {
-            i.width = width;
+        match self {
+            Self::Input(i) => i.width = width,
+            Self::Image(i) => i.width = width,
+            _ => {}
+        }
+    }
+
+    /// Replace an image's height, in the host's units (in place). Other nodes
+    /// have none.
+    pub fn set_height(&mut self, height: u32) {
+        if let Self::Image(i) = self {
+            i.height = height;
         }
     }
 
@@ -290,6 +337,7 @@ impl Tree {
             Self::Text(t) => t.id,
             Self::Button(b) => b.id,
             Self::Input(i) => i.id,
+            Self::Image(i) => i.id,
             Self::Container(c) => c.id,
         }
     }
@@ -325,6 +373,13 @@ pub enum Flat {
         style: Style,
         width: u32,
     },
+    Image {
+        id: Option<u32>,
+        parent: Option<u32>,
+        src: String,
+        width: u32,
+        height: u32,
+    },
     Container {
         id: Option<u32>,
         parent: Option<u32>,
@@ -337,7 +392,10 @@ impl Flat {
     /// This node's id, whichever variant (`None` if id-less).
     pub fn id(&self) -> Option<u32> {
         match self {
-            Flat::Text { id, .. } | Flat::Button { id, .. } | Flat::Input { id, .. } => *id,
+            Flat::Text { id, .. }
+            | Flat::Button { id, .. }
+            | Flat::Input { id, .. }
+            | Flat::Image { id, .. } => *id,
             Flat::Container { id, .. } => *id,
         }
     }
@@ -431,6 +489,13 @@ fn flat(node: &Tree, parent: Option<u32>) -> Flat {
             content: i.content.clone(),
             style: i.style,
             width: i.width,
+        },
+        Tree::Image(i) => Flat::Image {
+            id: i.id,
+            parent,
+            src: i.src.clone(),
+            width: i.width,
+            height: i.height,
         },
         Tree::Container(c) => Flat::Container {
             id: c.id,
@@ -562,6 +627,13 @@ mod tests {
                 style: i.style,
                 width: i.width,
             },
+            Tree::Image(i) => Flat::Image {
+                id: i.id,
+                parent,
+                src: i.src.clone(),
+                width: i.width,
+                height: i.height,
+            },
             Tree::Container(c) => Flat::Container {
                 id: c.id,
                 parent,
@@ -576,7 +648,8 @@ mod tests {
             .map(|f| match f {
                 Flat::Text { id, parent, .. }
                 | Flat::Button { id, parent, .. }
-                | Flat::Input { id, parent, .. } => (*id, *parent),
+                | Flat::Input { id, parent, .. }
+                | Flat::Image { id, parent, .. } => (*id, *parent),
                 Flat::Container { id, parent, .. } => (*id, *parent),
             })
             .collect()

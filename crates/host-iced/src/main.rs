@@ -559,6 +559,31 @@ fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
             }
             input.into()
         }
+        // This host draws no pixels: a placeholder box, the node's size
+        // (a host default when it is 0), a dim marker, the host's standard
+        // border.
+        Tree::Image(_, _, width, height) => {
+            let w = if *width > 0 { *width as f32 } else { 64.0 };
+            let h = if *height > 0 { *height as f32 } else { 64.0 };
+            let marker = widget::text("image")
+                .size(14.0)
+                .color(iced::Color::from_rgb8(0x56, 0x5f, 0x89));
+            widget::container(marker)
+                .center_x(iced::Length::Fixed(w))
+                .center_y(iced::Length::Fixed(h))
+                .style(|_: &iced::Theme| iced::widget::container::Style {
+                    text_color: None,
+                    background: None,
+                    border: iced::Border {
+                        color: iced::Color::from_rgb8(0x41, 0x48, 0x68),
+                        width: 1.0,
+                        radius: iced::border::radius(6.0),
+                    },
+                    shadow: iced::Shadow::default(),
+                    snap: false,
+                })
+                .into()
+        }
         // The component's cross-axis token; a host default (start) would
         // draw the contract's default (center) wrong.
         Tree::Row(align, children) => widget::row(children.iter().map(map_tree))

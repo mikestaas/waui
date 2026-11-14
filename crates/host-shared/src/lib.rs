@@ -39,6 +39,9 @@ pub enum Tree {
     /// input's content, the field's width in characters — `0` is the host's
     /// default, style)
     Input(Option<u32>, String, u32, Style),
+    /// (widget id, the `src` path/asset name the host resolves, the width,
+    /// the height — `0` is the host's default)
+    Image(Option<u32>, String, u32, u32),
     /// (the cross-axis alignment, the children)
     Row(Align, Vec<Tree>),
     /// (the cross-axis alignment, the children)
@@ -52,6 +55,7 @@ fn node_id(node: &Node) -> Option<u32> {
         Node::Text(t) => t.id,
         Node::Button(b) => b.id,
         Node::Input(i) => i.id,
+        Node::Image(i) => i.id,
         Node::Container(c) => c.id,
     }
 }
@@ -61,6 +65,7 @@ fn node_parent(node: &Node) -> Option<u32> {
         Node::Text(t) => t.parent,
         Node::Button(b) => b.parent,
         Node::Input(i) => i.parent,
+        Node::Image(i) => i.parent,
         Node::Container(c) => c.parent,
     }
 }
@@ -70,6 +75,7 @@ fn to_tree(node: &Node) -> Tree {
         Node::Text(t) => Tree::Text(t.content.clone(), t.style),
         Node::Button(b) => Tree::Button(b.id, b.label.clone(), b.style),
         Node::Input(i) => Tree::Input(i.id, i.content.clone(), i.width, i.style),
+        Node::Image(i) => Tree::Image(i.id, i.src.clone(), i.width, i.height),
         Node::Container(c) => {
             if c.direction == Direction::Row {
                 Tree::Row(c.align, Vec::new())

@@ -69,6 +69,7 @@ fn node_id(node: &waui::ui::widget::Node) -> Option<u32> {
         waui::ui::widget::Node::Text(t) => t.id,
         waui::ui::widget::Node::Button(b) => b.id,
         waui::ui::widget::Node::Input(i) => i.id,
+        waui::ui::widget::Node::Image(i) => i.id,
         waui::ui::widget::Node::Container(c) => c.id,
     }
 }
@@ -599,6 +600,9 @@ fn mutation_summary(m: &waui::ui::widget::Mutation) -> String {
                 }
                 waui::ui::widget::Node::Input(i) => {
                     format!("changed input {id} {i:?}")
+                }
+                waui::ui::widget::Node::Image(i) => {
+                    format!("changed image {id} {i:?}")
                 }
                 waui::ui::widget::Node::Container(c) => {
                     format!("changed container {id} parent {:?} {c:?}", c.parent)

@@ -123,6 +123,13 @@ fn width_of(node: &Tree) -> u16 {
             };
             inner + 2
         }
+        // A framed placeholder (a terminal has no pixels): the node's width
+        // in cells — a host default when it is 0 — plus its two border
+        // columns.
+        Tree::Image(_, _, width, _) => {
+            let inner = if *width > 0 { *width as u16 } else { 8 };
+            inner + 2
+        }
         Tree::Row(_, children) => children.iter().map(width_of).sum(),
         Tree::Column(_, children) => children.iter().map(width_of).max().unwrap_or(0),
     }
@@ -133,6 +140,12 @@ fn height_of(node: &Tree) -> u16 {
         Tree::Text(..) => 1,
         Tree::Button(..) => 3, // border top, label, border bottom
         Tree::Input(..) => 3,  // border top, content, border bottom
+        // The placeholder's height in cells, a host default when it is 0,
+        // plus its two border rows.
+        Tree::Image(_, _, _, height) => {
+            let inner = if *height > 0 { *height as u16 } else { 3 };
+            inner + 2
+        }
         Tree::Row(_, children) => children.iter().map(height_of).max().unwrap_or(0),
         Tree::Column(_, children) => children.iter().map(height_of).sum(),
     }
@@ -244,6 +257,19 @@ fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>) {
             let block = Block::default().borders(Borders::ALL).border_style(style);
             frame.render_widget(
                 Paragraph::new(content.clone()).style(style).block(block),
+                area,
+            );
+        }
+        // A terminal has no pixels: a dim placeholder box, the node's size.
+        // An image is display-only, so the marker is dim, like the hint bar.
+        Tree::Image(..) => {
+            let style = Style::default().fg(Color::DarkGray);
+            let block = Block::default().borders(Borders::ALL).border_style(style);
+            frame.render_widget(
+                Paragraph::new("image")
+                    .style(style)
+                    .alignment(Alignment::Center)
+                    .block(block),
                 area,
             );
         }
@@ -366,7 +392,8 @@ fn focusables(node: &Tree, out: &mut Vec<FocusTarget>) {
                 focusables(child, out);
             }
         }
-        Tree::Text(..) => {}
+        // An image is display-only; it is not focusable.
+        Tree::Text(..) | Tree::Image(..) => {}
     }
 }
 

@@ -2,10 +2,10 @@
 //
 // The rendered DOM carries the same facts as the ABI node the Node selftest
 // decodes (web/glue.js): the widget id in data-id, the kind and the style
-// tokens as waui-* classes, the content as text or value, and the input's
-// width in data-width. The serializer below turns the rendered tree back
-// into the selftest's node strings, so the suite and the selftest assert on
-// one shared set of expectations (web/expect.mjs).
+// tokens as waui-* classes, the content as text or value, the input's width
+// in data-width, and the image's src and size. The serializer below turns
+// the rendered tree back into the selftest's node strings, so the suite and
+// the selftest assert on one shared set of expectations (web/expect.mjs).
 
 import { expect } from '@playwright/test';
 
@@ -53,7 +53,19 @@ export async function domTree(page) {
         const id = el.dataset.id !== undefined ? Number(el.dataset.id) : null;
         const c = el.classList;
         let s;
-        if (c.contains('waui-button') || c.contains('waui-input') || c.contains('waui-text')) {
+        if (c.contains('waui-image')) {
+          // An image has no style token: the raw `src` attribute (not the
+          // resolved `el.src` URL) and the size, from the dataset app.js
+          // writes.
+          const src = el.getAttribute('src') ?? '';
+          const width = Number(el.dataset.width ?? 0);
+          const height = Number(el.dataset.height ?? 0);
+          s = `image{id:${id},parent:${parentId},src:"${src}",width:${width},height:${height}}`;
+        } else if (
+          c.contains('waui-button') ||
+          c.contains('waui-input') ||
+          c.contains('waui-text')
+        ) {
           const kind = c.contains('waui-button')
             ? 'button'
             : c.contains('waui-input')

@@ -7,8 +7,10 @@
 //! which stays correct because `view()` is always the full tree — and
 //! ignores `style` (plain ASCII has no palette), `align` (an indented list
 //! has no cross axis to place on), and the input's `width` (a line has no
-//! box to size). Treats `schedule` as advisory too: it has no timer, so a
-//! time-based readout advances only when a click re-queries `view()`.
+//! box to size). Images have no pixels in a terminal: they render as their
+//! `src`, prefixed with `@`. Treats `schedule` as advisory too: it has no
+//! timer, so a time-based readout advances only when a click re-queries
+//! `view()`.
 
 use std::io::{self, BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -120,6 +122,11 @@ fn render(node: &Tree, depth: usize, out: &mut String) {
             // a field with no id is display-only, like an id-less button.
             let id = id.map_or_else(String::new, |i| format!("{i}: "));
             out.push_str(&format!("{indent}[{id}\"{content}\"]\n"));
+        }
+        // Plain ASCII cannot draw pixels; the `@` marks the image's `src`.
+        Tree::Image(id, src, _, _) => {
+            let id = id.map_or_else(String::new, |i| format!("{i}: "));
+            out.push_str(&format!("{indent}@{id}{src}\n"));
         }
         Tree::Row(_, children) => {
             out.push_str(&format!("{indent}row:\n"));

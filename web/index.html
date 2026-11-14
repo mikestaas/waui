@@ -85,6 +85,11 @@
            width is 0. A non-zero width arrives as an inline style (app.js). */
         width: 12ch;
       }
+      /* An image is block-level: it sizes to its `width`/`height` (inline
+         styles from app.js) or, when they are 0, to its intrinsic size. */
+      .waui-image {
+        display: block;
+      }
       /* The component's semantic style tokens (waui:ui/widget), mapped onto
          this page's palette. The component says *what* it is, not *what
          color* it is: "negative" renders red here, ANSI red in the TUI,

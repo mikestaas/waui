@@ -76,6 +76,20 @@ interface widget {
     width: u32,
   }
 
+  /// An image. `src` is a path or asset name the host resolves to pixels (a
+  /// URL on the web host, a file or a bundled asset elsewhere); a host that
+  /// cannot resolve it renders a placeholder. `width` and `height` are the
+  /// image's size in the host's units (pixels, or the placeholder's extent);
+  /// `0` leaves it to the host's default, as with the style and width tokens.
+  /// An image carries no `style`: it has no text to color or size.
+  record image {
+    id: option<u32>,
+    parent: option<u32>,
+    src: string,
+    width: u32,
+    height: u32,
+  }
+
   /// A horizontal or vertical container.
   ///
   /// (Named `container` rather than `box`: the latter would clash with
@@ -119,6 +133,7 @@ interface widget {
     button(button),
     container(container),
     input(input),
+    image(image),
   }
 
   /// The `changed` mutation's payload: the node, plus its `index` — the

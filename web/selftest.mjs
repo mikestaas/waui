@@ -31,6 +31,9 @@ const [counterPath, stopwatchPath, todoPath] = [
 function node(n) {
   if (n.kind === 'container')
     return `container{id:${n.id},parent:${n.parent},dir:${n.direction},align:${n.align}}`;
+  // An image has no style: the `src` and the size (a host default when 0).
+  if (n.kind === 'image')
+    return `image{id:${n.id},parent:${n.parent},src:"${n.src}",width:${n.width},height:${n.height}}`;
   const style = `style:${n.style.color}:${n.style.size}`;
   if (n.kind === 'button')
     return `button{id:${n.id},parent:${n.parent},label:"${n.label}",${style}}`;

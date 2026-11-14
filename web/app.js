@@ -156,6 +156,22 @@ function rebuild() {
       el.dataset.width = n.width;
       el.style.width = n.width > 0 ? `${n.width}ch` : '';
       if (n.id !== null) elements.set(n.id, el);
+    } else if (n.kind === 'image') {
+      el = document.createElement('img');
+      // An image has no style token: the `src` and a `waui-image` class.
+      // The host resolves `src` (a URL or path); a src it cannot load
+      // renders the browser's broken-image placeholder.
+      el.className = 'waui waui-image';
+      el.src = n.src;
+      el.alt = '';
+      // The size in the host's units (pixels); `0` leaves it to the
+      // stylesheet's default. The dataset copy is what the e2e DOM
+      // serializer reads back.
+      el.dataset.width = n.width;
+      el.dataset.height = n.height;
+      el.style.width = n.width > 0 ? `${n.width}px` : '';
+      el.style.height = n.height > 0 ? `${n.height}px` : '';
+      if (n.id !== null) elements.set(n.id, el);
     } else {
       el = document.createElement('div');
       el.className = `waui waui-text waui-${n.style.color} waui-${n.style.size}`;
@@ -206,6 +222,13 @@ function restyle(n) {
     el.className = `waui waui-input waui-${n.style.color} waui-${n.style.size}`;
     el.dataset.width = n.width;
     el.style.width = n.width > 0 ? `${n.width}ch` : '';
+  } else if (n.kind === 'image') {
+    // A changed image keeps its element; update the `src` and the size.
+    el.src = n.src;
+    el.dataset.width = n.width;
+    el.dataset.height = n.height;
+    el.style.width = n.width > 0 ? `${n.width}px` : '';
+    el.style.height = n.height > 0 ? `${n.height}px` : '';
   }
   return true;
 }
