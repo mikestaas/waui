@@ -65,12 +65,15 @@ interface widget {
   /// A single-line text input. The host renders it as an editable field and
   /// reports the user's edits through the `app` world's `on-text` (see there
   /// for the buffer contract). `content` is the text as the component last
-  /// saw it.
+  /// saw it. `width` is the field's width in characters, mapped by each host
+  /// to its own units (terminal columns, pixels, CSS `ch`); `0` leaves the
+  /// width to the host's default, as with the style tokens.
   record input {
     id: option<u32>,
     parent: option<u32>,
     content: string,
     style: style,
+    width: u32,
   }
 
   /// A horizontal or vertical container.

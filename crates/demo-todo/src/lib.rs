@@ -132,7 +132,7 @@ fn footer(left: usize, input: &str) -> Tree {
     ui! {
         row id = 6, {
             text content = format!("{left} left"), id = 7, size = Size::Small,
-            input content = input, id = 8, size = Size::Medium,
+            input content = input, id = 8, size = Size::Medium, width = 12,
             button label = "add", id = 9, color = Color::Positive, size = Size::Medium,
             button label = "clear done", id = 10, color = Color::Negative, size = Size::Medium,
         }

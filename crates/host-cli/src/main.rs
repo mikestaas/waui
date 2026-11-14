@@ -5,10 +5,10 @@
 //!
 //! Ignores the diff channel — it re-queries `view()` after every event,
 //! which stays correct because `view()` is always the full tree — and
-//! ignores `style` (plain ASCII has no palette) and `align` (an indented
-//! list has no cross axis to place on). Treats `schedule` as advisory too:
-//! it has no timer, so a time-based readout advances only when a click
-//! re-queries `view()`.
+//! ignores `style` (plain ASCII has no palette), `align` (an indented list
+//! has no cross axis to place on), and the input's `width` (a line has no
+//! box to size). Treats `schedule` as advisory too: it has no timer, so a
+//! time-based readout advances only when a click re-queries `view()`.
 
 use std::io::{self, BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -96,7 +96,7 @@ fn main() {
 /// target of a typed (non-numeric) line.
 fn first_input(node: &Tree) -> Option<u32> {
     match node {
-        Tree::Input(id, _, _) => *id,
+        Tree::Input(id, _, _, _) => *id,
         Tree::Row(_, children) | Tree::Column(_, children) => children.iter().find_map(first_input),
         _ => None,
     }
@@ -115,7 +115,7 @@ fn render(node: &Tree, depth: usize, out: &mut String) {
             let id = id.map_or_else(String::new, |i| format!("{i}: "));
             out.push_str(&format!("{indent}[{id}{label}]\n"));
         }
-        Tree::Input(id, content, _) => {
+        Tree::Input(id, content, _, _) => {
             // The quotes mark an editable field (a button's label has none);
             // a field with no id is display-only, like an id-less button.
             let id = id.map_or_else(String::new, |i| format!("{i}: "));

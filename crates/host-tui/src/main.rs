@@ -112,8 +112,17 @@ fn width_of(node: &Tree) -> u16 {
     match node {
         Tree::Text(content, _) => content.chars().count() as u16,
         Tree::Button(_, label, _) => label.chars().count() as u16 + 2, // borders
-        // Framed like a button: the content plus its two border columns.
-        Tree::Input(_, content, _) => content.chars().count() as u16 + 2,
+        // Framed like a button: the field's width — the component's
+        // character count, or the content's when it is `0` — plus its two
+        // border columns. Content past the width clips, like a field.
+        Tree::Input(_, content, width, _) => {
+            let inner = if *width > 0 {
+                *width as u16
+            } else {
+                content.chars().count() as u16
+            };
+            inner + 2
+        }
         Tree::Row(_, children) => children.iter().map(width_of).sum(),
         Tree::Column(_, children) => children.iter().map(width_of).max().unwrap_or(0),
     }
@@ -220,7 +229,7 @@ fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>) {
                 area,
             );
         }
-        Tree::Input(id, content, style) => {
+        Tree::Input(id, content, _, style) => {
             // A display-only field (no id) can never be focused. The
             // content is the component's copy of the buffer, so it is
             // left-aligned, like a text field.
@@ -364,7 +373,7 @@ fn focusables(node: &Tree, out: &mut Vec<FocusTarget>) {
 /// The content of the input with `id`, wherever it sits in the tree.
 fn input_content(node: &Tree, id: u32) -> Option<&str> {
     match node {
-        Tree::Input(iid, content, _) if *iid == Some(id) => Some(content),
+        Tree::Input(iid, content, _, _) if *iid == Some(id) => Some(content),
         Tree::Row(_, children) | Tree::Column(_, children) => {
             children.iter().find_map(|c| input_content(c, id))
         }

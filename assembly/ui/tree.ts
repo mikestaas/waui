@@ -75,6 +75,10 @@ export class Widget {
   direction: i32 = DIRECTION_ROW;
   /// Containers only: the cross-axis placement of the children.
   align: i32 = ALIGN_CENTER;
+  /// Inputs only: the field's width in characters (0 = the host's default).
+  /// The storage is `_width`, set with `.width()`: AssemblyScript cannot
+  /// name a field and a method alike the way Rust can.
+  _width: i32 = 0;
   /// The children, in the contract's depth-first pre-order.
   children: Widget[];
   /// The label's UTF-16 source; materialized to the pool at projection.
@@ -118,6 +122,13 @@ export class Widget {
   style(colorV: i32, sizeV: i32): this {
     this.color = colorV;
     this.size = sizeV;
+    return this;
+  }
+
+  /// Set the field's width in characters (0 = the host's default). Inputs
+  /// only.
+  width(n: i32): this {
+    this._width = n;
     return this;
   }
 }
@@ -178,6 +189,7 @@ export class Props {
   reserve: i32 = 0;
   direction: i32 = DIRECTION_ROW; // honored only by `container`
   align: i32 = ALIGN_CENTER; // honored by `row`/`column`/`container`
+  width: i32 = 0; // honored only by `input` (characters; 0 = host default)
 }
 
 /// The JSX factory that `../jsx.mjs` emits calls to (its `pragma`): the tag
@@ -238,6 +250,9 @@ export function h(tag: string, props: Props | null, ...children: Object[]): Widg
     // factory default, so an unstated one is a no-op).
     if (tag == 'container') w.direction = props.direction;
     if (tag == 'row' || tag == 'column' || tag == 'container') w.align = props.align;
+    // The WIT's `width` is an input field only; a `width` on any other tag
+    // is ignored, as in the Rust `ui!` macro.
+    if (tag == 'input') w = w.width(props.width);
   }
   return w;
 }
@@ -304,6 +319,7 @@ class FlatRec {
   size: i32 = SIZE_MEDIUM;
   direction: i32 = DIRECTION_ROW;
   align: i32 = ALIGN_CENTER;
+  width: i32 = 0; // inputs only (the WIT's `width` field)
   label: string = '';
 }
 
@@ -331,6 +347,7 @@ function flatten(w: Widget, parent: i32, out: FlatRec[]): void {
   r.size = w.size;
   r.direction = w.direction;
   r.align = w.align;
+  r.width = w._width;
   r.label = w.labelSrc;
   out.push(r);
   const id = w._id;
@@ -359,13 +376,16 @@ function isChanged(w: Widget, parent: i32, first: i32, last: FlatRec[]): i32 {
     const r = last[i];
     if (r._id != id) continue;
     // Same id: changed only if the record differs. A container's record is
-    // its direction (the WIT container carries no style); a leaf's is its
-    // label and style. AS compares strings by content.
+    // its direction and align (the WIT container carries no style); a
+    // leaf's is its label, its style, and — for an input — its width. AS
+    // compares strings by content.
     let differs = w.kind != r.kind || parent != r.parent;
     if (w.kind == TAG_CONTAINER) {
       differs = differs || w.direction != r.direction || w.align != r.align;
     } else {
       differs = differs || w.color != r.color || w.size != r.size || w.labelSrc != r.label;
+      // The WIT's `width` is an input field; the other leaves carry 0.
+      if (w.kind == TAG_INPUT) differs = differs || w._width != r.width;
     }
     return differs ? 1 : 0;
   }
@@ -395,14 +415,14 @@ function countRemoved(last: FlatRec[], newRecs: FlatRec[]): i32 {
 }
 
 /// Emit one record for `w` at `buf + off * stride`. With `isMutation`, the
-/// record is a 40-byte `changed` mutation (the tag word, the 32-byte node,
+/// record is a 44-byte `changed` mutation (the tag word, the 36-byte node,
 /// and the index). Returns the next offset; stops at the arena's cap rather
 /// than walk into the label pool.
 function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMutation: i32): i32 {
   // Computed first: AS (like JS) binds `<` tighter than `?:`, so an
-  // unparenthesized `buf + off * isMutation != 0 ? 40 : 32` would parse as
+  // unparenthesized `buf + off * isMutation != 0 ? 44 : 36` would parse as
   // a ternary *as* the comparison.
-  const stride = isMutation != 0 ? 40 : 32;
+  const stride = isMutation != 0 ? 44 : 36;
   const rec = buf + off * stride;
   if (rec + stride > RESULT_END) return off;
   materializeLabel(w);
@@ -410,7 +430,7 @@ function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMuta
   if (isMutation != 0) store<i32>(rec, MUT_CHANGED);
   // A `changed` mutation carries the node one word in (after the tag word);
   // a plain node record *is* the record base. The emitters self-zero their
-  // 32 bytes, so the offset must be exactly right: a stray word spills into
+  // 36 bytes, so the offset must be exactly right: a stray word spills into
   // the neighbor record.
   const node = rec + (isMutation != 0 ? 4 : 0);
   const kind = w.kind;
@@ -419,13 +439,13 @@ function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMuta
   } else if (kind == TAG_BUTTON) {
     emitButton(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size);
   } else if (kind == TAG_INPUT) {
-    emitInput(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size);
+    emitInput(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size, w._width);
   } else {
     emitContainer(node, id, parent, w.direction, w.align);
   }
   // The `changed` mutation's index (the node's 0-based position among its
-  // parent's children) sits after the 32-byte node; a plain node has none.
-  if (isMutation != 0) store<i32>(rec + 36, index);
+  // parent's children) sits after the 36-byte node; a plain node has none.
+  if (isMutation != 0) store<i32>(rec + 40, index);
   return off + 1;
 }
 
@@ -475,14 +495,14 @@ function lowerRemoved(last: FlatRec[], newRecs: FlatRec[], buf: i32, off: i32): 
     const id = last[i]._id;
     if (id == 0) continue; // id-less: never removed
     if (presentIn(newRecs, id) == 0) {
-      emitRemoved(buf + next * 40, id);
+      emitRemoved(buf + next * 44, id);
       next += 1;
     }
   }
   return next;
 }
 
-/// Project the whole tree as a `view()` result: every node as a 32-byte node
+/// Project the whole tree as a `view()` result: every node as a 36-byte node
 /// record in depth-first pre-order, behind a list descriptor. The snapshot
 /// becomes the next diff's reference (see `../README.md`).
 export function viewOf(root: Widget): i32 {
@@ -491,7 +511,7 @@ export function viewOf(root: Widget): i32 {
   flatten(root, 0, recs);
   lastExport = recs;
   const n = count(root);
-  const buf = arenaAlloc(n * 32);
+  const buf = arenaAlloc(n * 36);
   lower(root, 0, 0, buf, 0, 0);
   return makeList(buf, n);
 }
@@ -513,7 +533,7 @@ export function diffOf(root: Widget): i32 {
   lastExport = newRecs; // the new tree is the next reference
 
   if (n == 0) return makeList(0, 0); // an empty list's ptr is 0
-  const buf = arenaAlloc(n * 40);
+  const buf = arenaAlloc(n * 44);
   let off = lowerChanged(root, 0, 0, buf, 0, first, last);
   if (first == 0) {
     lowerRemoved(last, newRecs, buf, off);

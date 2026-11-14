@@ -45,6 +45,7 @@
     (field $size i32)          ;; the WIT size token
     (field $direction i32)     ;; containers: 0 row, 1 column
     (field $align i32)         ;; containers: 0 start, 1 center, 2 end
+    (field $width i32)         ;; inputs: characters (0 = the host's default)
     (field $label (ref null $bytes))
     (field $index i32)         ;; position among the parent's children
   ))
@@ -253,10 +254,11 @@
 
   ;; =========================================================== the records
 
-  ;; The 32-byte node record for f at rec. Every byte a host reads is
+  ;; The 36-byte node record for f at rec. Every byte a host reads is
   ;; written: the tag, both option flags (0 = none), the id and parent words
-  ;; (when flagged), and the per-kind payload. The canonical ABI's padding
-  ;; is never written and never read (see web/glue.js), so no zero-fill.
+  ;; (when flagged), the per-kind payload, and — for an input — the width
+  ;; word. The canonical ABI's padding is never written and never read (see
+  ;; web/glue.js), so no zero-fill.
   (func $emit-node (param $rec i32) (param $f (ref $flat))
     (local $kind i32)
     (local $id i32)
@@ -284,20 +286,25 @@
           (struct.get $flat $color (local.get $f)))
          (i32.store8 (i32.add (local.get $rec) (i32.const 29))
           (struct.get $flat $size (local.get $f)))
+        (if (i32.eq (local.get $kind) (i32.const 3))
+          (then
+            (i32.store (i32.add (local.get $rec) (i32.const 32))
+              (struct.get $flat $width (local.get $f)))
+          ))
       ))
   )
 
-  ;; A 40-byte `changed` mutation carrying f, at rec: the tag byte, the
-  ;; 32-byte node one word in, and the index after it. The tag and the index
+  ;; A 44-byte `changed` mutation carrying f, at rec: the tag byte, the
+  ;; 36-byte node one word in, and the index after it. The tag and the index
   ;; are the only bytes of this record a host reads besides the node's.
   (func $emit-changed (param $rec i32) (param $f (ref $flat))
      (i32.store8 (local.get $rec) (i32.const 0))
     (call $emit-node (i32.add (local.get $rec) (i32.const 4)) (local.get $f))
-     (i32.store (i32.add (local.get $rec) (i32.const 36))
+     (i32.store (i32.add (local.get $rec) (i32.const 40))
       (struct.get $flat $index (local.get $f)))
   )
 
-  ;; A 40-byte `removed` mutation for id, at rec: the tag byte and the id.
+  ;; A 44-byte `removed` mutation for id, at rec: the tag byte and the id.
   (func $emit-removed (param $rec i32) (param $id i32)
      (i32.store8 (local.get $rec) (i32.const 1))
      (i32.store (i32.add (local.get $rec) (i32.const 4)) (local.get $id))
@@ -337,8 +344,9 @@
   )
 
   ;; Whether f's record differs from the one with the same id in last.
-  ;; Every field is compared uniformly: a container's color/size/label and a
-  ;; leaf's direction/align are zero, so the comparison holds across kinds.
+  ;; Every field is compared uniformly: a container's color/size/label, a
+  ;; leaf's direction/align, and a non-input's width are zero, so the
+  ;; comparison holds across kinds.
   (func $fields-differ (param $f (ref $flat)) (param $r (ref $flat)) (result i32)
     (local $d i32)
     (local.set $d
@@ -350,8 +358,10 @@
     (local.set $d
       (i32.or
         (i32.or
-          (i32.ne (struct.get $flat $direction (local.get $f)) (struct.get $flat $direction (local.get $r)))
-          (i32.ne (struct.get $flat $align (local.get $f)) (struct.get $flat $align (local.get $r))))
+          (i32.or
+            (i32.ne (struct.get $flat $direction (local.get $f)) (struct.get $flat $direction (local.get $r)))
+            (i32.ne (struct.get $flat $align (local.get $f)) (struct.get $flat $align (local.get $r))))
+          (i32.ne (struct.get $flat $width (local.get $f)) (struct.get $flat $width (local.get $r))))
         (i32.or
           (i32.ne (struct.get $flat $color (local.get $f)) (struct.get $flat $color (local.get $r)))
           (i32.ne (struct.get $flat $size (local.get $f)) (struct.get $flat $size (local.get $r))))))
@@ -475,6 +485,7 @@
       (struct.new $flat
         (i32.const 2) (i32.const 1) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 1)
+        (i32.const 0)
         (ref.null $bytes) (i32.const 0)))
     ;; The readout takes the accent color while running; the button's label
     ;; and color name the action.
@@ -483,12 +494,14 @@
         (i32.const 0) (i32.const 2) (i32.const 1)
         (if (result i32) (local.get $running) (then (i32.const 1)) (else (i32.const 0)))
         (i32.const 2) (i32.const 0) (i32.const 1)
+        (i32.const 0)
         (call $ms-label (call $elapsed)) (i32.const 0)))
     (array.set $flats (local.get $arr) (i32.const 2)
       (struct.new $flat
         (i32.const 1) (i32.const 3) (i32.const 1)
         (if (result i32) (local.get $running) (then (i32.const 4)) (else (i32.const 2)))
         (i32.const 1) (i32.const 0) (i32.const 1)
+        (i32.const 0)
         (if (result (ref $bytes)) (local.get $running)
           (then (call $label (i32.const 65544) (i32.const 5)))
           (else (call $label (i32.const 65539) (i32.const 5))))
@@ -506,12 +519,12 @@
     (local.set $arr (call $build))
     (global.set $last (local.get $arr))
     (local.set $n (array.len (local.get $arr)))
-    (local.set $buf (call $arena-alloc (i32.mul (local.get $n) (i32.const 32))))
+    (local.set $buf (call $arena-alloc (i32.mul (local.get $n) (i32.const 36))))
     (block $done
       (loop $lp
         (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
         (call $emit-node
-          (i32.add (local.get $buf) (i32.mul (local.get $i) (i32.const 32)))
+          (i32.add (local.get $buf) (i32.mul (local.get $i) (i32.const 36)))
           (ref.cast (ref $flat) (array.get $flats (local.get $arr) (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $lp)
@@ -537,7 +550,7 @@
     (local.set $n (call $diff-count (local.get $arr) (local.get $last) (local.get $first)))
     (if (i32.eqz (local.get $n))
       (then (return (call $make-list (i32.const 0) (i32.const 0)))))
-    (local.set $buf (call $arena-alloc (i32.mul (local.get $n) (i32.const 40))))
+    (local.set $buf (call $arena-alloc (i32.mul (local.get $n) (i32.const 44))))
     ;; The changed nodes, in the new tree's pre-order.
     (block $done
       (loop $lp
@@ -546,7 +559,7 @@
         (if (call $nez (call $is-changed (local.get $f) (local.get $last) (local.get $first)))
           (then
             (call $emit-changed
-              (i32.add (local.get $buf) (i32.mul (local.get $off) (i32.const 40)))
+              (i32.add (local.get $buf) (i32.mul (local.get $off) (i32.const 44)))
               (local.get $f))
             (local.set $off (i32.add (local.get $off) (i32.const 1)))
           ))
@@ -566,7 +579,7 @@
                   (i32.eqz (call $present-in (local.get $arr) (local.get $id))))
               (then
                 (call $emit-removed
-                  (i32.add (local.get $buf) (i32.mul (local.get $off) (i32.const 40)))
+                  (i32.add (local.get $buf) (i32.mul (local.get $off) (i32.const 44)))
                   (local.get $id))
                 (local.set $off (i32.add (local.get $off) (i32.const 1)))
               ))

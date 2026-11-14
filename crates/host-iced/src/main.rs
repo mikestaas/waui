@@ -527,15 +527,22 @@ fn map_tree(node: &Tree) -> iced::Element<'_, Message> {
             }
             button.into()
         }
-        Tree::Input(id, content, style) => {
+        Tree::Input(id, content, width, style) => {
             // The field's chrome matches the web page (theme.rs), as the
             // button's does; the field's text takes the node's semantic
             // color (the page's style class does the same).
             let value = iced_color(style.color).unwrap_or_else(|| theme::style().text_color);
-            // A fixed field width: a stable target, and content past it
-            // scrolls (a host concern, like the button's chrome).
+            // A fixed field width: the component's character count on the
+            // field's font scale (a character is about half an em), or the
+            // host's own default when it is `0`. Content past it scrolls (a
+            // host concern, like the button's chrome).
+            let px = if *width > 0 {
+                *width as f32 * size_pt(style.size) * 0.5
+            } else {
+                80.0
+            };
             let mut input = widget::text_input("", content.as_str())
-                .width(iced::Length::Fixed(80.0))
+                .width(iced::Length::Fixed(px))
                 .padding(iced::Padding {
                     top: 6.0,
                     right: 16.0,

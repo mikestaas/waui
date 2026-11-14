@@ -150,6 +150,11 @@ function rebuild() {
       // The component's semantic style, as token classes (see index.html).
       el.className = `waui waui-input waui-${n.style.color} waui-${n.style.size}`;
       el.value = n.content;
+      // The field's width in characters, as an inline `ch` size; `0` leaves
+      // it to the stylesheet's default. The dataset copy is what the e2e
+      // DOM serializer reads back.
+      el.dataset.width = n.width;
+      el.style.width = n.width > 0 ? `${n.width}ch` : '';
       if (n.id !== null) elements.set(n.id, el);
     } else {
       el = document.createElement('div');
@@ -199,6 +204,8 @@ function restyle(n) {
     // caret in some browsers).
     if (el.value !== n.content) el.value = n.content;
     el.className = `waui waui-input waui-${n.style.color} waui-${n.style.size}`;
+    el.dataset.width = n.width;
+    el.style.width = n.width > 0 ? `${n.width}ch` : '';
   }
   return true;
 }

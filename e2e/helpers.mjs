@@ -2,10 +2,10 @@
 //
 // The rendered DOM carries the same facts as the ABI node the Node selftest
 // decodes (web/glue.js): the widget id in data-id, the kind and the style
-// tokens as waui-* classes, the content as text or value. The serializer
-// below turns the rendered tree back into the selftest's node strings, so
-// the suite and the selftest assert on one shared set of expectations
-// (web/expect.mjs).
+// tokens as waui-* classes, the content as text or value, and the input's
+// width in data-width. The serializer below turns the rendered tree back
+// into the selftest's node strings, so the suite and the selftest assert on
+// one shared set of expectations (web/expect.mjs).
 
 import { expect } from '@playwright/test';
 
@@ -62,7 +62,10 @@ export async function domTree(page) {
           const field = kind === 'button' ? 'label' : 'content';
           const value = kind === 'input' ? el.value : el.textContent;
           const style = `style:${token(c, 'waui-', colors, 'neutral')}:${token(c, 'waui-', sizes, 'medium')}`;
-          s = `${kind}{id:${id},parent:${parentId},${field}:"${value}",${style}}`;
+          // The input's width (data-width, set by web/app.js); the other
+          // leaves carry none in the selftest's string.
+          const width = kind === 'input' ? `,width:${Number(el.dataset.width ?? 0)}` : '';
+          s = `${kind}{id:${id},parent:${parentId},${field}:"${value}",${style}${width}}`;
         } else {
           const dir = c.contains('waui-column') ? 'column' : 'row';
           const align = token(c, 'waui-align-', aligns, 'center');
