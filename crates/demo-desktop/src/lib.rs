@@ -80,9 +80,10 @@ fn tree(demos: &[Demo], n_open: usize) -> Tree {
 }
 
 /// One tile: an icon, a name, and a language, in a double-clickable column.
+/// The icon is 112px, the web desktop's tile size (see `site/desktop.css`).
 fn tile(demo: &Demo, i: usize) -> Tree {
     Tree::column(vec![
-        Tree::image(demo.icon.clone()).width(48).height(48),
+        Tree::image(demo.icon.clone()).width(112).height(112),
         Tree::text(demo.name.clone(), Style::new(Color::Neutral, Size::Medium)),
         Tree::text(demo.lang.clone(), Style::new(Color::Neutral, Size::Small)),
     ])

@@ -8,7 +8,7 @@ WAT_COMPONENTS := demo-counter demo-stopwatch demo-todo
          run-tui-as run-stop-tui-as run-todo-tui-as run-iced-as run-stop-iced-as run-todo-iced-as \
          run-cli-wat run-stop-cli-wat run-todo-cli-wat run-tui-wat run-stop-tui-wat run-todo-tui-wat \
          run-iced-wat run-stop-iced-wat run-todo-iced-wat \
-         web web-as web-wat web-test web-test-as web-test-wat site ui-test e2e screenshots fmt fmt-check hooks test
+         web web-as web-wat web-test web-test-as web-test-wat web-test-desktop site ui-test e2e screenshots fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model.
 components:
@@ -200,6 +200,10 @@ site: components components-as components-wat
 		cp target/wat/$$c.wasm target/site/$$c-wat.wasm || exit 1; \
 		node web/build.mjs target/wat/$$c.wasm target/site/$$c-wat.html --url $$c-wat.wasm || exit 1; \
 	done
+	@echo "==> building the desktop (wasm32)"
+	@cargo build -p demo-desktop --release --target $(WASM_TARGET) || exit 1
+	@cp target/$(WASM_TARGET)/release/demo_desktop.wasm target/site/demo-desktop.wasm || exit 1
+	@node web/build-desktop.mjs target/site/demo-desktop.wasm target/site/desktop.html --url demo-desktop.wasm || exit 1
 	@echo "wrote target/site/ — serve it over http; .github/workflows/site.yml deploys it"
 
 # Headless check of the web host's ABI layer (Node).
@@ -216,6 +220,13 @@ web-test-as: components-as
 web-test-wat: components-wat
 	node web/selftest.mjs target/wat/demo-counter.wasm target/wat/demo-stopwatch.wasm \
 		target/wat/demo-todo.wasm
+
+# The desktop world's ABI layer (web/desktop-selftest.mjs): the registry
+# round-trip (list-demos) and the window count (open-window, on-double-click,
+# on-window-close) against the pre-lift module.
+web-test-desktop:
+	@cargo build -p demo-desktop --release --target $(WASM_TARGET) || exit 1
+	node web/desktop-selftest.mjs
 
 # The tree layer's diff channel, as a standalone module run via Node: the
 # structural cases (add, remove, re-parent) plus the bootstrap and id-less
