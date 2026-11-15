@@ -1,6 +1,6 @@
-// Headless verification of the web host's desktop ABI layer (Node; the same
-// code the browser page uses). Runs the `demo-desktop` component against a
-// two-demo registry and exercises the `desktop` world's import side
+// Headless verification of the web host's windowing ABI layer (Node; the
+// same code the browser page uses). Runs the `demo-desktop` component
+// against a two-demo registry and exercises the windowing import side
 // (`list-demos`, `open-window`) and the window count's round-trip: a
 // double-click opens a window (the count goes up), a close drops it (the
 // count goes down), and a window the host cannot open is dropped.
@@ -14,7 +14,7 @@
 import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
-import { createDesktop } from './glue.js';
+import { createApp } from './glue.js';
 
 // Resolve paths relative to the repository root (this file lives in web/);
 // absolute paths (a non-default target) pass through.
@@ -88,7 +88,8 @@ function grid(count) {
 // the error path is exercised by a third open of the same tile.
 const openCalls = [];
 const handles = [7, 8];
-const desktop = await createDesktop(readFileSync(rel(desktopPath)), REGISTRY, {
+const desktop = await createApp(readFileSync(rel(desktopPath)), {
+  registry: REGISTRY,
   onOpenWindow: (src, title, x, y, w, h) => {
     openCalls.push({ src, title, x, y, w, h });
     return handles.length > 0 ? handles.shift() : null;
@@ -113,7 +114,8 @@ const desktop = await createDesktop(readFileSync(rel(desktopPath)), REGISTRY, {
   // The WIT bootstrap rule, on a fresh instance that never called view():
   // every id'd node is exported (the six containers and the count; the
   // id-less images and labels are not addressable, so they are not).
-  const fresh = await createDesktop(readFileSync(rel(desktopPath)), REGISTRY, {
+  const fresh = await createApp(readFileSync(rel(desktopPath)), {
+    registry: REGISTRY,
     onOpenWindow: () => null,
   });
   assert.deepEqual(fresh.changes().map(mutation), [

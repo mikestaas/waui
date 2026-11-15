@@ -127,6 +127,12 @@ impl Guest for Stopwatch {
 
     // No input, so the buffer is ignored; the `String`'s drop frees it.
     fn on_text(_id: u32, _text: String) {}
+
+    // The windowing events (see the `app` world): this demo opens no
+    // windows, so both are ignored.
+    fn on_double_click(_id: u32) {}
+
+    fn on_window_close(_window: u32) {}
 }
 
 export!(Stopwatch);

@@ -45,6 +45,21 @@ impl AppImports for Host {
         self.last_period = period;
         self.calls += 1;
     }
+    // This host runs no demos: the registry is empty and opens fail.
+    fn list_demos(&mut self) -> Vec<Demo> {
+        Vec::new()
+    }
+    fn open_window(
+        &mut self,
+        _src: String,
+        _title: String,
+        _x: u32,
+        _y: u32,
+        _w: u32,
+        _h: u32,
+    ) -> Result<u32, Error> {
+        Err(Error::NotFound)
+    }
 }
 
 // The `widget` interface is pulled into the world, so the generated

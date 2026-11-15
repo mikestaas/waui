@@ -23,6 +23,8 @@
 //                              writes to it (see the `text` doc for why the
 //                              buffer must come from the guest's allocator).
 //   on-tick()                : `on-tick()`.
+//   on-double-click(id: u32) : `on-double-click(i32)` — passes directly.
+//   on-window-close(w: u32)  : `on-window-close(i32)` — passes directly.
 //   schedule(p: u64)         : `$root"."schedule"`, `(i64)` — the
 //                              component's refresh request in ms (0 = no
 //                              periodic wake). Delivered to the
@@ -31,6 +33,26 @@
 //   now() -> u64             : imported as `$root"."now"`, `() -> i64`
 //                              (JS BigInt). Provided unconditionally; the
 //                              counter never calls it.
+//   list-demos() -> list<demo>
+//                              : `$root"."list-demos"`, `(i32 retPtr)` —
+//                              the guest passes a return pointer; the host
+//                              writes the 8-byte {ptr, len} descriptor to
+//                              it, with the demo records in the guest's
+//                              memory. Each record is 40 bytes: four
+//                              (ptr, len) strings, then two u32 sizes. The
+//                              registry comes from the `registry` hook;
+//                              empty without it.
+//   open-window(src, title,
+//               x, y, w, h) -> result<u32, error>
+//                              : `$root"."open-window"`, the two strings'
+//                              pointer + length (in the guest's memory),
+//                              the four u32s, then the return pointer. The
+//                              result is an 8-byte variant written to it:
+//                              byte 0 is the case (0 = Ok, 1 = Err), and
+//                              the u32 at byte 4 is the handle (Ok) or the
+//                              error tag (Err). Delivered to the
+//                              `onOpenWindow` hook; without it the result
+//                              is `not-found`.
 //
 // The 36-byte node (all little-endian):
 //   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container,
@@ -77,10 +99,20 @@
 // This module is written to run in both a browser and Node so the same code
 // can be exercised headlessly (see selftest.mjs).
 
-// The app world's imports (now + schedule), as the pre-lift module expects.
-// `hooks.onSchedule` arms the host's wake loop (see app.js); a no-op without
-// it.
-function appImports(hooks = {}) {
+// The world's imports (now, schedule, list-demos, open-window), as the
+// pre-lift module expects. `hooks.onSchedule` arms the host's wake loop (see
+// app.js); a no-op without it. `hooks.registry` is the demo registry
+// `list-demos` returns; empty without it. `hooks.onOpenWindow(src, title,
+// x, y, w, h)` opens a window and returns its handle; `null` (or its
+// absence) reports `not-found`.
+//
+// `getInstance` yields the instance once it exists: the import functions
+// run only after instantiation, but the import object is built before it,
+// so the instance is fetched lazily, not captured at construction.
+function appImports(hooks = {}, getInstance) {
+  const enc = new TextEncoder();
+  const dec = new TextDecoder();
+  const registry = hooks.registry ?? [];
   return {
     $root: {
       // The world's `now: func() -> u64` import, in host milliseconds.
@@ -90,16 +122,82 @@ function appImports(hooks = {}) {
       schedule: (p) => {
         if (hooks.onSchedule) hooks.onSchedule(Number(p));
       },
+      // The world's `list-demos: func() -> list<demo>` import. The guest
+      // passes a return pointer; the host writes the 8-byte {ptr, len}
+      // descriptor to it, with the demo records in the guest's memory.
+      // Each record is 40 bytes: four (ptr, len) strings, then two u32
+      // sizes.
+      'list-demos': (retPtr) => {
+        const ex = getInstance().exports;
+        const allocString = (s) => {
+          const b = enc.encode(s);
+          // `cabi_realloc(old_ptr, old_len, align, new_len)`: the align comes
+          // before the new length in the 0.63 ABI. A fresh alloc is
+          // (0, 0, align, len) — passing (0, 0, len, align) would size the
+          // block by the alignment and overflow it.
+          const ptr = ex.cabi_realloc(0, 0, 1, b.length);
+          const u8 = new Uint8Array(ex.memory.buffer);
+          u8.set(b, ptr);
+          return [ptr, b.length];
+        };
+        const n = registry.length;
+        // The record array: 40 bytes each, 4-aligned. Same (align, len) order.
+        const arrPtr = ex.cabi_realloc(0, 0, 4, n * 40);
+        for (let k = 0; k < n; k++) {
+          const d = registry[k];
+          const [nameP, nameL] = allocString(d.name);
+          const [langP, langL] = allocString(d.lang);
+          const [iconP, iconL] = allocString(d.icon);
+          const [srcP, srcL] = allocString(d.src);
+          // The string allocs may have grown the memory: rebuild the view.
+          const i32 = new Int32Array(ex.memory.buffer);
+          const o = arrPtr + k * 40;
+          i32[o >> 2] = nameP;
+          i32[(o + 4) >> 2] = nameL;
+          i32[(o + 8) >> 2] = langP;
+          i32[(o + 12) >> 2] = langL;
+          i32[(o + 16) >> 2] = iconP;
+          i32[(o + 20) >> 2] = iconL;
+          i32[(o + 24) >> 2] = srcP;
+          i32[(o + 28) >> 2] = srcL;
+          i32[(o + 32) >> 2] = d.w;
+          i32[(o + 36) >> 2] = d.h;
+        }
+        const i32 = new Int32Array(ex.memory.buffer);
+        i32[retPtr >> 2] = arrPtr;
+        i32[(retPtr + 4) >> 2] = n;
+      },
+      // The world's `open-window: func(src, title, x, y, w, h) ->
+      // result<u32, error>` import. The strings are in the guest's memory.
+      // The result is an 8-byte variant (a discriminant byte, then a u32)
+      // written to the return pointer: byte 0 is the case (0 = Ok, 1 = Err),
+      // and the u32 at byte 4 is the handle (Ok) or the error tag (Err).
+      'open-window': (srcPtr, srcLen, titlePtr, titleLen, x, y, w, h, retPtr) => {
+        const ex = getInstance().exports;
+        const u8 = new Uint8Array(ex.memory.buffer);
+        const src = dec.decode(u8.subarray(srcPtr, srcPtr + srcLen));
+        const title = dec.decode(u8.subarray(titlePtr, titlePtr + titleLen));
+        // The windowing layer opens the window; it returns the handle, or
+        // null if it cannot run the demo.
+        const handle = hooks.onOpenWindow ? hooks.onOpenWindow(src, title, x, y, w, h) : null;
+        const i32 = new Int32Array(ex.memory.buffer);
+        if (handle === null || handle === undefined) {
+          u8[retPtr] = 1; // Err
+          i32[(retPtr + 4) >> 2] = 0; // not-found
+        } else {
+          u8[retPtr] = 0; // Ok
+          i32[(retPtr + 4) >> 2] = handle;
+        }
+      },
     },
   };
 }
 
-// The app world's ABI layer over an instance's exports: the `view`/`changes`
+// The world's ABI layer over an instance's exports: the `view`/`changes`
 // decoders and the event callers. Shared by `createApp` (async, from bytes)
 // and `instantiateApp` (sync, from a pre-compiled module).
 // The semantic tokens each host maps onto its own palette, in the WIT case
-// order of waui:ui/widget (unknown values degrade safely). World-agnostic:
-// the `app` and `desktop` worlds both carry `widget` nodes.
+// order of waui:ui/widget (unknown values degrade safely).
 const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning'];
 const SIZES = ['small', 'medium', 'large'];
 const ALIGNS = ['start', 'center', 'end'];
@@ -195,6 +293,14 @@ function makeAppApi(ex) {
     click: (id) => ex['on-click'](id),
     tick: () => ex['on-tick'](),
 
+    /// The world's `on-double-click` export: the node with `id` was
+    /// double-activated.
+    doubleClick: (id) => ex['on-double-click'](id),
+
+    /// The world's `on-window-close` export: the window with `handle` was
+    /// closed by the user.
+    windowClose: (handle) => ex['on-window-close'](handle),
+
     /// The world's `on-text` export: the input with `id` now holds `text`
     /// (the host's whole current buffer). The canonical ABI wants the string
     /// in the guest's memory, so the buffer is allocated through the guest's
@@ -238,143 +344,29 @@ function makeAppApi(ex) {
   };
 }
 
-// Instantiate an app-world component from its bytes: the standalone demo
-// pages and the Node selftest boot this way. `wasmBytes` may be a promise of
-// the bytes (the site's fetch boot); awaiting a non-promise is the identity,
-// so the inlined form works too.
+// Instantiate a component from its bytes: the standalone demo pages, the
+// desktop page, and the Node selftest boot this way. `wasmBytes` may be a
+// promise of the bytes (the site's fetch boot); awaiting a non-promise is the
+// identity, so the inlined form works too. The hooks are as in
+// `appImports`; the windowing ones (`registry`, `onOpenWindow`) are used by
+// the desktop, ignored by the plain demos.
 export async function createApp(wasmBytes, hooks = {}) {
   const bytes = await wasmBytes;
-  const { instance } = await WebAssembly.instantiate(bytes, appImports(hooks));
+  let instance;
+  const imports = appImports(hooks, () => instance);
+  ({ instance } = await WebAssembly.instantiate(bytes, imports));
   return makeAppApi(instance.exports);
 }
 
-// A synchronous instantiation of an app-world component from an already
-// compiled module. The windowing host pre-compiles its demos at startup, then
-// opens a window with this: the `open-window` import is a sync wasm call, so
-// the instantiation must be sync too (`WebAssembly.instantiate` is not).
+// A synchronous instantiation of a component from an already compiled module.
+// The windowing host pre-compiles its demos at startup, then opens a window
+// with this: the `open-window` import is a sync wasm call, so the
+// instantiation must be sync too (`WebAssembly.instantiate` is not).
 export function instantiateApp(compiledModule, hooks = {}) {
   // `new WebAssembly.Instance` returns the instance directly (unlike the async
   // `WebAssembly.instantiate`, which resolves to { module, instance }).
-  const instance = new WebAssembly.Instance(compiledModule, appImports(hooks));
+  let instance;
+  const imports = appImports(hooks, () => instance);
+  instance = new WebAssembly.Instance(compiledModule, imports);
   return makeAppApi(instance.exports);
-}
-
-// The desktop world's ABI layer: the host side of `demo-desktop`. It runs the
-// desktop component (the icon grid and menu bar) and provides the two imports
-// the component calls:
-//   `list-demos`   : the host's demo registry (the grid's source).
-//   `open-window`  : the host opens a window (the windowing layer does the work).
-//
-// `registry` is the host's list of demos, each `{ name, lang, icon, src, w, h }`:
-// `src` is the key the windowing layer resolves to a pre-compiled demo module,
-// and `w`/`h` are the window's default size. `hooks.onOpenWindow(src, title,
-// x, y, w, h)` is called when the component opens a window; it returns the
-// host's window handle (a u32) or null to report a not-found.
-export async function createDesktop(wasmBytes, registry, hooks = {}) {
-  const bytes = await wasmBytes;
-  const enc = new TextEncoder();
-  const dec = new TextDecoder();
-  const { instance } = await WebAssembly.instantiate(bytes, {
-    $root: {
-      // The world's `list-demos: func() -> list<demo>` import. The guest
-      // passes a return pointer; the host writes the 8-byte {ptr, len}
-      // descriptor to it, with the demo records in the guest's memory. Each
-      // record is 40 bytes: four (ptr, len) strings, then two u32 sizes.
-      'list-demos': (retPtr) => {
-        const ex = instance.exports;
-        const allocString = (s) => {
-          const b = enc.encode(s);
-          // `cabi_realloc(old_ptr, old_len, align, new_len)`: the align comes
-          // before the new length in the 0.63 ABI. A fresh alloc is
-          // (0, 0, align, len) — passing (0, 0, len, align) would size the
-          // block by the alignment and overflow it.
-          const ptr = ex.cabi_realloc(0, 0, 1, b.length);
-          const u8 = new Uint8Array(ex.memory.buffer);
-          u8.set(b, ptr);
-          return [ptr, b.length];
-        };
-        const n = registry.length;
-        // The record array: 40 bytes each, 4-aligned. Same (align, len) order.
-        const arrPtr = ex.cabi_realloc(0, 0, 4, n * 40);
-        for (let k = 0; k < n; k++) {
-          const d = registry[k];
-          const [nameP, nameL] = allocString(d.name);
-          const [langP, langL] = allocString(d.lang);
-          const [iconP, iconL] = allocString(d.icon);
-          const [srcP, srcL] = allocString(d.src);
-          // The string allocs may have grown the memory: rebuild the view.
-          const i32 = new Int32Array(ex.memory.buffer);
-          const o = arrPtr + k * 40;
-          i32[o >> 2] = nameP;
-          i32[(o + 4) >> 2] = nameL;
-          i32[(o + 8) >> 2] = langP;
-          i32[(o + 12) >> 2] = langL;
-          i32[(o + 16) >> 2] = iconP;
-          i32[(o + 20) >> 2] = iconL;
-          i32[(o + 24) >> 2] = srcP;
-          i32[(o + 28) >> 2] = srcL;
-          i32[(o + 32) >> 2] = d.w;
-          i32[(o + 36) >> 2] = d.h;
-        }
-        const i32 = new Int32Array(ex.memory.buffer);
-        i32[retPtr >> 2] = arrPtr;
-        i32[(retPtr + 4) >> 2] = n;
-      },
-      // The world's `open-window: func(src, title, x, y, w, h) ->
-      // result<u32, error>` import. The strings are in the guest's memory.
-      // The result is an 8-byte variant (a discriminant byte, then a u32)
-      // written to the return pointer: byte 0 is the case (0 = Ok, 1 = Err),
-      // and the u32 at byte 4 is the handle (Ok) or the error tag (Err).
-      'open-window': (srcPtr, srcLen, titlePtr, titleLen, x, y, w, h, retPtr) => {
-        const ex = instance.exports;
-        const u8 = new Uint8Array(ex.memory.buffer);
-        const src = dec.decode(u8.subarray(srcPtr, srcPtr + srcLen));
-        const title = dec.decode(u8.subarray(titlePtr, titlePtr + titleLen));
-        // The windowing layer opens the window; it returns the handle, or
-        // null if it cannot run the demo.
-        const handle = hooks.onOpenWindow ? hooks.onOpenWindow(src, title, x, y, w, h) : null;
-        const i32 = new Int32Array(ex.memory.buffer);
-        if (handle === null || handle === undefined) {
-          u8[retPtr] = 1; // Err
-          i32[(retPtr + 4) >> 2] = 0; // not-found
-        } else {
-          u8[retPtr] = 0; // Ok
-          i32[(retPtr + 4) >> 2] = handle;
-        }
-      },
-    },
-  });
-  const ex = instance.exports;
-  const mem = () => ex.memory.buffer;
-
-  return {
-    /// Decode `view()`'s result into a flat list of node objects (the grid
-    /// and menu bar).
-    view: () => readList(mem, ex.view, ex.cabi_post_view, 36, decodeNode),
-
-    /// Decode `changes()`'s result into a list of mutation objects:
-    /// { kind: 'changed', node, index } or { kind: 'removed', id }.
-    changes: () =>
-      readList(mem, ex.changes, ex.cabi_post_changes, 44, (i32, u8, o) => {
-        // The tag is one byte (see the layout note); the padding after it is
-        // unwritten, so it must not be read as part of the tag.
-        return u8[o] === 1
-          ? { kind: 'removed', id: i32[(o + 4) >> 2] }
-          : {
-              kind: 'changed',
-              node: decodeNode(i32, u8, o + 4),
-              index: i32[(o + 40) >> 2],
-            };
-      }),
-
-    /// The world's `on-double-click` export: the tile with `id` was activated.
-    doubleClick: (id) => ex['on-double-click'](id),
-
-    /// The world's `on-window-close` export: the window with `handle` was
-    /// closed by the user.
-    windowClose: (handle) => ex['on-window-close'](handle),
-
-    /// The guest's linear memory, in 64 KiB pages (for leak checks).
-    memoryPages: () => ex.memory.buffer.byteLength / 65536,
-  };
 }

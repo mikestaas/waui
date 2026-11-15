@@ -299,3 +299,8 @@ export function ontext(id: i32, ptr: i32, len: i32): void {
 
 // → `on-tick` after the export rename.
 export function ontick(): void {}
+
+// → `on-double-click`/`on-window-close` after the export rename. This demo
+// opens no windows, so both are ignored.
+export function ondoubleclick(_id: i32): void {}
+export function onwindowclose(_window: i32): void {}

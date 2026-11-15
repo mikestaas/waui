@@ -11,18 +11,23 @@ component changes.
 ## The contract (`wit/`, package `waui:ui`)
 
 - **`widget` interface** — a minimal, renderer-agnostic widget tree: `text`,
-  `button`, `input`, and `container` (row/column) records, a `node` variant,
-  a semantic `style` (a color and a size token), and a `mutation` variant
-  (`changed`, `removed`). The tree crosses the ABI as a flat, pre-ordered node
-  list; the rules for the list, node identity, and the diff are documented in
-  [`widget.wit`](wit/widget.wit).
-- **`app` world** — the component/host protocol: the component exports `view`
-  (the current tree) and `changes` (the diff), and the host calls `on-click`,
-  `on-text`, and `on-tick`; the component imports `now` (a clock) and
-  `schedule` (a refresh request). The protocol rules are documented in
+  `button`, `input`, `image`, and `container` (row/column) records, a `node`
+  variant, a semantic `style` (a color and a size token), and a `mutation`
+  variant (`changed`, `removed`). The tree crosses the ABI as a flat,
+  pre-ordered node list; the rules for the list, node identity, and the diff
+  are documented in [`widget.wit`](wit/widget.wit).
+- **`app` world** — the one component/host protocol: the component exports
+  `view` (the current tree) and `changes` (the diff), and the host calls
+  `on-click`, `on-text`, and `on-tick`; the component imports `now` (a clock)
+  and `schedule` (a refresh request). The windowing functions are for
+  components that run *other* components — the desktop: the component imports
+  `list-demos` (the host's registry) and `open-window`, and the host calls
+  `on-double-click` and `on-window-close`. A host that cannot run other
+  components returns an empty registry and an error; a component that manages
+  no windows ignores the two events. The protocol rules are documented in
   [`app.wit`](wit/app.wit). Hosts may ignore parts of the contract (host-cli
-  ignores `style`, `align`, `changes`, and `schedule`); components cannot,
-  because the node layout is part of the ABI.
+  ignores `style`, `align`, `changes`, `schedule`, and the windowing
+  functions); components cannot, because the node layout is part of the ABI.
 
 **Authoring.** Component authors write a nested tree and project it onto the
 flat list. Rust uses the [`component-ui`](crates/component-ui/) crate;
@@ -38,12 +43,13 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame, `--width <n>` sizes the dump buffer, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
-| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); `expect.mjs` holds the expected views, shared with the selftest and the browser suite |
+| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); the desktop page (`glue.js` + `desktop.js`) runs `demo-desktop` with the windowing host; `expect.mjs` holds the expected views, shared with the selftest and the browser suite |
 | `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
-| `e2e/`                   | the Playwright browser suite: the nine demo pages — each walking its states — in a 360x340 viewport (the iced window size), and the site desktop, in chromium; the screenshot goldens are CI-only, the pixel-level producer parity runs everywhere |
+| `e2e/`                   | the Playwright browser suite: the nine demo pages — each walking its states — in a 360x340 viewport (the iced window size), and both desktops (the static launcher and the `demo-desktop` component), in chromium; the screenshot goldens are CI-only, the pixel-level producer parity runs everywhere |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests a refresh (the host never wakes it) |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one mutation |
 | `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component; the footer's input takes typed text, and "add" uses it (a preset label when it is empty) |
+| `crates/demo-desktop`    | the desktop: the icon grid, the menu bar, and the set of open windows — the multi-component host's component, on the windowing side of the `app` world |
 | `assembly/`              | the same three demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`)         |
 | `wat/`                   | the same three demos in hand-rolled WAT: the WASM GC holds the state, the canonical ABI is written by hand, one self-contained file per demo |
 
@@ -86,22 +92,23 @@ Prerequisites: stable Rust with the `wasm32-unknown-unknown` target
 Node.js with `npm install` run (AS demos), and wabt (AS builds).
 
 ```sh
-make components      # build the demos, lift them into target/components/
-make run-cli         # counter, ASCII terminal host
-make run-tui         # counter, TUI host
-make run-iced        # counter, window
-make run-stop-tui    # stopwatch, TUI host
-make run-stop-iced   # stopwatch, window
-make run-todo-cli    # todo, ASCII terminal host
-make run-todo-tui    # todo, TUI host
-make run-todo-iced   # todo, window
-make web             # self-contained HTML pages in target/web/
-make site            # the demo site in target/site/ (GitHub Pages)
-make web-test        # headless (Node) check of the web host's ABI layer
-make e2e             # the Playwright browser suite (needs `npx playwright install chromium`)
-make test            # cargo test, all crates
-make fmt             # format all sources (rustfmt + prettier)
-make hooks           # point git at .githooks (the pre-commit gate)
+make components       # build the demos, lift them into target/components/
+make run-cli          # counter, ASCII terminal host
+make run-tui          # counter, TUI host
+make run-iced         # counter, window
+make run-stop-tui     # stopwatch, TUI host
+make run-stop-iced    # stopwatch, window
+make run-todo-cli     # todo, ASCII terminal host
+make run-todo-tui     # todo, TUI host
+make run-todo-iced    # todo, window
+make web              # self-contained HTML pages in target/web/
+make site             # the demo site in target/site/ (GitHub Pages)
+make web-test         # headless (Node) check of the web host's ABI layer
+make web-test-desktop # the windowing side of that layer (registry, window round-trip)
+make e2e              # the Playwright browser suite (needs `npx playwright install chromium`)
+make test             # cargo test, all crates
+make fmt              # format all sources (rustfmt + prettier)
+make hooks            # point git at .githooks (the pre-commit gate)
 
 make components-as   # build the AS demos, lift them
 make run-tui-as      # counter from the AS component
@@ -123,15 +130,18 @@ it runs from disk with no server and no network.
 ## GitHub Pages
 
 `make site` assembles the demo site in `target/site/`: the desktop launcher
-(`site/`), the nine demo pages, and their `.wasm` modules. The launcher is a
-desktop — an icon per demo, title underneath; double-clicking one opens the
-demo in a small window (an iframe over the page), and several windows may be
-open at once. The pages fetch their `.wasm` file instead of inlining it, so
-the site needs a server (GitHub Pages, or `python3 -m http.server`); the
-launcher itself runs from disk, its demo windows do not (their fetch fails on
-file://). It is deployed to GitHub Pages by `.github/workflows/site.yml` on
-every push to main. Enabling it needs one manual step: repository
-Settings → Pages → Source: *GitHub Actions*.
+(`site/`), the desktop page (`desktop.html`, the `demo-desktop` component),
+the nine demo pages, and their `.wasm` modules. The launcher is a desktop —
+an icon per demo, title underneath; double-clicking one opens the demo in a
+small window (an iframe over the page), and several windows may be open at
+once. The desktop page runs the same desktop as a component: its windows
+embed the demo *components*, rendered in place rather than in iframes. The
+pages fetch their `.wasm` file instead of inlining it, so the site needs a
+server (GitHub Pages, or `python3 -m http.server`); the launcher itself runs
+from disk, its demo windows do not (their fetch fails on file://). It is
+deployed to GitHub Pages by `.github/workflows/site.yml` on every push to
+main. Enabling it needs one manual step: repository Settings → Pages →
+Source: *GitHub Actions*.
 
 ## Tests
 
@@ -174,11 +184,14 @@ Settings → Pages → Source: *GitHub Actions*.
   (and the cargo goldens with them) for download and commit.
 - `make web-test` (and `-as`, `-wat`): the same assertions from Node, against
   the core modules, through the same `glue.js` the browser page uses.
+  `make web-test-desktop` covers the windowing side of that layer: the
+  registry round-trip and the window count, against `demo-desktop`.
 - `make ui-test`: the tree layer's diff channel, as a standalone module run
   via Node: the structural cases (add, remove, re-parent) plus the bootstrap,
   id-less, and input rules — the AS twin of the `component-ui` unit tests.
 - `make e2e`: the Playwright browser suite (chromium) against the built
-  site: the nine demo pages and the desktop in a real browser — the
+  site: the nine demo pages and both desktops (the static launcher and the
+  `demo-desktop` component) in a real browser — the
   rendered DOM against the same expectations as the web selftest
   (`web/expect.mjs`), the computed styles, the in-place-vs-rebuild
   behavior, and the window management (open, raise, drag, resize, close).
@@ -201,7 +214,6 @@ Settings → Pages → Source: *GitHub Actions*.
   a component can only report state, not move it.
 - **Images, as a WIT `resource`.** Substantial ABI work, worst on the
   hand-rolled AS side.
-- **Multi-component hosts.** Host-side only.
 - **Grid layout.** The contract's containers are rows and columns (one axis
   each); a grid — placing children on two axes at once — has no token.
 - **Stretch / equal-width.** `align` places children on the cross axis but

@@ -1,20 +1,20 @@
 //! The desktop: the icon grid, the menu bar, and the set of open windows.
 //!
-//! This is the multi-component host's component (the `desktop` world). It
-//! owns the *logical* state — the grid (built from the host's `list-demos`
-//! registry), the menu bar's window count, and which windows are open — and
-//! exports it via `view`/`changes`, exactly as on the `app` world. It
-//! *requests* a window through the `open-window` import when a tile is
-//! double-clicked, and drops a window from its open set when the host reports
-//! a close. The windows themselves (their chrome, geometry, and the embedded
-//! demo running in each) are host-drawn, not part of this tree.
+//! The multi-component host's component, on the `app` world. It owns the
+//! *logical* state — the grid (built from the host's `list-demos` registry),
+//! the menu bar's window count, and which windows are open — and exports it
+//! via `view`/`changes`, as any component does. It *requests* a window
+//! through the `open-window` import when a tile is double-clicked, and drops
+//! a window from its open set when the host reports a close. The windows
+//! themselves (their chrome, geometry, and the embedded demo running in each)
+//! are host-drawn, not part of this tree.
 //!
 //! The tile is a container (an icon, a name, and a language) with an id: the
 //! host makes id'd nodes double-clickable on the desktop, and the component
 //! opens the demo a tile represents in response.
 
 wit_bindgen::generate!({
-    world: "desktop",
+    world: "app",
     path: "../../wit",
 });
 
@@ -140,6 +140,15 @@ impl Guest for Desktop {
     fn on_window_close(window: u32) {
         OPEN.lock().unwrap().retain(|&h| h != window);
     }
+
+    // The plain-app events (see the `app` world): the desktop has no
+    // editable input and no clock, and a single click on a tile does nothing
+    // (the double-click opens), so all three are ignored.
+    fn on_click(_id: u32) {}
+
+    fn on_text(_id: u32, _text: String) {}
+
+    fn on_tick() {}
 }
 
 export!(Desktop);

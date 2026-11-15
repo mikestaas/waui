@@ -181,6 +181,8 @@ pub fn build_component_as(demo: &str) {
             "onclick=on-click",
             "ontext=on-text",
             "ontick=on-tick",
+            "ondoubleclick=on-double-click",
+            "onwindowclose=on-window-close",
         ]);
         steps.push(c);
     }

@@ -1,17 +1,17 @@
 // The desktop host: the windowing layer for the `demo-desktop` component.
 //
-// It runs the desktop component on the `desktop` world (createDesktop from
-// glue.js): the component owns the icon grid and the menu bar's window count,
-// and this file implements the two imports it calls. `list-demos` is the
-// registry below; `open-window` opens a window (openWindow) that embeds a demo
-// component (the `app` world) rendered in place, not in an iframe.
+// It runs the desktop component via `createApp` from glue.js: the component
+// owns the icon grid and the menu bar's window count, and this file
+// implements the windowing imports it calls. `list-demos` is the registry
+// below; `open-window` opens a window (openWindow) that embeds a demo
+// component rendered in place, not in an iframe.
 //
 // The demos are pre-compiled at startup (WebAssembly.compile, async) so that
 // `open-window` — a sync wasm call — can instantiate one synchronously (new
 // WebAssembly.Instance on the pre-compiled module).
 //
 // This file is concatenated into the generated page by build-desktop.mjs, so
-// it relies on `createDesktop`/`instantiateApp` from glue.js and
+// it relies on `createApp`/`instantiateApp` from glue.js and
 // `WAUI_WASM_BYTES` from the boot script.
 
 // The demo registry, as the host provides it to the component's `list-demos`.
@@ -413,7 +413,8 @@ addEventListener('keydown', (e) => {
 // is awaited so a double-click always finds a ready module.
 await preloadDemos();
 
-const desktop = await createDesktop(WAUI_WASM_BYTES, DEMOS, {
+const desktop = await createApp(WAUI_WASM_BYTES, {
+  registry: DEMOS,
   onOpenWindow: (src, title, x, y, w, h) => openWindow(src, title, x, y, w, h),
 });
 

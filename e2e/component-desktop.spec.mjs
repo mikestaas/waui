@@ -1,7 +1,7 @@
 // The component desktop (web/desktop.html): the `demo-desktop` component on
-// the `desktop` world, with the windowing host. Unlike the static launcher
-// (desktop.spec.mjs, `/`), each window embeds a demo *component* rendered in
-// place (`.window-content`), not in an iframe.
+// the windowing side of the `app` world, with the windowing host. Unlike the
+// static launcher (desktop.spec.mjs, `/`), each window embeds a demo
+// *component* rendered in place (`.window-content`), not in an iframe.
 //
 // The grid is the component's tree: nine tiles (`.tile`), each an icon, a
 // name (`.tile-name`), and a language (`.tile-lang`). The window count is the

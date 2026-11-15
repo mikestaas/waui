@@ -3,10 +3,10 @@
   waui web host — the desktop, as a component.
 
   Unlike the app pages (index.html), this page runs the `demo-desktop`
-  component on the `desktop` world: the component owns the icon grid and the
-  menu bar's window count, and the host implements the two imports it calls
-  (`list-demos`, the registry; `open-window`, the windowing layer). Each open
-  window embeds a demo component (the `app` world), rendered in place rather
+  component, the windowing side of the `app` world: the component owns the
+  icon grid and the menu bar's window count, and the host implements the two
+  imports it calls (`list-demos`, the registry; `open-window`, the windowing
+  layer). Each open window embeds a demo component, rendered in place rather
   than in an iframe.
 
   build-desktop.mjs fills three placeholders: the wasm boot script (the

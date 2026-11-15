@@ -3,8 +3,9 @@
 //! builds from the `list-demos` registry, the window count, and the
 //! open/close round-trip (a double-click opens a window, a close drops it).
 //!
-//! The host implements the `desktop` world's imports: `list-demos` (the
-//! registry) and `open-window` (which assigns a handle and records the call).
+//! The host implements the `app` world's imports: `list-demos` (the
+//! registry) and `open-window` (which assigns a handle and records the
+//! call). `now` and `schedule` are stubbed: the desktop has no clock.
 
 use std::sync::Mutex;
 use wasmtime::component::*;
@@ -12,11 +13,11 @@ use wasmtime::{Engine, Store};
 use waui_test::{build_component, component_path, RUST_BUILD_LOCK};
 
 wasmtime::component::bindgen!({
-    world: "desktop",
+    world: "app",
     path: "../../wit",
 });
 
-/// The host's side of the `desktop` world.
+/// The host's side of the `app` world.
 #[derive(Default)]
 struct Host {
     /// The registry `list-demos` returns.
@@ -27,7 +28,13 @@ struct Host {
     opens: Mutex<Vec<(String, String)>>,
 }
 
-impl DesktopImports for Host {
+impl AppImports for Host {
+    // The desktop has no clock: the stubs are never called.
+    fn now(&mut self) -> u64 {
+        0
+    }
+    fn schedule(&mut self, _period: u64) {}
+
     fn list_demos(&mut self) -> Vec<Demo> {
         self.demos.clone()
     }
@@ -77,12 +84,12 @@ fn nine_demos() -> Vec<Demo> {
 }
 
 /// Link and instantiate the component against our world.
-fn instantiate(engine: &Engine, store: &mut Store<Host>, path: &std::path::Path) -> Desktop {
+fn instantiate(engine: &Engine, store: &mut Store<Host>, path: &std::path::Path) -> App {
     let component = Component::from_file(engine, path).expect("failed to load component");
     let mut linker = Linker::new(engine);
-    Desktop::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
+    App::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
         .expect("failed to link world imports");
-    Desktop::instantiate(store, &component, &linker).expect("failed to instantiate")
+    App::instantiate(store, &component, &linker).expect("failed to instantiate")
 }
 
 /// The node's id, if it has one.

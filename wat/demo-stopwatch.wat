@@ -626,4 +626,9 @@
   (func (export "on-text") (param $id i32) (param $ptr i32) (param $len i32)
     (drop (call $cabi-realloc (local.get $ptr) (local.get $len) (i32.const 0) (i32.const 1)))
   )
+
+  ;; The windowing events (the `app` world): this demo opens no windows,
+  ;; so both are ignored.
+  (func (export "on-double-click") (param $id i32))
+  (func (export "on-window-close") (param $window i32))
 )

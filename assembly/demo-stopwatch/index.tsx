@@ -114,3 +114,8 @@ export function ontick(): void {}
 export function ontext(_id: i32, _ptr: i32, _len: i32): void {
   cabi_realloc(_ptr, _len, 0, 1);
 }
+
+// → `on-double-click`/`on-window-close` after the export rename. This demo
+// opens no windows, so both are ignored.
+export function ondoubleclick(_id: i32): void {}
+export function onwindowclose(_window: i32): void {}

@@ -262,6 +262,12 @@ impl Guest for TodoList {
     }
 
     fn on_tick() {}
+
+    // The windowing events (see the `app` world): this demo opens no
+    // windows, so both are ignored.
+    fn on_double_click(_id: u32) {}
+
+    fn on_window_close(_window: u32) {}
 }
 
 export!(TodoList);

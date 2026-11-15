@@ -38,7 +38,8 @@ components-as:
 			-O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2 || exit 1; \
 		node assembly/patch-env-abort.mjs target/assembly/$$c.raw.wasm target/assembly/$$c.core.wasm || exit 1; \
 		node assembly/rename-exports.mjs target/assembly/$$c.core.wasm target/assembly/$$c-as.wasm \
-			onclick=on-click ontext=on-text ontick=on-tick || exit 1; \
+			onclick=on-click ontext=on-text ontick=on-tick \
+			ondoubleclick=on-double-click onwindowclose=on-window-close || exit 1; \
 		wasm-tools component embed wit/ target/assembly/$$c-as.wasm \
 			--world app --output target/assembly/$$c-as.embedded.wasm || exit 1; \
 		wasm-tools component new target/assembly/$$c-as.embedded.wasm \
@@ -221,9 +222,9 @@ web-test-wat: components-wat
 	node web/selftest.mjs target/wat/demo-counter.wasm target/wat/demo-stopwatch.wasm \
 		target/wat/demo-todo.wasm
 
-# The desktop world's ABI layer (web/desktop-selftest.mjs): the registry
-# round-trip (list-demos) and the window count (open-window, on-double-click,
-# on-window-close) against the pre-lift module.
+# The windowing side of the `app` world (web/desktop-selftest.mjs): the
+# registry round-trip (list-demos) and the window count (open-window,
+# on-double-click, on-window-close) against the pre-lift module.
 web-test-desktop:
 	@cargo build -p demo-desktop --release --target $(WASM_TARGET) || exit 1
 	node web/desktop-selftest.mjs

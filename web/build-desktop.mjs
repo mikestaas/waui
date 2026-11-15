@@ -1,5 +1,5 @@
-// Builds the waui desktop page (the `demo-desktop` component on the
-// `desktop` world).
+// Builds the waui desktop page (the `demo-desktop` component, the windowing
+// side of the `app` world).
 //
 //   node web/build-desktop.mjs <demo-desktop.wasm> <out.html>
 //   node web/build-desktop.mjs <demo-desktop.wasm> <out.html> --url <wasm-url>
@@ -40,7 +40,7 @@ const desktop = readFileSync(`${here}/desktop.js`, 'utf8');
 // The page's scripts are concatenated inside one <script type="module">, so
 // glue.js's `export` becomes a plain function declaration there. desktop.js
 // runs as a module (its top-level await needs one) and references the
-// createDesktop/instantiateApp declarations from glue.js.
+// createApp/instantiateApp declarations from glue.js.
 const glueInlined = glue.replace(/^export /m, '');
 
 const name = basename(wasmPath)

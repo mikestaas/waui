@@ -53,10 +53,11 @@ target/components/<demo>-as.component.wasm
   behavior is unchanged. After the patch: the counter and the todo are
   import-free; the stopwatch keeps only the world's own `$root.now` and
   `$root.schedule`.
-- **`rename-exports.mjs`** rewrites three export names: the world spells them
-  `on-click`/`on-text`/`on-tick` (hyphens, which WIT uses verbatim as wasm
-  export names), and AssemblyScript identifiers cannot contain hyphens, so the
-  demos export `onclick`/`ontext`/`ontick` and are renamed after compilation.
+- **`rename-exports.mjs`** rewrites five export names: the world spells them
+  `on-click`/`on-text`/`on-tick`/`on-double-click`/`on-window-close` (hyphens,
+  which WIT uses verbatim as wasm export names), and AssemblyScript
+  identifiers cannot contain hyphens, so the demos export `onclick`/`ontext`/
+  `ontick`/`ondoubleclick`/`onwindowclose` and are renamed after compilation.
 - **`component embed` + `new`** is the stand-in for Rust's `generate!`: the
   WIT world is embedded into the core module as component-type metadata, and
   the lift is typed against it.
