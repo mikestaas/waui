@@ -25,7 +25,7 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, waui, App, AppImports, Demo, Error, Retained, Tree};
+use host_shared::{build_tree, waui, App, AppImports, Entry, Error, Retained, Tree};
 
 // The contract's style tokens, aliased to avoid clashing with ratatui's
 // `Color` and `Style`.
@@ -91,14 +91,13 @@ impl AppImports for Host {
             last_wake_ms: self.clock(),
         };
     }
-    // This host runs no demos: the registry is empty and opens fail.
-    fn list_demos(&mut self) -> Vec<Demo> {
+    // This host runs no entries: the registry is empty and opens fail.
+    fn list_entries(&mut self) -> Vec<Entry> {
         Vec::new()
     }
-    fn open_window(
+    fn open_entry(
         &mut self,
-        _src: String,
-        _title: String,
+        _name: String,
         _x: u32,
         _y: u32,
         _w: u32,

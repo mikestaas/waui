@@ -10,7 +10,7 @@
 //! box to size). Images have no pixels in a terminal: they render as their
 //! `src`, prefixed with `@`. Treats `schedule` as advisory too: it has no
 //! timer, so a time-based readout advances only when a click re-queries
-//! `view()`. Runs no demos: the registry is empty and `open-window` fails,
+//! `view()`. Runs no entries: the registry is empty and `open-entry` fails,
 //! so the desktop component renders an empty grid.
 
 use std::io::{self, BufRead, Write};
@@ -20,7 +20,7 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, waui, App, AppImports, Demo, Error, Tree};
+use host_shared::{build_tree, waui, App, AppImports, Entry, Error, Tree};
 
 /// The host's implementation of the world's imports.
 struct Host;
@@ -34,14 +34,13 @@ impl AppImports for Host {
     }
     // This host has no timer: the request is ignored (see the header).
     fn schedule(&mut self, _period: u64) {}
-    // This host runs no demos (see the header).
-    fn list_demos(&mut self) -> Vec<Demo> {
+    // This host runs no entries (see the header).
+    fn list_entries(&mut self) -> Vec<Entry> {
         Vec::new()
     }
-    fn open_window(
+    fn open_entry(
         &mut self,
-        _src: String,
-        _title: String,
+        _name: String,
         _x: u32,
         _y: u32,
         _w: u32,

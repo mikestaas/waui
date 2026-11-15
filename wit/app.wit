@@ -18,23 +18,28 @@ package waui:ui;
 ///
 /// The windowing functions are for components that run *other* components —
 /// the desktop: the icon grid, the menu bar, and the set of open windows.
-/// The component owns the *logical* state — which demos are open, the grid,
-/// the menu bar — and exports it via `view`/`changes`, as any component
-/// does. It *requests* window operations through the `open-window` import;
-/// the host owns the *presentation* — the chrome, the pixel geometry, the
-/// z-order — and echoes user actions back through `on-double-click` (a node
-/// was activated) and `on-window-close` (a window was closed by the user).
-/// Drag, resize, and raise are host-internal: the host draws the chrome and
-/// handles its own pointer events, reporting only the close.
+/// The component owns the *logical* state — which entries are open, the
+/// grid, the menu bar — and exports it via `view`/`changes`, as any
+/// component does. It *requests* window operations through the `open-entry`
+/// import; the host owns the *presentation* — the chrome, the pixel
+/// geometry, the z-order — and echoes user actions back through
+/// `on-double-click` (a node was activated) and `on-window-close` (a window
+/// was closed by the user). Drag, resize, and raise are host-internal: the
+/// host draws the chrome and handles its own pointer events, reporting only
+/// the close.
 ///
-/// Window references are flat handles (a `u32` the host assigns) and string
-/// `src`s, in the wasi:filesystem shape: a host-provided registry
-/// (`list-demos`, its `preopens`), an open by string (`open-window`, its
-/// `open-at`), and a `result` error model.
+/// The registry and the open are in the wasi:filesystem shape: a
+/// host-provided list of entries (`list-entries`, its `readdir`), an open
+/// by name (`open-entry`, its `open-at`), and a `result` error model. An
+/// entry's `name` is its identifier, like a dirent; its `data` is a JSON
+/// object of host-defined per-entry metadata. Window references are flat
+/// handles (a `u32` the host assigns).
 ///
 /// A host that cannot run other components returns an empty registry from
-/// `list-demos` and `not-found` from `open-window`; a component that
-/// manages no windows ignores `on-double-click` and `on-window-close`.
+/// `list-entries` and `not-found` from `open-entry`; a component that
+/// manages no windows ignores `on-double-click` and `on-window-close`. A
+/// component that cannot parse an entry's `data` renders the name only, as
+/// a host degrades a style token it cannot express.
 world app {
   use widget.{node, mutation};
 
@@ -79,48 +84,37 @@ world app {
   /// The host's clock, in milliseconds (arbitrary, monotonic epoch).
   import now: func() -> u64;
 
-  /// A demo the host can run in a window: its label, its icon, the module
-  /// the host instantiates for it, and its default window size.
-  ///
-  /// The `icon` and the `src` are paths or asset names the host resolves
-  /// (the icon to pixels, as an image's `src`; the `src` to a component).
-  /// The `default-*` sizes are in the host's units; `0` leaves them to the
-  /// host's default, as with the style and width tokens.
-  record demo {
-    /// The demo's display name (e.g. "Counter").
+  /// A launchable entry in the host's registry: its `name` (the identifier
+  /// `open-entry` takes, like a dirent; the display label when the blob has
+  /// none) and its `data`, a JSON object of host-defined per-entry metadata
+  /// (an icon, a caption, a default window size, ...). A host with no
+  /// per-entry metadata passes an empty object (`{}`). Registry names are
+  /// unique: `open-entry` resolves by name.
+  record entry {
     name: string,
-    /// The producer language (e.g. "Rust").
-    lang: string,
-    /// The icon's path or asset name.
-    icon: string,
-    /// The module the host instantiates to run this demo.
-    src: string,
-    /// The window's default width, in the host's units.
-    default-width: u32,
-    /// The window's default height, in the host's units.
-    default-height: u32,
+    data: string,
   }
 
-  /// Why `open-window` failed.
+  /// Why `open-entry` failed.
   enum error {
-    /// The host does not recognize the `src`: it is not a demo it can run.
+    /// The host does not recognize the `name`: it is not an entry it can
+    /// run.
     not-found,
     /// The requested geometry is invalid (a non-positive size, or a
     /// placement the host cannot honor).
     invalid,
   }
 
-  /// The demos the host can run, for the component to build its grid. The
-  /// host-provided registry, like wasi:filesystem's `preopens`; a host that
-  /// runs no demos returns an empty list.
-  import list-demos: func() -> list<demo>;
+  /// The entries the host can run, for the component to build its list. The
+  /// host-provided registry, like wasi:filesystem's `readdir`; a host that
+  /// runs no entries returns an empty list.
+  import list-entries: func() -> list<entry>;
 
-  /// Open a window running the demo at `src`, titled `title`, placed at
-  /// `(x, y)` with size `(w, h)` in the host's units (`0` leaves a
-  /// dimension to the host's default). Returns the host's window handle.
-  import open-window: func(
-      src: string,
-      title: string,
+  /// Open a window running the entry with `name`, placed at `(x, y)` with
+  /// size `(w, h)` in the host's units (`0` leaves a dimension to the host's
+  /// default). Returns the host's window handle.
+  import open-entry: func(
+      name: string,
       x: u32,
       y: u32,
       w: u32,

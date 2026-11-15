@@ -33,26 +33,25 @@
 //   now() -> u64             : imported as `$root"."now"`, `() -> i64`
 //                              (JS BigInt). Provided unconditionally; the
 //                              counter never calls it.
-//   list-demos() -> list<demo>
-//                              : `$root"."list-demos"`, `(i32 retPtr)` —
+//   list-entries() -> list<entry>
+//                              : `$root"."list-entries"`, `(i32 retPtr)` —
 //                              the guest passes a return pointer; the host
 //                              writes the 8-byte {ptr, len} descriptor to
-//                              it, with the demo records in the guest's
-//                              memory. Each record is 40 bytes: four
-//                              (ptr, len) strings, then two u32 sizes. The
-//                              registry comes from the `registry` hook;
+//                              it, with the entry records in the guest's
+//                              memory. Each record is 16 bytes: two
+//                              (ptr, len) strings (the name, the data).
+//                              The registry comes from the `registry` hook;
 //                              empty without it.
-//   open-window(src, title,
-//               x, y, w, h) -> result<u32, error>
-//                              : `$root"."open-window"`, the two strings'
-//                              pointer + length (in the guest's memory),
-//                              the four u32s, then the return pointer. The
-//                              result is an 8-byte variant written to it:
-//                              byte 0 is the case (0 = Ok, 1 = Err), and
-//                              the u32 at byte 4 is the handle (Ok) or the
-//                              error tag (Err). Delivered to the
-//                              `onOpenWindow` hook; without it the result
-//                              is `not-found`.
+//   open-entry(name, x, y,
+//              w, h) -> result<u32, error>
+//                              : `$root"."open-entry"`, the name's pointer
+//                              + length (in the guest's memory), the four
+//                              u32s, then the return pointer. The result is
+//                              an 8-byte variant written to it: byte 0 is
+//                              the case (0 = Ok, 1 = Err), and the u32 at
+//                              byte 4 is the handle (Ok) or the error tag
+//                              (Err). Delivered to the `onOpenWindow` hook;
+//                              without it the result is `not-found`.
 //
 // The 36-byte node (all little-endian):
 //   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container,
@@ -99,12 +98,12 @@
 // This module is written to run in both a browser and Node so the same code
 // can be exercised headlessly (see selftest.mjs).
 
-// The world's imports (now, schedule, list-demos, open-window), as the
+// The world's imports (now, schedule, list-entries, open-entry), as the
 // pre-lift module expects. `hooks.onSchedule` arms the host's wake loop (see
-// app.js); a no-op without it. `hooks.registry` is the demo registry
-// `list-demos` returns; empty without it. `hooks.onOpenWindow(src, title,
-// x, y, w, h)` opens a window and returns its handle; `null` (or its
-// absence) reports `not-found`.
+// app.js); a no-op without it. `hooks.registry` is the entry registry
+// `list-entries` returns, each `{ name, data }`; empty without it.
+// `hooks.onOpenWindow(name, x, y, w, h)` opens a window and returns its
+// handle; `null` (or its absence) reports `not-found`.
 //
 // `getInstance` yields the instance once it exists: the import functions
 // run only after instantiation, but the import object is built before it,
@@ -122,12 +121,12 @@ function appImports(hooks = {}, getInstance) {
       schedule: (p) => {
         if (hooks.onSchedule) hooks.onSchedule(Number(p));
       },
-      // The world's `list-demos: func() -> list<demo>` import. The guest
-      // passes a return pointer; the host writes the 8-byte {ptr, len}
-      // descriptor to it, with the demo records in the guest's memory.
-      // Each record is 40 bytes: four (ptr, len) strings, then two u32
-      // sizes.
-      'list-demos': (retPtr) => {
+      // The world's `list-entries: func() -> list<entry>` import. The
+      // guest passes a return pointer; the host writes the 8-byte {ptr,
+      // len} descriptor to it, with the entry records in the guest's
+      // memory. Each record is 16 bytes: two (ptr, len) strings (the name,
+      // the data).
+      'list-entries': (retPtr) => {
         const ex = getInstance().exports;
         const allocString = (s) => {
           const b = enc.encode(s);
@@ -141,45 +140,37 @@ function appImports(hooks = {}, getInstance) {
           return [ptr, b.length];
         };
         const n = registry.length;
-        // The record array: 40 bytes each, 4-aligned. Same (align, len) order.
-        const arrPtr = ex.cabi_realloc(0, 0, 4, n * 40);
+        // The record array: 16 bytes each, 4-aligned. Same (align, len) order.
+        const arrPtr = ex.cabi_realloc(0, 0, 4, n * 16);
         for (let k = 0; k < n; k++) {
-          const d = registry[k];
-          const [nameP, nameL] = allocString(d.name);
-          const [langP, langL] = allocString(d.lang);
-          const [iconP, iconL] = allocString(d.icon);
-          const [srcP, srcL] = allocString(d.src);
+          const e = registry[k];
+          const [nameP, nameL] = allocString(e.name);
+          const [dataP, dataL] = allocString(e.data);
           // The string allocs may have grown the memory: rebuild the view.
           const i32 = new Int32Array(ex.memory.buffer);
-          const o = arrPtr + k * 40;
+          const o = arrPtr + k * 16;
           i32[o >> 2] = nameP;
           i32[(o + 4) >> 2] = nameL;
-          i32[(o + 8) >> 2] = langP;
-          i32[(o + 12) >> 2] = langL;
-          i32[(o + 16) >> 2] = iconP;
-          i32[(o + 20) >> 2] = iconL;
-          i32[(o + 24) >> 2] = srcP;
-          i32[(o + 28) >> 2] = srcL;
-          i32[(o + 32) >> 2] = d.w;
-          i32[(o + 36) >> 2] = d.h;
+          i32[(o + 8) >> 2] = dataP;
+          i32[(o + 12) >> 2] = dataL;
         }
         const i32 = new Int32Array(ex.memory.buffer);
         i32[retPtr >> 2] = arrPtr;
         i32[(retPtr + 4) >> 2] = n;
       },
-      // The world's `open-window: func(src, title, x, y, w, h) ->
-      // result<u32, error>` import. The strings are in the guest's memory.
+      // The world's `open-entry: func(name, x, y, w, h) ->
+      // result<u32, error>` import. The name is in the guest's memory.
       // The result is an 8-byte variant (a discriminant byte, then a u32)
-      // written to the return pointer: byte 0 is the case (0 = Ok, 1 = Err),
-      // and the u32 at byte 4 is the handle (Ok) or the error tag (Err).
-      'open-window': (srcPtr, srcLen, titlePtr, titleLen, x, y, w, h, retPtr) => {
+      // written to the return pointer: byte 0 is the case (0 = Ok, 1 =
+      // Err), and the u32 at byte 4 is the handle (Ok) or the error tag
+      // (Err).
+      'open-entry': (namePtr, nameLen, x, y, w, h, retPtr) => {
         const ex = getInstance().exports;
         const u8 = new Uint8Array(ex.memory.buffer);
-        const src = dec.decode(u8.subarray(srcPtr, srcPtr + srcLen));
-        const title = dec.decode(u8.subarray(titlePtr, titlePtr + titleLen));
+        const name = dec.decode(u8.subarray(namePtr, namePtr + nameLen));
         // The windowing layer opens the window; it returns the handle, or
-        // null if it cannot run the demo.
-        const handle = hooks.onOpenWindow ? hooks.onOpenWindow(src, title, x, y, w, h) : null;
+        // null if it cannot run the entry.
+        const handle = hooks.onOpenWindow ? hooks.onOpenWindow(name, x, y, w, h) : null;
         const i32 = new Int32Array(ex.memory.buffer);
         if (handle === null || handle === undefined) {
           u8[retPtr] = 1; // Err
@@ -360,7 +351,7 @@ export async function createApp(wasmBytes, hooks = {}) {
 
 // A synchronous instantiation of a component from an already compiled module.
 // The windowing host pre-compiles its demos at startup, then opens a window
-// with this: the `open-window` import is a sync wasm call, so the
+// with this: the `open-entry` import is a sync wasm call, so the
 // instantiation must be sync too (`WebAssembly.instantiate` is not).
 export function instantiateApp(compiledModule, hooks = {}) {
   // `new WebAssembly.Instance` returns the instance directly (unlike the async

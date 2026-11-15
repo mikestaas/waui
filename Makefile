@@ -223,7 +223,7 @@ web-test-wat: components-wat
 		target/wat/demo-todo.wasm
 
 # The windowing side of the `app` world (web/desktop-selftest.mjs): the
-# registry round-trip (list-demos) and the window count (open-window,
+# registry round-trip (list-entries) and the window count (open-entry,
 # on-double-click, on-window-close) against the pre-lift module.
 web-test-desktop:
 	@cargo build -p demo-desktop --release --target $(WASM_TARGET) || exit 1

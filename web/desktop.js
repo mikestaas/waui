@@ -2,98 +2,128 @@
 //
 // It runs the desktop component via `createApp` from glue.js: the component
 // owns the icon grid and the menu bar's window count, and this file
-// implements the windowing imports it calls. `list-demos` is the registry
-// below; `open-window` opens a window (openWindow) that embeds a demo
+// implements the windowing imports it calls. `list-entries` is the registry
+// below; `open-entry` opens a window (openWindow) that embeds a demo
 // component rendered in place, not in an iframe.
 //
 // The demos are pre-compiled at startup (WebAssembly.compile, async) so that
-// `open-window` — a sync wasm call — can instantiate one synchronously (new
+// `open-entry` — a sync wasm call — can instantiate one synchronously (new
 // WebAssembly.Instance on the pre-compiled module).
 //
 // This file is concatenated into the generated page by build-desktop.mjs, so
 // it relies on `createApp`/`instantiateApp` from glue.js and
 // `WAUI_WASM_BYTES` from the boot script.
 
-// The demo registry, as the host provides it to the component's `list-demos`.
-// `src` is the demo module's URL: the host pre-compiles it (keyed by URL) and
-// the component passes it back to `open-window` when a tile is activated.
+// The entry registry, as the host provides it to the component's
+// `list-entries`. Each entry's `name` is its unique identifier (the display
+// label is in the `data` blob); its `src` is the demo module's URL —
+// host-internal: the host pre-compiles it (keyed by URL) and resolves an
+// `open-entry` name to it. `data` is a JSON object of per-entry metadata the
+// component parses.
 const DEMOS = [
   {
-    name: 'Counter',
-    lang: 'Rust',
-    icon: 'icons/counter-rust.svg',
+    name: 'counter-rust',
     src: 'demo-counter.wasm',
-    w: 300,
-    h: 380,
+    data: JSON.stringify({
+      label: 'Counter',
+      lang: 'Rust',
+      icon: 'icons/counter-rust.svg',
+      width: 300,
+      height: 380,
+    }),
   },
   {
-    name: 'Counter',
-    lang: 'AssemblyScript',
-    icon: 'icons/counter-as.svg',
+    name: 'counter-as',
     src: 'demo-counter-as.wasm',
-    w: 300,
-    h: 380,
+    data: JSON.stringify({
+      label: 'Counter',
+      lang: 'AssemblyScript',
+      icon: 'icons/counter-as.svg',
+      width: 300,
+      height: 380,
+    }),
   },
   {
-    name: 'Counter',
-    lang: 'WAT',
-    icon: 'icons/counter-wat.svg',
+    name: 'counter-wat',
     src: 'demo-counter-wat.wasm',
-    w: 300,
-    h: 380,
+    data: JSON.stringify({
+      label: 'Counter',
+      lang: 'WAT',
+      icon: 'icons/counter-wat.svg',
+      width: 300,
+      height: 380,
+    }),
   },
   {
-    name: 'Stopwatch',
-    lang: 'Rust',
-    icon: 'icons/stopwatch-rust.svg',
+    name: 'stopwatch-rust',
     src: 'demo-stopwatch.wasm',
-    w: 300,
-    h: 380,
+    data: JSON.stringify({
+      label: 'Stopwatch',
+      lang: 'Rust',
+      icon: 'icons/stopwatch-rust.svg',
+      width: 300,
+      height: 380,
+    }),
   },
   {
-    name: 'Stopwatch',
-    lang: 'AssemblyScript',
-    icon: 'icons/stopwatch-as.svg',
+    name: 'stopwatch-as',
     src: 'demo-stopwatch-as.wasm',
-    w: 300,
-    h: 380,
+    data: JSON.stringify({
+      label: 'Stopwatch',
+      lang: 'AssemblyScript',
+      icon: 'icons/stopwatch-as.svg',
+      width: 300,
+      height: 380,
+    }),
   },
   {
-    name: 'Stopwatch',
-    lang: 'WAT',
-    icon: 'icons/stopwatch-wat.svg',
+    name: 'stopwatch-wat',
     src: 'demo-stopwatch-wat.wasm',
-    w: 300,
-    h: 380,
+    data: JSON.stringify({
+      label: 'Stopwatch',
+      lang: 'WAT',
+      icon: 'icons/stopwatch-wat.svg',
+      width: 300,
+      height: 380,
+    }),
   },
   {
-    name: 'Todo',
-    lang: 'Rust',
-    icon: 'icons/todo-rust.svg',
+    name: 'todo-rust',
     src: 'demo-todo.wasm',
-    w: 460,
-    h: 500,
+    data: JSON.stringify({
+      label: 'Todo',
+      lang: 'Rust',
+      icon: 'icons/todo-rust.svg',
+      width: 460,
+      height: 500,
+    }),
   },
   {
-    name: 'Todo',
-    lang: 'AssemblyScript',
-    icon: 'icons/todo-as.svg',
+    name: 'todo-as',
     src: 'demo-todo-as.wasm',
-    w: 460,
-    h: 500,
+    data: JSON.stringify({
+      label: 'Todo',
+      lang: 'AssemblyScript',
+      icon: 'icons/todo-as.svg',
+      width: 460,
+      height: 500,
+    }),
   },
   {
-    name: 'Todo',
-    lang: 'WAT',
-    icon: 'icons/todo-wat.svg',
+    name: 'todo-wat',
     src: 'demo-todo-wat.wasm',
-    w: 460,
-    h: 500,
+    data: JSON.stringify({
+      label: 'Todo',
+      lang: 'WAT',
+      icon: 'icons/todo-wat.svg',
+      width: 460,
+      height: 500,
+    }),
   },
 ];
 
 // The demo modules, pre-compiled at startup and keyed by URL (the registry's
-// `src`). `open-window` looks one up to instantiate it synchronously.
+// `src`). `open-entry` resolves a name to its entry, then to a module.
 const modules = new Map();
 async function preloadDemos() {
   await Promise.all(
@@ -110,6 +140,10 @@ async function preloadDemos() {
 // The windowing layer: the host-drawn chrome around each embedded demo.
 
 const MENUBAR_H = 34;
+// The host's default window size, for a dimension the component leaves at 0
+// and the entry's blob does not set.
+const DEFAULT_W = 300;
+const DEFAULT_H = 380;
 const windowsEl = document.getElementById('windows');
 const countEl = document.getElementById('window-count');
 
@@ -239,17 +273,30 @@ function renderDemo(api, contentEl) {
   return { refresh };
 }
 
-// Open a window running the demo at `src`, titled `title`. The geometry
-// (`x`, `y`, `w`, `h`) is the component's request: a 0 dimension is the
-// host's default (the demo's registry size, or a cascade placement). Returns
-// the host's window handle, or null if the demo cannot be run.
-function openWindow(src, title, x, y, w, h) {
-  const demo = DEMOS.find((d) => d.src === src);
-  const compiled = modules.get(src);
-  if (!demo || !compiled) return null; // not a demo the host can run
+// Open a window running the entry with `name`. The geometry (`x`, `y`, `w`,
+// `h`) is the component's request: a 0 dimension is the entry's blob default,
+// or the host's (a cascade placement). Returns the host's window handle, or
+// null if the entry cannot be run.
+function openWindow(name, x, y, w, h) {
+  const entry = DEMOS.find((e) => e.name === name);
+  const compiled = entry ? modules.get(entry.src) : null;
+  if (!entry || !compiled) return null; // not an entry the host can run
 
-  const width = w > 0 ? w : demo.w;
-  const height = h > 0 ? h : demo.h;
+  // The entry's `data` blob (host-defined JSON): the window's presentation.
+  // A blob that will not parse (or lacks a field) falls back to the name and
+  // the host's default size, as the component degrades a style it cannot
+  // express.
+  let meta = {};
+  try {
+    meta = JSON.parse(entry.data);
+  } catch {
+    // the blob will not parse: all fallbacks
+  }
+  const title = typeof meta.label === 'string' && meta.label ? meta.label : name;
+  // Only positive numbers count (the component's parser reads the same way).
+  const num = (v) => (typeof v === 'number' && v > 0 ? v : 0);
+  const width = w > 0 ? w : num(meta.width) || DEFAULT_W;
+  const height = h > 0 ? h : num(meta.height) || DEFAULT_H;
 
   const el = document.createElement('div');
   el.className = 'window';
@@ -264,12 +311,17 @@ function openWindow(src, title, x, y, w, h) {
   el.style.left = left + 'px';
   el.style.top = top + 'px';
 
-  // The title bar: the icon, the title, and the close button.
+  // The title bar: the icon (when the blob supplies one), the title, and the
+  // close button.
   const bar = document.createElement('div');
   bar.className = 'titlebar';
-  const icon = document.createElement('img');
-  icon.src = demo.icon;
-  icon.alt = '';
+  const barChildren = [];
+  if (typeof meta.icon === 'string' && meta.icon) {
+    const icon = document.createElement('img');
+    icon.src = meta.icon;
+    icon.alt = '';
+    barChildren.push(icon);
+  }
   const titleLabel = document.createElement('span');
   titleLabel.className = 'titlebar-title';
   titleLabel.textContent = title;
@@ -277,7 +329,8 @@ function openWindow(src, title, x, y, w, h) {
   close.className = 'close';
   close.textContent = '×';
   close.setAttribute('aria-label', 'Close ' + title);
-  bar.append(icon, titleLabel, close);
+  barChildren.push(titleLabel, close);
+  bar.append(...barChildren);
   el.append(bar);
 
   // The content: the embedded demo's tree, rendered in place.
@@ -415,7 +468,7 @@ await preloadDemos();
 
 const desktop = await createApp(WAUI_WASM_BYTES, {
   registry: DEMOS,
-  onOpenWindow: (src, title, x, y, w, h) => openWindow(src, title, x, y, w, h),
+  onOpenWindow: (name, x, y, w, h) => openWindow(name, x, y, w, h),
 });
 
 const gridEl = document.getElementById('grid');
@@ -532,7 +585,7 @@ renderSubtree(3, gridEl);
   if (count) countEl.textContent = count.content;
 }
 
-// A double-clicked tile opens its demo. The host maps Enter/Space on a
+// A double-clicked tile opens its entry. The host maps Enter/Space on a
 // focused tile to the same. The count update lands through the diff.
 gridEl.addEventListener('dblclick', (e) => {
   const tile = e.target.closest('[data-id].tile');

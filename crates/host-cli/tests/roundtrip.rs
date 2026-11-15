@@ -45,14 +45,13 @@ impl AppImports for Host {
         self.last_period = period;
         self.calls += 1;
     }
-    // This host runs no demos: the registry is empty and opens fail.
-    fn list_demos(&mut self) -> Vec<Demo> {
+    // This host runs no entries: the registry is empty and opens fail.
+    fn list_entries(&mut self) -> Vec<Entry> {
         Vec::new()
     }
-    fn open_window(
+    fn open_entry(
         &mut self,
-        _src: String,
-        _title: String,
+        _name: String,
         _x: u32,
         _y: u32,
         _w: u32,

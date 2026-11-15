@@ -1,10 +1,10 @@
 //! Headless contract test for the desktop component: drive it through the
 //! same wasmtime host path the real hosts use, and assert on the grid it
-//! builds from the `list-demos` registry, the window count, and the
+//! builds from the `list-entries` registry, the window count, and the
 //! open/close round-trip (a double-click opens a window, a close drops it).
 //!
-//! The host implements the `app` world's imports: `list-demos` (the
-//! registry) and `open-window` (which assigns a handle and records the
+//! The host implements the `app` world's imports: `list-entries` (the
+//! registry) and `open-entry` (which assigns a handle and records the
 //! call). `now` and `schedule` are stubbed: the desktop has no clock.
 
 use std::sync::Mutex;
@@ -20,12 +20,12 @@ wasmtime::component::bindgen!({
 /// The host's side of the `app` world.
 #[derive(Default)]
 struct Host {
-    /// The registry `list-demos` returns.
-    demos: Vec<Demo>,
+    /// The registry `list-entries` returns.
+    entries: Vec<Entry>,
     /// The next window handle to assign.
     next: u32,
-    /// The (src, title) of each `open-window` call, in order.
-    opens: Mutex<Vec<(String, String)>>,
+    /// The (name, width, height) of each `open-entry` call, in order.
+    opens: Mutex<Vec<(String, u32, u32)>>,
 }
 
 impl AppImports for Host {
@@ -35,26 +35,18 @@ impl AppImports for Host {
     }
     fn schedule(&mut self, _period: u64) {}
 
-    fn list_demos(&mut self) -> Vec<Demo> {
-        self.demos.clone()
+    fn list_entries(&mut self) -> Vec<Entry> {
+        self.entries.clone()
     }
 
-    fn open_window(
-        &mut self,
-        src: String,
-        title: String,
-        _x: u32,
-        _y: u32,
-        _w: u32,
-        _h: u32,
-    ) -> Result<u32, Error> {
-        // A src the host does not recognize fails, like wasi's open-at.
-        if !self.demos.iter().any(|d| d.src == src) {
+    fn open_entry(&mut self, name: String, _x: u32, _y: u32, w: u32, h: u32) -> Result<u32, Error> {
+        // A name the host does not recognize fails, like wasi's open-at.
+        if !self.entries.iter().any(|e| e.name == name) {
             return Err(Error::NotFound);
         }
         let handle = self.next;
         self.next += 1;
-        self.opens.lock().unwrap().push((src, title));
+        self.opens.lock().unwrap().push((name, w, h));
         Ok(handle)
     }
 }
@@ -63,20 +55,20 @@ impl AppImports for Host {
 // bindings require this empty marker impl.
 impl waui::ui::widget::Host for Host {}
 
-/// The nine demos, in the site's order (three demos, three languages).
-fn nine_demos() -> Vec<Demo> {
+/// The nine entries, in the site's order (three demos, three languages):
+/// the name is the unique identifier, the `data` blob the tile's
+/// presentation.
+fn nine_entries() -> Vec<Entry> {
     let names = ["Counter", "Stopwatch", "Todo"];
     let langs = ["Rust", "AssemblyScript", "WAT"];
     let mut out = Vec::new();
     for lang in langs {
         for name in &names {
-            out.push(Demo {
-                name: name.to_string(),
-                lang: lang.to_string(),
-                icon: format!("icons/{name}-{lang}.svg"),
-                src: format!("demo-{name}.wasm"),
-                default_width: 300,
-                default_height: 380,
+            out.push(Entry {
+                name: format!("{name}-{lang}"),
+                data: format!(
+                    r#"{{"label":"{name}","lang":"{lang}","icon":"icons/{name}-{lang}.svg","width":300,"height":380}}"#
+                ),
             });
         }
     }
@@ -122,7 +114,7 @@ fn desktop_grid_and_window_roundtrip() {
     let mut store = Store::new(
         &engine,
         Host {
-            demos: nine_demos(),
+            entries: nine_entries(),
             ..Default::default()
         },
     );
@@ -161,8 +153,9 @@ fn desktop_grid_and_window_roundtrip() {
         .expect("on-double-click failed");
     let opens = store.data().opens.lock().unwrap();
     assert_eq!(opens.len(), 1, "one tile opened one window");
-    assert_eq!(opens[0].0, "demo-Counter.wasm");
-    assert_eq!(opens[0].1, "Counter");
+    // The open is by the entry's name; the size is the blob's default.
+    assert_eq!(opens[0].0, "Counter-Rust");
+    assert_eq!((opens[0].1, opens[0].2), (300, 380));
     drop(opens);
 
     // The count is now 1: the diff reports the changed count node.

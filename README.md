@@ -21,10 +21,13 @@ component changes.
   `on-click`, `on-text`, and `on-tick`; the component imports `now` (a clock)
   and `schedule` (a refresh request). The windowing functions are for
   components that run *other* components — the desktop: the component imports
-  `list-demos` (the host's registry) and `open-window`, and the host calls
+  `list-entries` (the host's registry: each entry is a `name` and a `data`,
+  a JSON object of host-defined metadata, in the wasi:filesystem `readdir`
+  shape) and `open-entry` (an open by name, its `open-at`), and the host calls
   `on-double-click` and `on-window-close`. A host that cannot run other
   components returns an empty registry and an error; a component that manages
-  no windows ignores the two events. The protocol rules are documented in
+  no windows ignores the two events, and a component that cannot parse an
+  entry's `data` renders the name only. The protocol rules are documented in
   [`app.wit`](wit/app.wit). Hosts may ignore parts of the contract (host-cli
   ignores `style`, `align`, `changes`, `schedule`, and the windowing
   functions); components cannot, because the node layout is part of the ABI.
@@ -49,7 +52,7 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests a refresh (the host never wakes it) |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one mutation |
 | `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component; the footer's input takes typed text, and "add" uses it (a preset label when it is empty) |
-| `crates/demo-desktop`    | the desktop: the icon grid, the menu bar, and the set of open windows — the multi-component host's component, on the windowing side of the `app` world |
+| `crates/demo-desktop`    | the desktop: the icon grid (built from the host's entry registry), the menu bar, and the set of open windows — the multi-component host's component, on the windowing side of the `app` world |
 | `assembly/`              | the same three demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`)         |
 | `wat/`                   | the same three demos in hand-rolled WAT: the WASM GC holds the state, the canonical ABI is written by hand, one self-contained file per demo |
 

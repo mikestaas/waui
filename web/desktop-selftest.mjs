@@ -1,7 +1,7 @@
 // Headless verification of the web host's windowing ABI layer (Node; the
 // same code the browser page uses). Runs the `demo-desktop` component
-// against a two-demo registry and exercises the windowing import side
-// (`list-demos`, `open-window`) and the window count's round-trip: a
+// against a two-entry registry and exercises the windowing import side
+// (`list-entries`, `open-entry`) and the window count's round-trip: a
 // double-click opens a window (the count goes up), a close drops it (the
 // count goes down), and a window the host cannot open is dropped.
 //
@@ -23,23 +23,31 @@ const [desktopPath] = [
   process.argv[2] ?? 'target/wasm32-unknown-unknown/release/demo_desktop.wasm',
 ];
 
-// The two-demo registry: the grid's source of truth for this test.
+// The two-entry registry: the grid's source of truth for this test. The
+// `data` blob carries the tile's presentation (the label, the caption, the
+// icon) and the window's default size.
 const REGISTRY = [
   {
-    name: 'Counter',
-    lang: 'Rust',
-    icon: 'icons/counter-rust.svg',
+    name: 'counter-rust',
     src: 'demo-counter.wasm',
-    w: 300,
-    h: 380,
+    data: JSON.stringify({
+      label: 'Counter',
+      lang: 'Rust',
+      icon: 'icons/counter-rust.svg',
+      width: 300,
+      height: 380,
+    }),
   },
   {
-    name: 'Todo',
-    lang: 'WAT',
-    icon: 'icons/todo-wat.svg',
+    name: 'todo-wat',
     src: 'demo-todo-wat.wasm',
-    w: 460,
-    h: 500,
+    data: JSON.stringify({
+      label: 'Todo',
+      lang: 'WAT',
+      icon: 'icons/todo-wat.svg',
+      width: 460,
+      height: 500,
+    }),
   },
 ];
 
@@ -63,7 +71,7 @@ function mutation(m) {
 
 // The desktop's whole view for a given window count: the menu bar, one row
 // (two tiles fit in the three-column grid), and the two tiles (an icon, a
-// name, and a language each).
+// label, and a caption each).
 function grid(count) {
   return [
     'container{id:null,parent:null,dir:column,align:center}',
@@ -83,15 +91,15 @@ function grid(count) {
   ];
 }
 
-// The host's windowing layer: records each `open-window` call and hands out
+// The host's windowing layer: records each `open-entry` call and hands out
 // handles from a queue; once the queue is empty it reports a not-found, so
 // the error path is exercised by a third open of the same tile.
 const openCalls = [];
 const handles = [7, 8];
 const desktop = await createApp(readFileSync(rel(desktopPath)), {
   registry: REGISTRY,
-  onOpenWindow: (src, title, x, y, w, h) => {
-    openCalls.push({ src, title, x, y, w, h });
+  onOpenWindow: (name, x, y, w, h) => {
+    openCalls.push({ name, x, y, w, h });
     return handles.length > 0 ? handles.shift() : null;
   },
 });
@@ -132,13 +140,11 @@ const desktop = await createApp(readFileSync(rel(desktopPath)), {
 // --------------------------------------------------------- the window round-trip
 
 {
-  // A double-click on a tile opens its demo: the import carries the demo's
-  // src, its name as the title, its default size, and the host's placement
-  // (0, 0 = the default cascade).
+  // A double-click on a tile opens its entry: the import carries the entry's
+  // name, the blob's default size, and the host's placement (0, 0 = the
+  // default cascade).
   desktop.doubleClick(100);
-  assert.deepEqual(openCalls, [
-    { src: 'demo-counter.wasm', title: 'Counter', x: 0, y: 0, w: 300, h: 380 },
-  ]);
+  assert.deepEqual(openCalls, [{ name: 'counter-rust', x: 0, y: 0, w: 300, h: 380 }]);
   // The count is the only node that changed — the grid is untouched.
   assert.deepEqual(desktop.changes().map(mutation), [
     'changed text{id:2,parent:1,content:"1 window",style:neutral:small} index:1',
@@ -148,8 +154,8 @@ const desktop = await createApp(readFileSync(rel(desktopPath)), {
   // A second window: the plural returns, and the count is the only change.
   desktop.doubleClick(101);
   assert.deepEqual(openCalls, [
-    { src: 'demo-counter.wasm', title: 'Counter', x: 0, y: 0, w: 300, h: 380 },
-    { src: 'demo-todo-wat.wasm', title: 'Todo', x: 0, y: 0, w: 460, h: 500 },
+    { name: 'counter-rust', x: 0, y: 0, w: 300, h: 380 },
+    { name: 'todo-wat', x: 0, y: 0, w: 460, h: 500 },
   ]);
   assert.deepEqual(desktop.changes().map(mutation), [
     'changed text{id:2,parent:1,content:"2 windows",style:neutral:small} index:1',

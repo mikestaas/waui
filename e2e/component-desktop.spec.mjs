@@ -4,7 +4,7 @@
 // *component* rendered in place (`.window-content`), not in an iframe.
 //
 // The grid is the component's tree: nine tiles (`.tile`), each an icon, a
-// name (`.tile-name`), and a language (`.tile-lang`). The window count is the
+// label (`.tile-name`), and a caption (`.tile-lang`). The window count is the
 // component's menu-bar node, restyled into `#window-count`.
 
 import { expect, test } from '@playwright/test';
