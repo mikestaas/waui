@@ -73,7 +73,7 @@ export function onclick(id: i32): void {
 // → `on-text` after the export rename. The counter has no input, so the
 // buffer is unused; it is freed (../abi/arena).
 export function ontext(_id: i32, _ptr: i32, _len: i32): void {
-  cabi_realloc(_ptr, _len, 0, 1);
+  cabi_realloc(_ptr, _len, 1, 0);
 }
 
 export function ontick(): void {} // → `on-tick` after the export rename

@@ -112,7 +112,7 @@ export function ontick(): void {}
 // → `on-text` after the export rename. The stopwatch has no input, so the
 // buffer is unused; it is freed (../abi/arena).
 export function ontext(_id: i32, _ptr: i32, _len: i32): void {
-  cabi_realloc(_ptr, _len, 0, 1);
+  cabi_realloc(_ptr, _len, 1, 0);
 }
 
 // → `on-double-click`/`on-window-close` after the export rename. This demo

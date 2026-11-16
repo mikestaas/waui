@@ -129,11 +129,15 @@
     (i32.ne (local.get $x) (i32.const 0)))
 
   ;; The canonical ABI's cabi_realloc: a buffer in the module's own memory,
-  ;; for a string parameter. A bump over the scratch region: one buffer is
-  ;; live at a time (the host allocates, the callee frees), so a free
-  ;; returns the region to its base. A buffer past the region traps.
+  ;; for a string parameter. The parameter order is the canonical ABI's:
+  ;; (old_ptr, old_len, align, new_len) — the align comes before the new
+  ;; length (a fresh alloc is (0, 0, align, len); a free is (ptr, len,
+  ;; align, 0)); the hosts call it in that order. A bump over the scratch
+  ;; region: one buffer is live at a time (the host allocates, the callee
+  ;; frees), so a free returns the region to its base. A buffer past the
+  ;; region traps.
   (func $cabi-realloc (export "cabi_realloc")
-    (param $old-ptr i32) (param $old-len i32) (param $new-len i32) (param $align i32)
+    (param $old-ptr i32) (param $old-len i32) (param $align i32) (param $new-len i32)
     (result i32)
     (local $a i32)
     (local $p i32)
@@ -993,7 +997,7 @@
           ))
         (global.set $input (local.get $a))
       ))
-    (drop (call $cabi-realloc (local.get $ptr) (local.get $len) (i32.const 0) (i32.const 1)))
+    (drop (call $cabi-realloc (local.get $ptr) (local.get $len) (i32.const 1) (i32.const 0)))
   )
 
   (func (export "on-tick"))

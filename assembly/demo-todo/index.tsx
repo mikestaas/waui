@@ -294,7 +294,7 @@ export function ontext(id: i32, ptr: i32, len: i32): void {
     inputText = readUtf8(ptr, len);
   }
   // Free the buffer (../abi/arena).
-  cabi_realloc(ptr, len, 0, 1);
+  cabi_realloc(ptr, len, 1, 0);
 }
 
 // → `on-tick` after the export rename.

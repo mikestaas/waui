@@ -40,10 +40,16 @@ function roundUp(n: i32, align: i32): i32 {
 /// pre-lift core module, which has no memory of its own). The buffer is a
 /// string *parameter*, so the callee owns it and frees it when done.
 ///
+/// The parameter order is the canonical ABI's: `(old_ptr, old_len, align,
+/// new_len)` — the align comes *before* the new length (a fresh alloc is
+/// `(0, 0, align, len)`; a free is `(ptr, len, align, 0)`). The hosts call
+/// it in that order (`web/glue.js`); a swapped order sizes a fresh alloc by
+/// the alignment instead of the length.
+///
 /// The region is a bump allocator: one buffer is live at a time (the host
 /// allocates, the callee frees), so a free returns the region to its base. A
 /// buffer longer than the 4 KiB region traps.
-export function cabi_realloc(oldPtr: i32, oldLen: i32, newLen: i32, align: i32): i32 {
+export function cabi_realloc(oldPtr: i32, oldLen: i32, align: i32, newLen: i32): i32 {
   const base = HOST_SCRATCH_BASE;
   const end = base + HOST_SCRATCH_CAP;
   const a = align > 0 ? align : 1;
