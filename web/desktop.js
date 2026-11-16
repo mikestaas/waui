@@ -178,9 +178,98 @@ function closeWindow(win) {
 // The embedded demo's DOM renderer: the app host's retained-tree + diff +
 // event delegation, scoped to the window's content element. The demo runs on
 // the `app` world, so it is the same contract the standalone demo pages use.
+//
+// Content-only mutations (a text, button, or input whose position in the tree
+// is unchanged) are applied in place — the existing element is updated, no DOM
+// rebuild — so a field being typed in keeps its focus and caret. Anything
+// structural (removals, additions, re-parenting, container changes) falls back
+// to a full rebuild from the retained tree; an empty diff does nothing.
 function renderDemo(api, contentEl) {
   let retained = api.view();
+  // Widget id -> its DOM element, for in-place updates.
   let elements = new Map();
+
+  // The retained list's diff machinery, scoped to this window's tree (the app
+  // host's, web/app.js): a `changes` diff applied by node id.
+
+  // Whether `node` is in the subtree rooted at `ancestor`.
+  function descendantOf(node, ancestor) {
+    let cur = node.parent;
+    while (cur !== null) {
+      if (cur === ancestor) return true;
+      const parent = retained.find((n) => n.id === cur);
+      cur = parent ? parent.parent : null;
+    }
+    return false;
+  }
+
+  // Insert a node the host does not have at `index` among its parent's
+  // children (0 is the front; an index past the end appends), or at the end
+  // of the list if it is a new root. The walk skips the node's own
+  // descendants still in the list, so a re-added container lands after them.
+  function insertNode(n, index) {
+    const p = retained.findIndex((x) => x.id === n.parent);
+    if (p < 0) {
+      retained.push(n); // a new root
+      return;
+    }
+    let i = p + 1;
+    let siblings = 0;
+    while (i < retained.length) {
+      const x = retained[i];
+      if (descendantOf(x, n.id)) {
+        i++; // the node's own descendant
+        continue;
+      }
+      if (!descendantOf(x, n.parent)) break; // past the parent's subtree
+      if (x.parent === n.parent) {
+        if (siblings >= index) break; // before the `index`-th sibling
+        siblings++;
+        const childId = x.id;
+        i++;
+        while (i < retained.length && descendantOf(retained[i], childId)) i++;
+      } else {
+        i++; // a deeper descendant: advance
+      }
+    }
+    retained.splice(i, 0, n);
+  }
+
+  // Remove a node and, if it is a container, its subtree. Pre-order makes a
+  // subtree a contiguous run of the list.
+  function removeSubtree(id) {
+    const p = retained.findIndex((n) => n.id === id);
+    if (p < 0) return;
+    let end = p + 1;
+    while (end < retained.length && descendantOf(retained[end], id)) end++;
+    retained.splice(p, end - p);
+  }
+
+  // Apply a diff to the retained list.
+  function apply(mutations) {
+    for (const m of mutations) {
+      if (m.kind === 'removed') {
+        removeSubtree(m.id);
+      } else if (m.node.id === null) {
+        // An id-less node is unaddressable (see the WIT identity note):
+        // the diff cannot name it, so ignore it rather than guess.
+      } else {
+        const n = m.node;
+        const i = retained.findIndex((x) => x.id === n.id);
+        if (i >= 0) {
+          if (retained[i].parent === n.parent) {
+            retained[i] = n; // a changed node keeps its position (index ignored)
+          } else {
+            // Re-parented: move it to `index` among the new parent's children.
+            retained.splice(i, 1);
+            insertNode(n, m.index);
+          }
+        } else {
+          insertNode(n, m.index); // a node the host has never seen
+        }
+      }
+    }
+  }
 
   const elFor = (n, childrenOf) => {
     let el;
@@ -195,12 +284,16 @@ function renderDemo(api, contentEl) {
       el = document.createElement('input');
       el.className = `waui waui-input waui-${n.style.color} waui-${n.style.size}`;
       el.value = n.content;
+      // The dataset copy is what the e2e DOM serializer reads back.
+      el.dataset.width = n.width;
       el.style.width = n.width > 0 ? `${n.width}ch` : '';
     } else if (n.kind === 'image') {
       el = document.createElement('img');
       el.className = 'waui waui-image';
       el.src = n.src;
       el.alt = '';
+      el.dataset.width = n.width;
+      el.dataset.height = n.height;
     } else {
       el = document.createElement('div');
       el.className = `waui waui-text waui-${n.style.color} waui-${n.style.size}`;
@@ -238,21 +331,57 @@ function renderDemo(api, contentEl) {
     contentEl.replaceChildren(top);
   }
 
+  // Restyle an element in place from its node. The element is not replaced, so
+  // a field being typed in keeps its focus and caret. Returns whether the
+  // element was found.
+  function restyle(n) {
+    if (n.id === null) return false; // unaddressable
+    const el = elements.get(n.id);
+    if (!el) return false;
+    if (n.kind === 'button') {
+      el.textContent = n.label;
+      el.className = `waui waui-button waui-${n.style.color} waui-${n.style.size}`;
+    } else if (n.kind === 'text') {
+      el.textContent = n.content;
+      el.className = `waui waui-text waui-${n.style.color} waui-${n.style.size}`;
+    } else if (n.kind === 'input') {
+      // Apply the component's answer, but skip the field when it just echoes
+      // the buffer the user typed (setting .value to the same text moves the
+      // caret in some browsers).
+      if (el.value !== n.content) el.value = n.content;
+      el.className = `waui waui-input waui-${n.style.color} waui-${n.style.size}`;
+      el.dataset.width = n.width;
+      el.style.width = n.width > 0 ? `${n.width}ch` : '';
+    } else if (n.kind === 'image') {
+      // A changed image keeps its element; update the `src` and the size.
+      el.src = n.src;
+      el.dataset.width = n.width;
+      el.dataset.height = n.height;
+    }
+    return true;
+  }
+
   function refresh() {
     const mutations = api.changes();
-    if (mutations.length === 0) return;
-    // The demos are small; a full rebuild on any change is cheap and correct.
-    for (const m of mutations) {
-      if (m.kind === 'removed') {
-        const p = retained.findIndex((x) => x.id === m.id);
-        if (p >= 0) retained.splice(p, 1);
-      } else if (m.node.id !== null) {
-        const i = retained.findIndex((x) => x.id === m.node.id);
-        if (i >= 0) retained[i] = m.node;
-        else retained.push(m.node);
-      }
+    if (mutations.length === 0) return; // nothing changed: do nothing
+
+    // Content-only? A changed leaf (text, button, or input) with an id, whose
+    // position in the tree is unchanged, can be restyled in place. Anything
+    // else (a container — restyle cannot update one — or an id-less node)
+    // forces a rebuild.
+    const inPlace = mutations.every((m) => {
+      if (m.kind !== 'changed' || m.node.id === null) return false;
+      if (m.node.kind === 'container') return false;
+      const prev = retained.find((n) => n.id === m.node.id);
+      return prev !== undefined && prev.parent === m.node.parent;
+    });
+
+    apply(mutations);
+    if (inPlace) {
+      for (const m of mutations) restyle(m.node);
+    } else {
+      rebuild();
     }
-    rebuild();
   }
 
   // Event delegation: one listener per kind survives the rebuilds.

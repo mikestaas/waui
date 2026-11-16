@@ -59,6 +59,18 @@ test('the embedded demo is interactive', async ({ page }) => {
   await expect(display).toHaveText('2');
 });
 
+test('typing in the embedded todo keeps the input focused', async ({ page }) => {
+  await page.locator('#grid .tile').nth(6).dblclick(); // Todo, Rust
+  const win = page.locator('.window');
+  const input = win.locator('.window-content input');
+  await input.click();
+  await input.type('buy coffee');
+  // A content-only change restyles in place: the element is not replaced, so
+  // focus and caret survive every keystroke.
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue('buy coffee');
+});
+
 test('windows raise on click', async ({ page }) => {
   const tiles = page.locator('#grid .tile');
   await tiles.nth(0).dblclick(); // counter
