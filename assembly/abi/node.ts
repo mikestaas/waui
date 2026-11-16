@@ -3,14 +3,18 @@
 // components, and of what the hosts' decoders (e.g. `web/glue.js`) read.
 //
 //   `node` (a variant; 36 bytes, the widest case):
-//     [0]       tag: 0 = text, 1 = button, 2 = container, 3 = input
+//     [0]       tag: 0 = text, 1 = button, 2 = container, 3 = input, 4 = image
 //     [4]       id option flag        [8..12)   id
 //     [12]      parent option flag    [16..20)  parent
 //     [20..24)  text/button/input: string pointer
+//               image: the `src` string pointer
 //               container: [20] direction byte, [21] align byte
 //     [24..28)  text/button/input: string length (UTF-8 bytes)
+//               image: the `src` string length
 //     [28]      text/button/input: style.color    [29] style.size
+//     [28..32)  image: width (u32, host units; 0 = the host's default)
 //     [32..36)  input: width (u32, characters; 0 = the host's default)
+//               image: height (u32, host units; 0 = the host's default)
 //               text/button/container: padding
 //
 //   `mutation` (a variant; 44 bytes):
@@ -29,6 +33,7 @@ export const TAG_TEXT = 0;
 export const TAG_BUTTON = 1;
 export const TAG_CONTAINER = 2;
 export const TAG_INPUT = 3;
+export const TAG_IMAGE = 4;
 export const COLOR_NEUTRAL = 0;
 export const COLOR_ACCENT = 1;
 export const COLOR_POSITIVE = 2;
@@ -122,6 +127,26 @@ export function emitInput(
   store<i32>(rec + 32, width);
 }
 
+/// An `image` node record at `rec` (36 bytes). An image carries no style:
+/// its `[28..36)` is the width and the height, not the two style bytes.
+export function emitImage(
+  rec: i32,
+  id: i32,
+  parent: i32,
+  str: i32,
+  len: i32,
+  width: i32,
+  height: i32,
+): void {
+  zero(rec, 36);
+  store<i8>(rec + 0, TAG_IMAGE);
+  putId(rec, id, parent);
+  store<i32>(rec + 20, str);
+  store<i32>(rec + 24, len);
+  store<i32>(rec + 28, width);
+  store<i32>(rec + 32, height);
+}
+
 /// A `container` node record at `rec` (36 bytes).
 export function emitContainer(rec: i32, id: i32, parent: i32, direction: i32, align: i32): void {
   zero(rec, 36);
@@ -178,6 +203,21 @@ export function emitChangedInput(
   zero(rec, 44);
   store<i32>(rec + 0, MUT_CHANGED);
   emitInput(rec + 4, id, parent, str, len, color, size, width);
+}
+
+/// A `changed` mutation carrying an `image` node, at `rec` (44 bytes).
+export function emitChangedImage(
+  rec: i32,
+  id: i32,
+  parent: i32,
+  str: i32,
+  len: i32,
+  width: i32,
+  height: i32,
+): void {
+  zero(rec, 44);
+  store<i32>(rec + 0, MUT_CHANGED);
+  emitImage(rec + 4, id, parent, str, len, width, height);
 }
 
 /// A `changed` mutation carrying a `container` node, at `rec` (44 bytes).

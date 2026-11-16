@@ -112,21 +112,24 @@ element. `{readout}` embeds the persistent leaf by reference.
 API:
 
 - constructors: `text(content, color, size)`, `button(label, color, size)`,
-  `input(content, color, size)`, `row(children)`, `column(children)`
+  `input(content, color, size)`, `image(src, width, height)`,
+  `row(children)`, `column(children)`
 - chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`,
-  `.width(n)` (inputs only). AssemblyScript cannot name a field and a method
-  alike the way Rust can, so the id's and width's storage is `_id` and
-  `_width`, set with `.id()` and `.width()`
+  `.width(n)` (inputs and images), `.height(n)` (images only).
+  AssemblyScript cannot name a field and a method alike the way Rust can, so
+  the id's, width's, and height's storage is `_id`, `_width`, and `_height`,
+  set with `.id()`, `.width()`, and `.height()`
 - plain fields: `children`
 - JSX: `h(tag, props, ...children)` — the factory `../jsx.mjs` emits; `tag`
-  is `text`/`button`/`input`/`row`/`column`/`container`, `props` is the
-  `Props` class
-  (a bag of `id`, `label`, `color`, `size`, `reserve`, `direction`, `width`
-  — the last two honored only by `container` and `input` respectively,
-  `align` by the containers), null when the element has no attributes. Each
-  child is a `Widget` or a `Widget[]` — a dynamic list, spliced into the
-  children: a rest argument is one value and AssemblyScript has no union
-  types, so the rest is Object[] and the factory discriminates each child.
+  is `text`/`button`/`input`/`image`/`row`/`column`/`container`, `props` is
+  the `Props` class
+  (a bag of `id`, `label`, `color`, `size`, `reserve`, `direction`, `width`,
+  `height` — `direction` honored only by `container`, `width` by `input` and
+  `image`, `height` by `image`, `align` by the containers; for an `image` the
+  `label` is its `src`), null when the element has no attributes. Each child
+  is a `Widget` or a `Widget[]` — a dynamic list, spliced into the children:
+  a rest argument is one value and AssemblyScript has no union types, so the
+  rest is Object[] and the factory discriminates each child.
 - projection: `viewOf(root)`, `diffOf(root)`, `count(w)`
 
 Behavior:
@@ -138,16 +141,20 @@ Behavior:
   two lists, count, input, and footer buttons) are the exception: module
   globals, kept for the module's lifetime. A few bytes each; the todo's lists
   grow one object per add.
-- **Labels** live in the static **label pool** (raw linear memory; the GC
-  never scans it). The label is kept as UTF-16 source; the UTF-8 pool write
-  happens at projection, keyed by the node's id. A partition is
-  allocated at the id's first build (sized by `reserve`), never moves or
-  grows, and later content overwrites it in place, clamped to fit. Why static:
-  a projected record carries a *pointer* into the label bytes and the host
-  keeps the result, so the bytes must outlive the tree. A labeled node without
-  an id gets a fresh partition per build — a changing label with no stable id
-  grows the pool until it is exhausted, which then renders an empty label
-  rather than corrupting memory.
+- **Labels** (and an image's `src`) are kept as UTF-16 source and written as
+  UTF-8 at projection, into one of two regions by the node's id:
+  - An *id'd* node takes a static **label pool** partition (raw linear memory;
+    the GC never scans it), keyed by the node's id. A partition is allocated
+    at the id's first build (sized by `reserve`), never moves or grows, and
+    later content overwrites it in place, clamped to fit — a stable address
+    for a stable node.
+  - An *id-less* node allocates from the **result arena**, fresh each build,
+    and is freed with the rest of the result when the host posts it
+    (`cabi_post_*`). This is the per-build lifetime the Rust layer gives its
+    id-less strings, and it keeps a changing id-less label from growing the
+    pool until it is exhausted.
+  An exhausted pool or arena renders an empty label rather than corrupt
+  memory.
 - **The diff is a record comparison against the retained last export** (the
   AS twin of the Rust `component-ui`'s retained `LAST_EXPORTED`). The last
   export is kept as a flat list of records; `changes` calls `diffOf(root)`,
@@ -168,8 +175,9 @@ the arena, the AS twin of the Rust `component-ui` unit tests.
 ## Memory layout
 
 ```
-[0 ......... RESULT_END = 32 KiB)   result arena, reset by cabi_post_*
-[RESULT_END ... 60 KiB)             the label pool (above)
+[0 ......... RESULT_END = 32 KiB)   result arena (the results + the id-less
+                                     labels), reset by cabi_post_*
+[RESULT_END ... 60 KiB)             the label pool (the id'd nodes' partitions)
 [60 KiB ... 64 KiB)                 the host's scratch region (the on-text buffer)
 [64 KiB ...)                        static data + runtime heap, from page 1
 ```
@@ -197,7 +205,7 @@ returns the region to its base.
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it) + `cabi_realloc` (a bump allocator over the top-4 KiB scratch region) |
 | `utf8.ts`   | `writeUtf8` (surrogate pairs; stops at a whole character at the `end` bound), `readUtf8` (a UTF-8 byte run into an AS string; stops at a whole character), and `writeInt32`/`writeInt64` (a number that would not fit whole is not written) |
-| `node.ts`   | emitters for the ABI encodings: the 36-byte `node` record (text/button/input/container), the 44-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
+| `node.ts`   | emitters for the ABI encodings: the 36-byte `node` record (text/button/input/image/container), the 44-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
 | `root.ts`   | the world's import side: `now` and `schedule` as `@external('$root', ...)`                                                                        |
 
 AS strings are UTF-16; the ABI's are UTF-8 bytes, converted at write time.

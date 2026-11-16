@@ -9,7 +9,7 @@
 // This module provides the tree, the pool, the JSX factory (`h`), and the
 // projection (`viewOf`, `diffOf`, `count`).
 
-import { arenaAlloc, HOST_SCRATCH_BASE, RESULT_END } from '../abi/arena';
+import { arenaAlloc, arenaAllocFit, HOST_SCRATCH_BASE, RESULT_END } from '../abi/arena';
 import {
   ALIGN_CENTER,
   COLOR_NEUTRAL,
@@ -19,10 +19,12 @@ import {
   SIZE_MEDIUM,
   TAG_BUTTON,
   TAG_CONTAINER,
+  TAG_IMAGE,
   TAG_INPUT,
   TAG_TEXT,
   emitButton,
   emitContainer,
+  emitImage,
   emitInput,
   emitRemoved,
   emitText,
@@ -75,13 +77,18 @@ export class Widget {
   direction: i32 = DIRECTION_ROW;
   /// Containers only: the cross-axis placement of the children.
   align: i32 = ALIGN_CENTER;
-  /// Inputs only: the field's width in characters (0 = the host's default).
-  /// The storage is `_width`, set with `.width()`: AssemblyScript cannot
-  /// name a field and a method alike the way Rust can.
+  /// The width: an input's field width in characters, or an image's width in
+  /// the host's units (both `0` = the host's default). The storage is
+  /// `_width`, set with `.width()`: AssemblyScript cannot name a field and a
+  /// method alike the way Rust can.
   _width: i32 = 0;
+  /// Images only: the height in the host's units (0 = the host's default).
+  /// The storage is `_height`, set with `.height()`.
+  _height: i32 = 0;
   /// The children, in the contract's depth-first pre-order.
   children: Widget[];
-  /// The label's UTF-16 source; materialized to the pool at projection.
+  /// The label's (or an image's `src`) UTF-16 source; materialized to the
+  /// pool (an id'd node) or the result arena (an id-less one) at projection.
   labelSrc: string = '';
   /// The label buffer's requested capacity (consumed at first allocation).
   labelCap: i32 = 0;
@@ -125,10 +132,17 @@ export class Widget {
     return this;
   }
 
-  /// Set the field's width in characters (0 = the host's default). Inputs
-  /// only.
+  /// Set the width: an input's field width in characters, or an image's
+  /// width in the host's units (both 0 = the host's default).
   width(n: i32): this {
     this._width = n;
+    return this;
+  }
+
+  /// Set the image's height in the host's units (0 = the host's default).
+  /// Images only.
+  height(n: i32): this {
+    this._height = n;
     return this;
   }
 }
@@ -161,6 +175,15 @@ export function input(
   return w;
 }
 
+/// An image. The `src` is a path or asset name the host resolves to pixels;
+/// the width and height are the host's units, `0` = the host's default.
+export function image(src: string, width: i32 = 0, height: i32 = 0): Widget {
+  const w = new Widget(TAG_IMAGE, src);
+  w._width = width;
+  w._height = height;
+  return w;
+}
+
 /// A row container with its children already nested.
 export function row(children: Widget[]): Widget {
   const w = new Widget(TAG_CONTAINER, '', children);
@@ -189,7 +212,8 @@ export class Props {
   reserve: i32 = 0;
   direction: i32 = DIRECTION_ROW; // honored only by `container`
   align: i32 = ALIGN_CENTER; // honored by `row`/`column`/`container`
-  width: i32 = 0; // honored only by `input` (characters; 0 = host default)
+  width: i32 = 0; // honored by `input` (characters) and `image` (host units)
+  height: i32 = 0; // honored only by `image` (host units)
 }
 
 /// The JSX factory that `../jsx.mjs` emits calls to (its `pragma`): the tag
@@ -227,6 +251,8 @@ export function h(tag: string, props: Props | null, ...children: Object[]): Widg
     w = button('');
   } else if (tag == 'input') {
     w = input('');
+  } else if (tag == 'image') {
+    w = image('');
   } else if (tag == 'row') {
     w = row(kids);
   } else if (tag == 'column') {
@@ -250,19 +276,33 @@ export function h(tag: string, props: Props | null, ...children: Object[]): Widg
     // factory default, so an unstated one is a no-op).
     if (tag == 'container') w.direction = props.direction;
     if (tag == 'row' || tag == 'column' || tag == 'container') w.align = props.align;
-    // The WIT's `width` is an input field only; a `width` on any other tag
-    // is ignored, as in the Rust `ui!` macro.
-    if (tag == 'input') w = w.width(props.width);
+    // The WIT's `width` is an input field (characters) or an image (host
+    // units); a `width` on any other tag is ignored, as in the Rust `ui!`.
+    // `height` is an image field only.
+    if (tag == 'input' || tag == 'image') w = w.width(props.width);
+    if (tag == 'image') w = w.height(props.height);
   }
   return w;
 }
 
-// ------------------------------------------------------------- the pool seam
+// ------------------------------------------------------------- the label seam
 
-/// Materialize the node's label bytes into the static pool: a partition
-/// keyed by the node's id, sized at first allocation (honoring `reserve`),
-/// overwritten on every later projection. No-op for an empty label; an
-/// exhausted pool renders an empty label rather than corrupt memory.
+/// Materialize the node's label bytes (an image's `src`) where the host will
+/// read them from.
+///
+/// An *id'd* node takes a static **pool** partition keyed by its id: sized at
+/// first allocation (honoring `reserve`), never moves or grows, and later
+/// content overwrites it in place, clamped to fit. The address is stable
+/// across rebuilds, so a changing label of a stable node reuses its bytes.
+///
+/// An *id-less* node allocates from the **result arena** instead: fresh each
+/// build, and freed with the rest of the result when the host posts it
+/// (`cabi_post_*`). This is the per-build lifetime the Rust layer gives its
+/// id-less strings (heap-allocated, freed with the tree), and it keeps a
+/// changing id-less label from growing the pool until it is exhausted.
+///
+/// No-op for an empty label; an exhausted pool or arena renders an empty
+/// label rather than corrupt memory.
 function materializeLabel(w: Widget): void {
   const src = w.labelSrc;
   if (src.length == 0) {
@@ -274,31 +314,44 @@ function materializeLabel(w: Widget): void {
   // reserve may ask for more.
   const content = src.length * 4 + 8;
   const want = w.labelCap > content ? w.labelCap : content;
-  // `Map.get` throws on an absent key (the stdlib cannot represent
-  // `undefined`, and a throw in wasm is an `abort` trap), so the lookup goes
-  // through `has` first. No flow narrowing, so the branch ends in scalars.
-  let off: i32;
-  let cap: i32;
-  if (w._id > 0 && pool.has(w._id)) {
-    const existing = pool.get(w._id);
-    off = existing.off;
-    cap = existing.cap;
-  } else {
-    off = poolAlloc(want);
-    if (off < 0) {
-      w.labelPtr = 0;
-      w.labelLen = 0;
-      return;
-    }
-    cap = (want + 3) & ~3; // the pool allocated exactly this much
-    if (w._id > 0) {
+
+  if (w._id > 0) {
+    // A stable id: the pool partition, keyed by the id. `Map.get` throws on
+    // an absent key (the stdlib cannot represent `undefined`, and a throw in
+    // wasm is an `abort` trap), so the lookup goes through `has` first. No
+    // flow narrowing, so the branch ends in scalars.
+    let off: i32;
+    let cap: i32;
+    if (pool.has(w._id)) {
+      const existing = pool.get(w._id);
+      off = existing.off;
+      cap = existing.cap;
+    } else {
+      off = poolAlloc(want);
+      if (off < 0) {
+        w.labelPtr = 0;
+        w.labelLen = 0;
+        return;
+      }
+      cap = (want + 3) & ~3; // the pool allocated exactly this much
       const buf = new PoolBuf();
       buf.off = off;
       buf.cap = cap;
       pool.set(w._id, buf);
     }
-    // id-less: fresh partition per build (see `../README.md`)
+    w.labelPtr = off;
+    w.labelLen = writeUtf8(off, src, off + cap) - off;
+    return;
   }
+
+  // No id: the result arena, fresh per build (freed on the host's post).
+  const off = arenaAllocFit(want);
+  if (off < 0) {
+    w.labelPtr = 0;
+    w.labelLen = 0;
+    return;
+  }
+  const cap = (want + 7) & ~7; // the arena allocated exactly this much
   w.labelPtr = off;
   w.labelLen = writeUtf8(off, src, off + cap) - off;
 }
@@ -319,8 +372,9 @@ class FlatRec {
   size: i32 = SIZE_MEDIUM;
   direction: i32 = DIRECTION_ROW;
   align: i32 = ALIGN_CENTER;
-  width: i32 = 0; // inputs only (the WIT's `width` field)
-  label: string = '';
+  width: i32 = 0; // inputs (characters) and images (host units)
+  height: i32 = 0; // images only (host units)
+  label: string = ''; // the content, or an image's `src`
 }
 
 /// The last export, as a flat list of records in depth-first pre-order — the
@@ -348,6 +402,7 @@ function flatten(w: Widget, parent: i32, out: FlatRec[]): void {
   r.direction = w.direction;
   r.align = w.align;
   r.width = w._width;
+  r.height = w._height;
   r.label = w.labelSrc;
   out.push(r);
   const id = w._id;
@@ -376,12 +431,15 @@ function isChanged(w: Widget, parent: i32, first: i32, last: FlatRec[]): i32 {
     const r = last[i];
     if (r._id != id) continue;
     // Same id: changed only if the record differs. A container's record is
-    // its direction and align (the WIT container carries no style); a
-    // leaf's is its label, its style, and — for an input — its width. AS
-    // compares strings by content.
+    // its direction and align (the WIT container carries no style); an
+    // image's is its `src`, its width, and its height (it carries no style);
+    // a text/button/input's is its label, its style, and — for an input — its
+    // width. AS compares strings by content.
     let differs = w.kind != r.kind || parent != r.parent;
     if (w.kind == TAG_CONTAINER) {
       differs = differs || w.direction != r.direction || w.align != r.align;
+    } else if (w.kind == TAG_IMAGE) {
+      differs = differs || w.labelSrc != r.label || w._width != r.width || w._height != r.height;
     } else {
       differs = differs || w.color != r.color || w.size != r.size || w.labelSrc != r.label;
       // The WIT's `width` is an input field; the other leaves carry 0.
@@ -440,6 +498,8 @@ function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMuta
     emitButton(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size);
   } else if (kind == TAG_INPUT) {
     emitInput(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size, w._width);
+  } else if (kind == TAG_IMAGE) {
+    emitImage(node, id, parent, w.labelPtr, w.labelLen, w._width, w._height);
   } else {
     emitContainer(node, id, parent, w.direction, w.align);
   }

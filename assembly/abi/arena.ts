@@ -3,8 +3,10 @@
 // Page 0 of linear memory holds all *dynamic* memory, split in three:
 //
 //   [0 ......... RESULT_END)          this arena — the result buffers (node
-//                                      lists, mutation lists, itoa scratch)
-//   [RESULT_END . HOST_SCRATCH_BASE)  the `../ui/tree` label pool
+//                                      lists, mutation lists, itoa scratch,
+//                                      and the `../ui/tree` id-less labels)
+//   [RESULT_END . HOST_SCRATCH_BASE)  the `../ui/tree` label pool (the
+//                                      id'd nodes' stable partitions)
 //   [HOST_SCRATCH_BASE . 64 KiB)      the host's scratch region (see
 //                                      `cabi_realloc`)
 //
@@ -82,6 +84,20 @@ export function arenaAlloc(n: i32): i32 {
   const p = arena;
   let e = p + ((n + 7) & ~7);
   if (e > RESULT_END) e = RESULT_END;
+  arena = e;
+  return p;
+}
+
+/// Bump-allocate `n` bytes, 8-byte aligned, from the arena, returning -1
+/// when the request would overflow the arena (into the label pool). The
+/// caller then renders without the bytes rather than walk into anything.
+/// Unlike `arenaAlloc` (which caps), this never advances the cursor on a
+/// failed request, so a refused allocation leaves the arena as it was.
+export function arenaAllocFit(n: i32): i32 {
+  if (n <= 0) return -1;
+  const p = arena;
+  const e = p + ((n + 7) & ~7);
+  if (e > RESULT_END || e <= p) return -1;
   arena = e;
   return p;
 }

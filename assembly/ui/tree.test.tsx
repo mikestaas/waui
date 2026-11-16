@@ -2,9 +2,9 @@
 // Rust `component-ui` unit tests. Compiled to a core module and run via Node
 // (`make ui-test`); `run()` drives `viewOf`/`diffOf` through the structural
 // cases (bootstrap, value change, add, remove, re-parent, id-less, a
-// spliced list child, an input, a container align, an input width), decodes
-// the diff from the arena, and returns 0 on success (the first failing
-// scenario's index otherwise).
+// spliced list child, an input, a container align, an input width, an image,
+// an id-less label on the arena path), decodes the diff from the arena, and
+// returns 0 on success (the first failing scenario's index otherwise).
 //
 // It is import-free after `../patch-env-abort.mjs`, so Node instantiates it
 // directly.
@@ -21,6 +21,7 @@ import {
   SIZE_LARGE,
   SIZE_MEDIUM,
   TAG_CONTAINER,
+  TAG_IMAGE,
   TAG_INPUT,
 } from '../abi/node';
 import { readUtf8 } from '../abi/utf8';
@@ -111,6 +112,27 @@ function boxAlign(align: i32): Widget {
   );
 }
 
+// A column (1) with an image (3): the fifth node kind, a `src` (its label)
+// plus a width and a height, and no style.
+function withImage(src: string, width: i32, height: i32): Widget {
+  return (
+    <column id={1}>
+      <image id={3} label={src} width={width} height={height} />
+    </column>
+  );
+}
+
+// A column (1) with an id'd readout (3) and an *id-less* sibling whose label
+// varies: the id-less label takes the result arena, fresh per build.
+function withIdlessArena(label: string): Widget {
+  return (
+    <column id={1}>
+      <text id={3} label="fixed" color={COLOR_NEUTRAL} size={SIZE_LARGE} />
+      <text label={label} color={COLOR_NEUTRAL} size={SIZE_LARGE} />
+    </column>
+  );
+}
+
 // ------------------------------------------------------------------ decoding
 
 /// One decoded mutation: the tag, and (for `changed`) the node's fields and
@@ -124,9 +146,36 @@ class Mut {
   size: i32 = -1;
   direction: i32 = -1;
   align: i32 = -1;
-  width: i32 = -1; // inputs only (`changed` only)
-  label: string = '';
+  width: i32 = -1; // inputs and images (`changed` only)
+  height: i32 = -1; // images only (`changed` only)
+  label: string = ''; // the content, or an image's `src`
   index: i32 = -1; // sibling index (`changed` only)
+}
+
+/// Decode one 36-byte node record at `n` (the payload of a `changed`
+/// mutation, or a `view` node). Fills `m`'s node fields.
+function decodeNodeFields(n: i32, m: Mut): void {
+  m.kind = load<i8>(n + 0);
+  if (load<i8>(n + 4) != 0) m.id = load<i32>(n + 8);
+  if (load<i8>(n + 12) != 0) m.parent = load<i32>(n + 16);
+  if (m.kind == TAG_CONTAINER) {
+    m.direction = load<i8>(n + 20);
+    m.align = load<i8>(n + 21);
+  } else if (m.kind == TAG_IMAGE) {
+    // An image carries no style: its [28..36) is the width and the height.
+    const str = load<i32>(n + 20);
+    const len = load<i32>(n + 24);
+    m.width = load<i32>(n + 28);
+    m.height = load<i32>(n + 32);
+    m.label = str != 0 ? readUtf8(str, len) : '';
+  } else {
+    const str = load<i32>(n + 20);
+    const len = load<i32>(n + 24);
+    m.color = load<i8>(n + 28);
+    m.size = load<i8>(n + 29);
+    if (m.kind == TAG_INPUT) m.width = load<i32>(n + 32);
+    m.label = str != 0 ? readUtf8(str, len) : '';
+  }
 }
 
 /// Decode one 44-byte mutation record at `rec`.
@@ -138,23 +187,17 @@ function decodeMut(rec: i32): Mut {
     return m;
   }
   // A `changed` mutation carries the node one word in (after the tag word).
-  const n = rec + 4;
-  m.kind = load<i8>(n + 0);
-  if (load<i8>(n + 4) != 0) m.id = load<i32>(n + 8);
-  if (load<i8>(n + 12) != 0) m.parent = load<i32>(n + 16);
-  if (m.kind == TAG_CONTAINER) {
-    m.direction = load<i8>(n + 20);
-    m.align = load<i8>(n + 21);
-  } else {
-    const str = load<i32>(n + 20);
-    const len = load<i32>(n + 24);
-    m.color = load<i8>(n + 28);
-    m.size = load<i8>(n + 29);
-    if (m.kind == TAG_INPUT) m.width = load<i32>(n + 32);
-    m.label = str != 0 ? readUtf8(str, len) : '';
-  }
+  decodeNodeFields(rec + 4, m);
   // The index sits after the 36-byte node.
   m.index = load<i32>(rec + 40);
+  return m;
+}
+
+/// Decode one `view` node (a 36-byte record) at `ptr + i * 36`.
+function decodeViewNode(ptr: i32, i: i32): Mut {
+  const m = new Mut();
+  m.tag = MUT_CHANGED; // a view node is not a mutation; the tag is unused
+  decodeNodeFields(ptr + i * 36, m);
   return m;
 }
 
@@ -165,6 +208,17 @@ function decodeList(desc: i32): Mut[] {
   const len = load<i32>(desc + 4);
   for (let i = 0; i < len; i++) {
     out.push(decodeMut(ptr + i * 44));
+  }
+  return out;
+}
+
+/// Decode the `view` node list behind a list descriptor at `desc`.
+function decodeViewList(desc: i32): Mut[] {
+  const out = new Array<Mut>();
+  const ptr = load<i32>(desc + 0);
+  const len = load<i32>(desc + 4);
+  for (let i = 0; i < len; i++) {
+    out.push(decodeViewNode(ptr, i));
   }
   return out;
 }
@@ -337,6 +391,36 @@ export function run(): i32 {
       return c != null && c.kind == TAG_INPUT && c.label == 'x' && c.width == 24 ? 0 : 11;
     });
     if (r != 0) return 11;
+  }
+
+  // 12. Image: the fifth node kind; a `src`/width/height change is one
+  // mutation, and it carries no style.
+  viewOf(withImage('a', 10, 20)); // the reference: the column (1), the image (3)
+  arenaReset();
+  {
+    const r = scenario(withImage('b', 11, 21), (m) => {
+      if (m.length != 1) return 12;
+      const c = changed(m, 3);
+      return c != null && c.kind == TAG_IMAGE && c.label == 'b' && c.width == 11 && c.height == 21
+        ? 0
+        : 12;
+    });
+    if (r != 0) return 12;
+  }
+
+  // 13. Id-less label on the arena path: read back from the view, across two
+  // builds. The id-less label is fresh per build (freed on the host's post),
+  // so the bytes are correct on each, and the pool does not grow.
+  {
+    // Three nodes: the column (0), the id'd readout (1), the id-less sibling (2).
+    const v1 = decodeViewList(viewOf(withIdlessArena('alpha')));
+    arenaReset();
+    if (v1.length != 3 || v1[2].label != 'alpha' || v1[1].label != 'fixed') return 13;
+    // A second build with different id-less content: the arena is reset by
+    // the post, and the fresh label reads back correctly.
+    const v2 = decodeViewList(viewOf(withIdlessArena('beta')));
+    arenaReset();
+    if (v2.length != 3 || v2[2].label != 'beta' || v2[1].label != 'fixed') return 13;
   }
 
   return 0;
