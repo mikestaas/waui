@@ -10,7 +10,11 @@
 use std::sync::Mutex;
 use wasmtime::component::*;
 use wasmtime::{Engine, Store};
-use waui_test::{build_component, component_path, RUST_BUILD_LOCK};
+use waui_test::{
+    as_toolchain_available, build_component, build_component_as, build_component_wat,
+    component_path, component_path_as, component_path_wat, wat_toolchain_available, AS_BUILD_LOCK,
+    RUST_BUILD_LOCK, WAT_BUILD_LOCK,
+};
 
 wasmtime::component::bindgen!({
     world: "app",
@@ -108,24 +112,8 @@ fn node_summary(node: &waui::ui::widget::Node) -> String {
     }
 }
 
-#[test]
-fn desktop_grid_and_window_roundtrip() {
-    let engine = Engine::default();
-    let mut store = Store::new(
-        &engine,
-        Host {
-            entries: nine_entries(),
-            ..Default::default()
-        },
-    );
-    let mut app = {
-        let _guard = RUST_BUILD_LOCK
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        build_component("demo-desktop");
-        instantiate(&engine, &mut store, &component_path("demo-desktop"))
-    };
-
+/// The desktop's contract, against one producer's component.
+fn assert_desktop_roundtrip(app: &mut App, mut store: &mut Store<Host>) {
     // The initial view: the menu bar (0 windows) and the 3x3 grid.
     let nodes = app.call_view(&mut store).expect("view failed");
     let summaries: Vec<String> = nodes.iter().map(node_summary).collect();
@@ -194,4 +182,76 @@ fn desktop_grid_and_window_roundtrip() {
             .is_empty(),
         "a non-tile double-click must produce no changes"
     );
+}
+
+#[test]
+fn desktop_grid_and_window_roundtrip() {
+    let engine = Engine::default();
+    let mut store = Store::new(
+        &engine,
+        Host {
+            entries: nine_entries(),
+            ..Default::default()
+        },
+    );
+    let mut app = {
+        let _guard = RUST_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component("demo-desktop");
+        instantiate(&engine, &mut store, &component_path("demo-desktop"))
+    };
+    assert_desktop_roundtrip(&mut app, &mut store);
+}
+
+// The same contract, against the AssemblyScript clone of the desktop.
+
+#[test]
+fn desktop_grid_and_window_roundtrip_as() {
+    if !as_toolchain_available() {
+        eprintln!("skipping: AssemblyScript toolchain not installed (run `npm install`)");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(
+        &engine,
+        Host {
+            entries: nine_entries(),
+            ..Default::default()
+        },
+    );
+    let mut app = {
+        let _guard = AS_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_as("demo-desktop");
+        instantiate(&engine, &mut store, &component_path_as("demo-desktop"))
+    };
+    assert_desktop_roundtrip(&mut app, &mut store);
+}
+
+// The same contract, against the hand-rolled WAT clone of the desktop.
+
+#[test]
+fn desktop_grid_and_window_roundtrip_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let engine = Engine::default();
+    let mut store = Store::new(
+        &engine,
+        Host {
+            entries: nine_entries(),
+            ..Default::default()
+        },
+    );
+    let mut app = {
+        let _guard = WAT_BUILD_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        build_component_wat("demo-desktop");
+        instantiate(&engine, &mut store, &component_path_wat("demo-desktop"))
+    };
+    assert_desktop_roundtrip(&mut app, &mut store);
 }

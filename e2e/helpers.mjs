@@ -140,6 +140,40 @@ export const demoPages = {
 // The producer labels, in demoPages order.
 export const producers = ['Rust', 'AssemblyScript', 'WAT'];
 
+// The desktop page, per producer: the `demo-desktop` component, in its three
+// source languages, on the windowing host.
+export const desktopPages = ['/desktop.html', '/desktop-as.html', '/desktop-wat.html'];
+
+// Wait for the desktop page's grid to populate (the boot is async: the
+// demos are pre-compiled, then the component runs).
+export async function loadDesktop(page, path) {
+  await page.goto(path);
+  await page.locator('#grid .tile').first().waitFor();
+}
+
+// The desktop states, as a setup function per state: drive a page into the
+// state from a fresh load (a page's component keeps its state across
+// clicks, so each state reloads). The windows open deterministic demos
+// (the counters, at rest), so the states are screenshot-stable.
+export const desktopStates = {
+  '0 windows': async (page, path) => {
+    await loadDesktop(page, path);
+  },
+  // The first tile (Counter, Rust).
+  '1 window': async (page, path) => {
+    await loadDesktop(page, path);
+    await page.locator('#grid .tile').nth(0).dblclick();
+    await expect(page.locator('#window-count')).toHaveText('1 window');
+  },
+  // The first two tiles (both counters, at rest).
+  '2 windows': async (page, path) => {
+    await loadDesktop(page, path);
+    await page.locator('#grid .tile').nth(0).dblclick();
+    await page.locator('#grid .tile').nth(1).dblclick();
+    await expect(page.locator('#window-count')).toHaveText('2 windows');
+  },
+};
+
 // The demo states, as a setup function per state: drive a page into the
 // state from a fresh load (a page's component keeps its state across
 // clicks, so each state reloads). The visual and parity specs share these.
@@ -198,6 +232,17 @@ export const demoStates = {
 export async function settle(page) {
   await page.mouse.move(0, 0);
   await page.evaluate(() => document.activeElement?.blur());
+  // The desktop's icons are <img> fetches, and its tiles animate their
+  // :hover transform and icon shadow (web/desktop.html); wait for both to
+  // settle, or the screenshot catches them mid-flight. The demo pages have
+  // neither, so this is a no-op there.
+  await page.waitForFunction(
+    () =>
+      [...document.images].every((i) => i.complete) &&
+      [...document.querySelectorAll('.tile')].every(
+        (t) => getComputedStyle(t).transform === 'none',
+      ),
+  );
 }
 
 // The per-channel tolerance of the pixel comparison. Zero: pages rendered

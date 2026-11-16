@@ -8,9 +8,14 @@ WAT_COMPONENTS := demo-counter demo-stopwatch demo-todo
          run-tui-as run-stop-tui-as run-todo-tui-as run-iced-as run-stop-iced-as run-todo-iced-as \
          run-cli-wat run-stop-cli-wat run-todo-cli-wat run-tui-wat run-stop-tui-wat run-todo-tui-wat \
          run-iced-wat run-stop-iced-wat run-todo-iced-wat \
-         web web-as web-wat web-test web-test-as web-test-wat web-test-desktop site ui-test e2e screenshots fmt fmt-check hooks test
+         web web-as web-wat web-test web-test-as web-test-wat \
+         web-test-desktop web-test-desktop-as web-test-desktop-wat \
+         site ui-test e2e screenshots fmt fmt-check hooks test
 
-# Build the demo components and lift them into the component model.
+# Build the demo components and lift them into the component model. The
+# desktop (demo-desktop) is the multi-component host's component: it is built
+# explicitly, not in the demo loop, because it has no standalone web page in
+# the `web` target (it is the site's desktop page).
 components:
 	@mkdir -p target/components
 	@for c in $(COMPONENTS); do \
@@ -20,6 +25,10 @@ components:
 		wasm-tools component new target/$(WASM_TARGET)/release/$$lib.wasm \
 			--output target/components/$$c.component.wasm || exit 1; \
 	done
+	@echo "==> building demo-desktop (wasm32)"
+	@cargo build -p demo-desktop --release --target $(WASM_TARGET) || exit 1
+	@wasm-tools component new target/$(WASM_TARGET)/release/demo_desktop.wasm \
+		--output target/components/demo-desktop.component.wasm || exit 1
 	@echo "wrote target/components/*.component.wasm"
 
 # Build the AssemblyScript demos and lift them. The pipeline (jsx → asc →
@@ -45,6 +54,19 @@ components-as:
 		wasm-tools component new target/assembly/$$c-as.embedded.wasm \
 			--output target/components/$$c-as.component.wasm || exit 1; \
 	done
+	# The desktop, the same pipeline (see the components target).
+	@echo "==> building demo-desktop (assemblyscript)"
+	@node assembly/jsx.mjs assembly/demo-desktop/index.tsx assembly/demo-desktop/index.gen.ts || exit 1
+	@npx asc assembly/demo-desktop/index.gen.ts --outFile target/assembly/demo-desktop.raw.wasm \
+		-O --noAssert --runtime incremental --memoryBase 65536 --initialMemory 2 || exit 1
+	@node assembly/patch-env-abort.mjs target/assembly/demo-desktop.raw.wasm target/assembly/demo-desktop.core.wasm || exit 1
+	@node assembly/rename-exports.mjs target/assembly/demo-desktop.core.wasm target/assembly/demo-desktop-as.wasm \
+		onclick=on-click ontext=on-text ontick=on-tick \
+		ondoubleclick=on-double-click onwindowclose=on-window-close || exit 1
+	@wasm-tools component embed wit/ target/assembly/demo-desktop-as.wasm \
+		--world app --output target/assembly/demo-desktop-as.embedded.wasm || exit 1
+	@wasm-tools component new target/assembly/demo-desktop-as.embedded.wasm \
+		--output target/components/demo-desktop-as.component.wasm || exit 1
 	@echo "wrote target/components/*-as.component.wasm (core modules in target/assembly/)"
 
 # Build the hand-rolled WAT demos and lift them. One self-contained .wat
@@ -63,6 +85,13 @@ components-wat:
 		wasm-tools component new target/wat/$$c-wat.embedded.wasm \
 			--output target/components/$$c-wat.component.wasm || exit 1; \
 	done
+	# The desktop, the same pipeline (see the components target).
+	@echo "==> building demo-desktop (wat)"
+	@wasm-tools parse wat/demo-desktop.wat --output target/wat/demo-desktop.wasm || exit 1
+	@wasm-tools component embed wit/ target/wat/demo-desktop.wasm \
+		--world app --output target/wat/demo-desktop-wat.embedded.wasm || exit 1
+	@wasm-tools component new target/wat/demo-desktop-wat.embedded.wasm \
+		--output target/components/demo-desktop-wat.component.wasm || exit 1
 	@echo "wrote target/components/*-wat.component.wasm (core modules in target/wat/)"
 
 # The same hosts, pointed at the WAT components.
@@ -180,9 +209,10 @@ web-wat: components-wat
 	@echo "wrote target/web/*-wat.html — open them directly (no server needed)"
 
 # The GitHub Pages site: the desktop launcher (site/) plus the nine demo
-# pages and their wasm modules, assembled in target/site/. The pages fetch
-# the modules as blobs, so the site needs a server (GitHub Pages, or
-# python3 -m http.server); the launcher itself runs from disk.
+# pages, the three desktop pages, and their wasm modules, assembled in
+# target/site/. The pages fetch the modules as blobs, so the site needs a
+# server (GitHub Pages, or python3 -m http.server); the launcher itself runs
+# from disk.
 # .github/workflows/site.yml deploys it on push to main.
 site: components components-as components-wat
 	@mkdir -p target/site/icons
@@ -201,10 +231,14 @@ site: components components-as components-wat
 		cp target/wat/$$c.wasm target/site/$$c-wat.wasm || exit 1; \
 		node web/build.mjs target/wat/$$c.wasm target/site/$$c-wat.html --url $$c-wat.wasm || exit 1; \
 	done
-	@echo "==> building the desktop (wasm32)"
-	@cargo build -p demo-desktop --release --target $(WASM_TARGET) || exit 1
+	# The desktop page, per producer (the demo-desktop core module, the
+	# windowing host): desktop.html (Rust), desktop-as.html, desktop-wat.html.
 	@cp target/$(WASM_TARGET)/release/demo_desktop.wasm target/site/demo-desktop.wasm || exit 1
 	@node web/build-desktop.mjs target/site/demo-desktop.wasm target/site/desktop.html --url demo-desktop.wasm || exit 1
+	@cp target/assembly/demo-desktop-as.wasm target/site/demo-desktop-as.wasm || exit 1
+	@node web/build-desktop.mjs target/site/demo-desktop-as.wasm target/site/desktop-as.html --url demo-desktop-as.wasm || exit 1
+	@cp target/wat/demo-desktop.wasm target/site/demo-desktop-wat.wasm || exit 1
+	@node web/build-desktop.mjs target/site/demo-desktop-wat.wasm target/site/desktop-wat.html --url demo-desktop-wat.wasm || exit 1
 	@echo "wrote target/site/ — serve it over http; .github/workflows/site.yml deploys it"
 
 # Headless check of the web host's ABI layer (Node).
@@ -225,9 +259,17 @@ web-test-wat: components-wat
 # The windowing side of the `app` world (web/desktop-selftest.mjs): the
 # registry round-trip (list-entries) and the window count (open-entry,
 # on-double-click, on-window-close) against the pre-lift module.
-web-test-desktop:
-	@cargo build -p demo-desktop --release --target $(WASM_TARGET) || exit 1
+web-test-desktop: components
 	node web/desktop-selftest.mjs
+
+# The same selftest against the AssemblyScript desktop core module.
+web-test-desktop-as: components-as
+	node web/desktop-selftest.mjs target/assembly/demo-desktop-as.wasm
+
+# The same selftest against the WAT desktop core module: the byte-parity
+# gate's third producer.
+web-test-desktop-wat: components-wat
+	node web/desktop-selftest.mjs target/wat/demo-desktop.wasm
 
 # The tree layer's diff channel, as a standalone module run via Node: the
 # structural cases (add, remove, re-parent) plus the bootstrap and id-less

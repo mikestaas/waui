@@ -46,15 +46,15 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame, `--width <n>` sizes the dump buffer, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
-| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); the desktop page (`glue.js` + `desktop.js`) runs `demo-desktop` with the windowing host; `expect.mjs` holds the expected views, shared with the selftest and the browser suite |
-| `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
-| `e2e/`                   | the Playwright browser suite: the nine demo pages — each walking its states — in a 360x340 viewport (the iced window size), and both desktops (the static launcher and the `demo-desktop` component), in chromium; the screenshot goldens are CI-only, the pixel-level producer parity runs everywhere |
+| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); the desktop pages (`glue.js` + `desktop.js`) run `demo-desktop` with the windowing host, one per producer; `expect.mjs` holds the expected views, shared with the selftest and the browser suite |
+| `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; plus the desktop as a component, in its three source languages; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
+| `e2e/`                   | the Playwright browser suite: the nine demo pages — each walking its states — in a 360x340 viewport (the iced window size), and both desktops (the static launcher, and the `demo-desktop` component in its three source languages), in chromium; the screenshot goldens are CI-only, the pixel-level producer parity runs everywhere |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests a refresh (the host never wakes it) |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one mutation |
 | `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component; the footer's input takes typed text, and "add" uses it (a preset label when it is empty) |
 | `crates/demo-desktop`    | the desktop: the icon grid (built from the host's entry registry), the menu bar, and the set of open windows — the multi-component host's component, on the windowing side of the `app` world |
-| `assembly/`              | the same three demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`)         |
-| `wat/`                   | the same three demos in hand-rolled WAT: the WASM GC holds the state, the canonical ABI is written by hand, one self-contained file per demo |
+| `assembly/`              | the same four demos in AssemblyScript: hand-rolled ABI (`abi/`), object tree layer (`ui/`)         |
+| `wat/`                   | the same four demos in hand-rolled WAT: the WASM GC holds the state, the canonical ABI is written by hand, one self-contained file per demo |
 
 The three wasmtime hosts load the same component file. The web host runs the
 *pre-lift* core module instead (browsers instantiate core wasm, not components)
@@ -95,23 +95,25 @@ Prerequisites: stable Rust with the `wasm32-unknown-unknown` target
 Node.js with `npm install` run (AS demos), and wabt (AS builds).
 
 ```sh
-make components       # build the demos, lift them into target/components/
-make run-cli          # counter, ASCII terminal host
-make run-tui          # counter, TUI host
-make run-iced         # counter, window
-make run-stop-tui     # stopwatch, TUI host
-make run-stop-iced    # stopwatch, window
-make run-todo-cli     # todo, ASCII terminal host
-make run-todo-tui     # todo, TUI host
-make run-todo-iced    # todo, window
-make web              # self-contained HTML pages in target/web/
-make site             # the demo site in target/site/ (GitHub Pages)
-make web-test         # headless (Node) check of the web host's ABI layer
-make web-test-desktop # the windowing side of that layer (registry, window round-trip)
-make e2e              # the Playwright browser suite (needs `npx playwright install chromium`)
-make test             # cargo test, all crates
-make fmt              # format all sources (rustfmt + prettier)
-make hooks            # point git at .githooks (the pre-commit gate)
+make components           # build the demos, lift them into target/components/
+make run-cli              # counter, ASCII terminal host
+make run-tui              # counter, TUI host
+make run-iced             # counter, window
+make run-stop-tui         # stopwatch, TUI host
+make run-stop-iced        # stopwatch, window
+make run-todo-cli         # todo, ASCII terminal host
+make run-todo-tui         # todo, TUI host
+make run-todo-iced        # todo, window
+make web                  # self-contained HTML pages in target/web/
+make site                 # the demo site in target/site/ (GitHub Pages)
+make web-test             # headless (Node) check of the web host's ABI layer
+make web-test-desktop     # the windowing side of that layer (registry, window round-trip)
+make web-test-desktop-as  # the same selftest against the AssemblyScript desktop
+make web-test-desktop-wat # the same selftest against the WAT desktop
+make e2e                  # the Playwright browser suite (needs `npx playwright install chromium`)
+make test                 # cargo test, all crates
+make fmt                  # format all sources (rustfmt + prettier)
+make hooks                # point git at .githooks (the pre-commit gate)
 
 make components-as   # build the AS demos, lift them
 make run-tui-as      # counter from the AS component
@@ -133,18 +135,19 @@ it runs from disk with no server and no network.
 ## GitHub Pages
 
 `make site` assembles the demo site in `target/site/`: the desktop launcher
-(`site/`), the desktop page (`desktop.html`, the `demo-desktop` component),
-the nine demo pages, and their `.wasm` modules. The launcher is a desktop —
-an icon per demo, title underneath; double-clicking one opens the demo in a
-small window (an iframe over the page), and several windows may be open at
-once. The desktop page runs the same desktop as a component: its windows
-embed the demo *components*, rendered in place rather than in iframes. The
-pages fetch their `.wasm` file instead of inlining it, so the site needs a
-server (GitHub Pages, or `python3 -m http.server`); the launcher itself runs
-from disk, its demo windows do not (their fetch fails on file://). It is
-deployed to GitHub Pages by `.github/workflows/site.yml` on every push to
-main. Enabling it needs one manual step: repository Settings → Pages →
-Source: *GitHub Actions*.
+(`site/`), the three desktop pages (`desktop.html` and its `-as`/`-wat`
+twins, the `demo-desktop` component in each source language), the nine demo
+pages, and their `.wasm` modules. The launcher is a desktop — an icon per
+demo, title underneath; double-clicking one opens the demo in a small window
+(an iframe over the page), and several windows may be open at once. The
+desktop pages run the same desktop as a component: their windows embed the
+demo *components*, rendered in place rather than in iframes. The pages fetch
+their `.wasm` file instead of inlining it, so the site needs a server
+(GitHub Pages, or `python3 -m http.server`); the launcher itself runs from
+disk, its demo windows do not (their fetch fails on file://). It is deployed
+to GitHub Pages by `.github/workflows/site.yml` on every push to main.
+Enabling it needs one manual step: repository Settings → Pages → Source:
+*GitHub Actions*.
 
 ## Tests
 
@@ -158,7 +161,12 @@ Source: *GitHub Actions*.
   input), and the refresh request (`schedule`). It runs against the Rust
   component, as `*_as` against the AssemblyScript one (skipped when
   `node_modules` is missing), and as `*_wat` against the hand-rolled WAT one
-  (skipped when `wasm-tools` is missing).
+  (skipped when `wasm-tools` is missing). The desktop's round-trip
+  (`crates/demo-desktop/tests/roundtrip.rs`) covers the windowing side of
+  the same host: the nine-entry registry into its grid, the open/close
+  round-trip (a double-click opens a window by the entry's name and default
+  size, a close drops it, the count follows), and the not-found path —
+  against all three producers, with the same skips.
 - The hosts' headless render checks, also under `cargo test`: `host-tui`
   `tests/dump.rs` runs the binary with `--dump` (one frame into ratatui's
   test backend) and asserts on the layout, the semantic colors, and the
@@ -188,14 +196,16 @@ Source: *GitHub Actions*.
 - `make web-test` (and `-as`, `-wat`): the same assertions from Node, against
   the core modules, through the same `glue.js` the browser page uses.
   `make web-test-desktop` covers the windowing side of that layer: the
-  registry round-trip and the window count, against `demo-desktop`.
+  registry round-trip and the window count, against `demo-desktop`; its
+  `-as`/`-wat` twins run the same checks against the other two producers —
+  the byte-parity gate for the desktop.
 - `make ui-test`: the tree layer's diff channel, as a standalone module run
   via Node: the structural cases (add, remove, re-parent) plus the bootstrap,
   id-less, and input rules — the AS twin of the `component-ui` unit tests.
 - `make e2e`: the Playwright browser suite (chromium) against the built
-  site: the nine demo pages and both desktops (the static launcher and the
-  `demo-desktop` component) in a real browser — the
-  rendered DOM against the same expectations as the web selftest
+  site: the nine demo pages and both desktops (the static launcher, and the
+  `demo-desktop` component in its three source languages) in a real browser —
+  the rendered DOM against the same expectations as the web selftest
   (`web/expect.mjs`), the computed styles, the in-place-vs-rebuild
   behavior, and the window management (open, raise, drag, resize, close).
   Screenshot goldens compare in CI only (font rendering is
@@ -204,8 +214,9 @@ Source: *GitHub Actions*.
   in a 360x340 viewport (the iced window size), plus the desktop at
   1280x720. The parity spec (`e2e/parity.spec.mjs`) asserts the pixel-level
   twin of the DOM parity: the three producers of each demo render each state
-  identically — within one browser, so it runs locally and in CI. Locally a
-  one-time `npx playwright install chromium` is needed.
+  identically, and the three desktop pages do the same (the grid, the window
+  count, and the open windows) — within one browser, so it runs locally and
+  in CI. Locally a one-time `npx playwright install chromium` is needed.
 - `make fmt-check`: all sources are formatter-clean (`cargo fmt --check`
   for the Rust crates, prettier for the assembly/ and web/ trees). A
   pre-commit hook runs it on every commit (`make hooks` installs it);
