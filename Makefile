@@ -3,11 +3,11 @@ COMPONENTS    := demo-counter demo-stopwatch demo-todo
 AS_COMPONENTS := demo-counter demo-stopwatch demo-todo
 WAT_COMPONENTS := demo-counter demo-stopwatch demo-todo
 
-.PHONY: components components-as components-wat run-cli run-stop-cli run-todo-cli run-tui run-stop-tui run-todo-tui \
-         run-iced run-stop-iced run-todo-iced run-cli-as run-stop-cli-as run-todo-cli-as \
-         run-tui-as run-stop-tui-as run-todo-tui-as run-iced-as run-stop-iced-as run-todo-iced-as \
-         run-cli-wat run-stop-cli-wat run-todo-cli-wat run-tui-wat run-stop-tui-wat run-todo-tui-wat \
-         run-iced-wat run-stop-iced-wat run-todo-iced-wat \
+.PHONY: components components-as components-wat run-cli run-stop-cli run-todo-cli run-tui run-stop-tui run-todo-tui run-desktop-tui \
+         run-iced run-stop-iced run-todo-iced run-desktop-iced run-cli-as run-stop-cli-as run-todo-cli-as \
+         run-tui-as run-stop-tui-as run-todo-tui-as run-desktop-tui-as run-iced-as run-stop-iced-as run-todo-iced-as run-desktop-iced-as \
+         run-cli-wat run-stop-cli-wat run-todo-cli-wat run-tui-wat run-stop-tui-wat run-todo-tui-wat run-desktop-tui-wat \
+         run-iced-wat run-stop-iced-wat run-todo-iced-wat run-desktop-iced-wat \
          web web-as web-wat web-test web-test-as web-test-wat \
          web-test-desktop web-test-desktop-as web-test-desktop-wat \
          site ui-test e2e screenshots fmt fmt-check hooks test
@@ -113,6 +113,9 @@ run-stop-tui-wat: components-wat
 run-todo-tui-wat: components-wat
 	cargo run -p host-tui -- target/components/demo-todo-wat.component.wasm
 
+run-desktop-tui-wat: components-wat
+	cargo run -p host-tui -- --entry counter=target/components/demo-counter-wat.component.wasm --entry stopwatch=target/components/demo-stopwatch-wat.component.wasm --entry todo=target/components/demo-todo-wat.component.wasm target/components/demo-desktop-wat.component.wasm
+
 run-iced-wat: components-wat
 	cargo run -p host-iced -- target/components/demo-counter-wat.component.wasm
 
@@ -121,6 +124,9 @@ run-stop-iced-wat: components-wat
 
 run-todo-iced-wat: components-wat
 	cargo run -p host-iced -- target/components/demo-todo-wat.component.wasm
+
+run-desktop-iced-wat: components-wat
+	cargo run -p host-iced -- --entry counter=target/components/demo-counter-wat.component.wasm --entry stopwatch=target/components/demo-stopwatch-wat.component.wasm --entry todo=target/components/demo-todo-wat.component.wasm target/components/demo-desktop-wat.component.wasm
 
 # The same hosts, pointed at the AssemblyScript components.
 run-cli-as: components-as
@@ -141,6 +147,9 @@ run-stop-tui-as: components-as
 run-todo-tui-as: components-as
 	cargo run -p host-tui -- target/components/demo-todo-as.component.wasm
 
+run-desktop-tui-as: components-as
+	cargo run -p host-tui -- --entry counter=target/components/demo-counter-as.component.wasm --entry stopwatch=target/components/demo-stopwatch-as.component.wasm --entry todo=target/components/demo-todo-as.component.wasm target/components/demo-desktop-as.component.wasm
+
 run-iced-as: components-as
 	cargo run -p host-iced -- target/components/demo-counter-as.component.wasm
 
@@ -149,6 +158,9 @@ run-stop-iced-as: components-as
 
 run-todo-iced-as: components-as
 	cargo run -p host-iced -- target/components/demo-todo-as.component.wasm
+
+run-desktop-iced-as: components-as
+	cargo run -p host-iced -- --entry counter=target/components/demo-counter-as.component.wasm --entry stopwatch=target/components/demo-stopwatch-as.component.wasm --entry todo=target/components/demo-todo-as.component.wasm target/components/demo-desktop-as.component.wasm
 
 # Terminal hosts: one component, two different renderers.
 run-cli: components
@@ -169,6 +181,9 @@ run-stop-tui: components
 run-todo-tui: components
 	cargo run -p host-tui -- target/components/demo-todo.component.wasm
 
+run-desktop-tui: components
+	cargo run -p host-tui -- --entry counter=target/components/demo-counter.component.wasm --entry stopwatch=target/components/demo-stopwatch.component.wasm --entry todo=target/components/demo-todo.component.wasm target/components/demo-desktop.component.wasm
+
 # Windowed hosts (iced).
 run-iced: components
 	cargo run -p host-iced -- target/components/demo-counter.component.wasm
@@ -178,6 +193,9 @@ run-stop-iced: components
 
 run-todo-iced: components
 	cargo run -p host-iced -- target/components/demo-todo.component.wasm
+
+run-desktop-iced: components
+	cargo run -p host-iced -- --entry counter=target/components/demo-counter.component.wasm --entry stopwatch=target/components/demo-stopwatch.component.wasm --entry todo=target/components/demo-todo.component.wasm target/components/demo-desktop.component.wasm
 
 # Web host: one self-contained HTML page per component (the wasm module
 # inlined as base64). The page runs straight from disk — no server, no npm.

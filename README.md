@@ -43,8 +43,8 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
 | `wit/`                   | the WIT contract (`widget` + `app`)                                                                 |
 | `crates/host-shared`     | wasmtime host core: the bindings, the list→tree rebuild, the retained tree diffs apply against      |
-| `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--click <id>` injects clicks, `--dump <file>` renders a headless PNG, `--now <base> <step>` fakes the clock (test-only) |
-| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--dump` prints one frame, `--width <n>` sizes the dump buffer, `--now <base> <step>` fakes the clock (test-only) |
+| `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--entry <name=path>` registers an entry — a non-empty registry makes it a desktop: framed double-clickable tiles, and floating panels (title bar with close, cascade, raise on press, opaque to the desktop below); `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events, `--dump <file>` renders a headless PNG, `--now <base> <step>` fakes the clock (test-only) |
+| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--entry <name=path>` registers an entry — a non-empty registry makes it a desktop: framed double-clickable tiles, and overlapping windows (title bar with close, cascade, Tab/Shift+Tab raise/lower, Esc closes); `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events (Enter on a tile synthesizes a double-click), `--dump` prints one frame, `--width <n>` sizes the dump buffer, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
 | `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); the desktop pages (`glue.js` + `desktop.js`) run `demo-desktop` with the windowing host, one per producer; `expect.mjs` holds the expected views, shared with the selftest and the browser suite |
 | `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; plus the desktop as a component, in its three source languages; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
@@ -104,6 +104,8 @@ make run-stop-iced        # stopwatch, window
 make run-todo-cli         # todo, ASCII terminal host
 make run-todo-tui         # todo, TUI host
 make run-todo-iced        # todo, window
+make run-desktop-tui      # desktop, TUI host (framed tiles, windows)
+make run-desktop-iced     # desktop, window (floating panels)
 make web                  # self-contained HTML pages in target/web/
 make site                 # the demo site in target/site/ (GitHub Pages)
 make web-test             # headless (Node) check of the web host's ABI layer
@@ -115,18 +117,20 @@ make test                 # cargo test, all crates
 make fmt                  # format all sources (rustfmt + prettier)
 make hooks                # point git at .githooks (the pre-commit gate)
 
-make components-as   # build the AS demos, lift them
-make run-tui-as      # counter from the AS component
-make run-todo-tui-as # todo from the AS component
-make web-as          # HTML pages for the AS components
-make web-test-as     # the web selftest against the AS modules
-make ui-test         # the tree layer's structural diff, run via Node
+make components-as      # build the AS demos, lift them
+make run-tui-as         # counter from the AS component
+make run-todo-tui-as    # todo from the AS component
+make run-desktop-tui-as # desktop from the AS component
+make web-as             # HTML pages for the AS components
+make web-test-as        # the web selftest against the AS modules
+make ui-test            # the tree layer's structural diff, run via Node
 
-make components-wat  # build the WAT demos, lift them
-make run-tui-wat     # counter from the WAT component
-make run-todo-tui-wat # todo from the WAT component
-make web-wat         # HTML pages for the WAT components
-make web-test-wat    # the web selftest against the WAT modules
+make components-wat     # build the WAT demos, lift them
+make run-tui-wat        # counter from the WAT component
+make run-todo-tui-wat   # todo from the WAT component
+make run-desktop-tui-wat # desktop from the WAT component
+make web-wat            # HTML pages for the WAT components
+make web-test-wat       # the web selftest against the WAT modules
 ```
 
 `make web` inlines the wasm module as base64 into one HTML file per component;
@@ -173,15 +177,20 @@ Enabling it needs one manual step: repository Settings → Pages → Source:
   focus ring; `host-iced` `tests/dump.rs` runs it with `--dump` (one frame
   through iced's software `tiny-skia` renderer into a PNG) and asserts on the
   background, the button chrome, the semantic colors, and the centered
-  layout. Each runs against the Rust component, as `*_as` the AssemblyScript
-  one (skipped when `node_modules` is missing), and as `*_wat` the WAT one
-  (skipped when `wasm-tools` is missing). The iced render is headless — no
-  window, display, or GPU — so it runs in CI.
+  layout. Each also runs the desktop scenario against `demo-desktop` (a
+  `--double-click` opens a window, a second cascades, a `--close` drops one):
+  the tui frame's windows, and the iced frame's panel chrome on the desktop's
+  larger canvas. Each runs against the Rust component, as `*_as` the
+  AssemblyScript one (skipped when `node_modules` is missing), and as `*_wat`
+  the WAT one (skipped when `wasm-tools` is missing). The iced render is
+  headless — no window, display, or GPU — so it runs in CI.
 - The dumps' goldens, the visual regression layer: each scenario's whole
   frame — the tui's text (with the SGR codes) and the iced's PNG — is
   byte-exact against `crates/host-{tui,iced}/tests/goldens/`, shared by the
   three producers (they must render identically, so the shared golden is
-  also the parity check). The tui frame is text, so its goldens are
+  also the parity check). The scenarios are the counter, the running
+  stopwatch, the todo after an add, and the desktop (one window, two, and
+  after a close). The tui frame is text, so its goldens are
   platform-stable. The iced render is bundled-font software rasterization:
   the dump prunes the font database to the bundled fonts (Fira Sans plus a
   small symbol font covering the glyphs Fira lacks), so the iced goldens
