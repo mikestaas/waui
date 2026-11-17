@@ -114,7 +114,9 @@ fn main() {
 fn first_input(node: &Tree) -> Option<u32> {
     match node {
         Tree::Input(id, _, _, _) => *id,
-        Tree::Row(_, children) | Tree::Column(_, children) => children.iter().find_map(first_input),
+        Tree::Row(_, _, children) | Tree::Column(_, _, children) => {
+            children.iter().find_map(first_input)
+        }
         _ => None,
     }
 }
@@ -143,13 +145,13 @@ fn render(node: &Tree, depth: usize, out: &mut String) {
             let id = id.map_or_else(String::new, |i| format!("{i}: "));
             out.push_str(&format!("{indent}@{id}{src}\n"));
         }
-        Tree::Row(_, children) => {
+        Tree::Row(_, _, children) => {
             out.push_str(&format!("{indent}row:\n"));
             for child in children {
                 render(child, depth + 1, out);
             }
         }
-        Tree::Column(_, children) => {
+        Tree::Column(_, _, children) => {
             out.push_str(&format!("{indent}column:\n"));
             for child in children {
                 render(child, depth + 1, out);
