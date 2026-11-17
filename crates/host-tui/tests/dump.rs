@@ -7,13 +7,18 @@
 //! component (cargo + wit-bindgen), its AssemblyScript one (asc + the
 //! hand-rolled ABI), and its hand-rolled WAT one. The assertions are shared.
 //!
+//! The desktop scenario (`--entry` registry, `--double-click` tiles,
+//! `--close` windows) exercises the host's multi-document interface: the
+//! framed tiles, the window's title bar and border, the menu bar's window
+//! count, and the cascade.
+//!
 //! The goldens in `tests/goldens/` are the visual regression layer: the
 //! whole frame, byte-exact, shared by the three producers (they must render
 //! identically, so the shared golden is also the parity check). The frame is
 //! text, so the goldens are platform-stable and run everywhere. The
 //! stopwatch's running state reads the clock, so it runs on a fake one that
-//! advances (`--now <base> <step>`). Regenerate with
-//! `UPDATE_GOLDENS=1 cargo test -p host-tui`.
+//! advances (`--now <base> <step>`); a paused one never does. Regenerate
+//! with `UPDATE_GOLDENS=1 cargo test -p host-tui`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -28,13 +33,12 @@ use waui_test::{
 /// `elapsed` sample both read it, so the readout is a fixed 2 * step.
 const FAKE_NOW: (u64, u64) = (1_000, 50);
 
-/// Run the host binary in `--dump` mode: one frame, printed as text with
-/// ANSI SGR codes for the styled cells. `clicks` are injected before the
-/// frame, like a pointer would drive them; `now` is the fake clock's base
-/// and step (`--now`), so a frame that reads the clock is deterministic;
-/// `width` is the buffer's column count (`--width`); `None` sizes the
-/// buffer to the tree, floored so the bar wraps to at most two rows.
-fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>, width: Option<u16>) -> String {
+/// Run the host binary in `--dump` mode with the given argv elements
+/// (after `--dump`, before the component path), and return the printed
+/// frame. `now` is the fake clock's base and step (`--now`), so a frame
+/// that reads the clock is deterministic; `width` is the buffer's column
+/// count (`--width`); `None` sizes the buffer to the frame.
+fn run_dump(path: &Path, args: &[String], now: Option<(u64, u64)>, width: Option<u16>) -> String {
     let bin = env!("CARGO_BIN_EXE_host-tui");
     let mut cmd = Command::new(bin);
     cmd.arg("--dump");
@@ -44,8 +48,8 @@ fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>, width: Option<u16>
     if let Some((base, step)) = now {
         cmd.arg("--now").arg(base.to_string()).arg(step.to_string());
     }
-    for id in clicks {
-        cmd.arg("--click").arg(id.to_string());
+    for a in args {
+        cmd.arg(a);
     }
     cmd.arg(path);
     let out = cmd.output().expect("failed to run the host-tui binary");
@@ -55,6 +59,18 @@ fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>, width: Option<u16>
         String::from_utf8_lossy(&out.stderr)
     );
     String::from_utf8(out.stdout).expect("the dump is not valid utf-8")
+}
+
+/// Run the host binary in `--dump` mode: one frame, printed as text with
+/// ANSI SGR codes for the styled cells. `clicks` are injected before the
+/// frame, like a pointer would drive them.
+fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>, width: Option<u16>) -> String {
+    let mut args = Vec::new();
+    for id in clicks {
+        args.push("--click".to_string());
+        args.push(id.to_string());
+    }
+    run_dump(path, &args, now, width)
 }
 
 /// Strip ANSI escape sequences (the SGR color/weight codes), keeping the
@@ -499,4 +515,155 @@ fn todo_dump_wat() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     build_component_wat("demo-todo");
     assert_todo_frame(&component_path_wat("demo-todo"), "wat");
+}
+
+/// The registry's `--entry` argv elements for the producer's three demos,
+/// in tile order (the tile `i` is the registry entry `i`).
+fn entries(producer: &str) -> Vec<String> {
+    let suffix = match producer {
+        "rust" => "",
+        "as" => "-as",
+        _ => "-wat",
+    };
+    let mut out = Vec::new();
+    for name in ["counter", "stopwatch", "todo"] {
+        out.push("--entry".to_string());
+        out.push(format!(
+            "{name}={}",
+            component_path(&format!("demo-{name}{suffix}")).display()
+        ));
+    }
+    out
+}
+
+/// The desktop's frames: the framed tiles, the window's title bar and
+/// border, the menu bar's window count, and the whole frame against the
+/// golden. The window's content is the entry's demo (the counter's readout
+/// and buttons; the stopwatch's, paused, a fixed 0 ms).
+fn assert_desktop_frame(path: &Path, producer: &str) {
+    // One window: the counter, opened by a double-click on its tile.
+    let mut args = entries(producer);
+    args.push("--double-click".to_string());
+    args.push("100".to_string());
+    let frame = run_dump(path, &args, None, None);
+    let ls = lines(&frame);
+    // The windowing hint (a window is open): every word stays visible.
+    let mut words = Vec::new();
+    for l in &ls {
+        for w in l.plain.split_whitespace() {
+            words.push(w.to_string());
+        }
+    }
+    assert!(
+        words.iter().any(|w| w == "tab:"),
+        "the windowing hint (tab: raise) should be visible: {words:?}"
+    );
+    assert!(
+        ls.iter().any(|l| l.plain.contains("1 window")),
+        "the menu bar should count one window: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        ls.iter()
+            .any(|l| l.plain.contains("counter") && l.plain.contains('×')),
+        "the window's title bar should show the entry's name: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        ls.iter()
+            .any(|l| l.plain.contains("stopwatch") && l.plain.contains("todo")),
+        "the tiles' labels should be visible: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert_frame_golden(&frame, "desktop-1.txt");
+    save_producer_golden(&frame, producer, "desktop-1.txt");
+
+    // Two windows: the stopwatch cascades down-right of the counter.
+    let mut args = entries(producer);
+    args.push("--double-click".to_string());
+    args.push("100".to_string());
+    args.push("--double-click".to_string());
+    args.push("101".to_string());
+    let frame = run_dump(path, &args, None, None);
+    let ls = lines(&frame);
+    assert!(
+        ls.iter().any(|l| l.plain.contains("2 windows")),
+        "the menu bar should count two windows: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        ls.iter().filter(|l| l.plain.contains('×')).count() >= 2,
+        "both windows' title bars should be visible: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert_frame_golden(&frame, "desktop-2.txt");
+    save_producer_golden(&frame, producer, "desktop-2.txt");
+
+    // Close the first: the count drops back to one, the second window stays
+    // at its cascade position.
+    let mut args = entries(producer);
+    args.push("--double-click".to_string());
+    args.push("100".to_string());
+    args.push("--double-click".to_string());
+    args.push("101".to_string());
+    args.push("--close".to_string());
+    args.push("1".to_string());
+    let frame = run_dump(path, &args, None, None);
+    let ls = lines(&frame);
+    assert!(
+        ls.iter().any(|l| l.plain.contains("1 window")),
+        "the menu bar should count one window after the close: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        ls.iter().filter(|l| l.plain.contains('×')).count() == 1,
+        "only the surviving window's title bar should be visible: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert_frame_golden(&frame, "desktop-close.txt");
+    save_producer_golden(&frame, producer, "desktop-close.txt");
+}
+
+#[test]
+fn desktop_dump() {
+    let _guard = RUST_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component("demo-desktop");
+    build_component("demo-counter");
+    build_component("demo-stopwatch");
+    build_component("demo-todo");
+    assert_desktop_frame(&component_path("demo-desktop"), "rust");
+}
+
+#[test]
+fn desktop_dump_as() {
+    if !as_toolchain_available() {
+        eprintln!("skipping: AssemblyScript toolchain not installed (run `npm install`)");
+        return;
+    }
+    let _guard = AS_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_as("demo-desktop");
+    build_component_as("demo-counter");
+    build_component_as("demo-stopwatch");
+    build_component_as("demo-todo");
+    assert_desktop_frame(&component_path_as("demo-desktop"), "as");
+}
+
+#[test]
+fn desktop_dump_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let _guard = WAT_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_wat("demo-desktop");
+    build_component_wat("demo-counter");
+    build_component_wat("demo-stopwatch");
+    build_component_wat("demo-todo");
+    assert_desktop_frame(&component_path_wat("demo-desktop"), "wat");
 }
