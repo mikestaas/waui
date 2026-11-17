@@ -66,7 +66,9 @@ world app {
   export on-tick: func();
 
   /// The node with the given id was double-activated. A host whose input
-  /// model has no double-click never emits this, as it may ignore
+  /// model has no double-click may synthesize one from its own input model
+  /// (a terminal host from Enter on a double-clickable node, a pointer
+  /// host from a single click) or never emit this, as it may ignore
   /// `schedule`.
   export on-double-click: func(id: u32);
 
