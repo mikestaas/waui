@@ -42,10 +42,12 @@ pub enum Tree {
     /// (widget id, the `src` path/asset name the host resolves, the width,
     /// the height — `0` is the host's default)
     Image(Option<u32>, String, u32, u32),
-    /// (the cross-axis alignment, the children)
-    Row(Align, Vec<Tree>),
-    /// (the cross-axis alignment, the children)
-    Column(Align, Vec<Tree>),
+    /// (widget id — `None` for a container a component did not give an id,
+    /// the cross-axis alignment, the children)
+    Row(Option<u32>, Align, Vec<Tree>),
+    /// (widget id — `None` for a container a component did not give an id,
+    /// the cross-axis alignment, the children)
+    Column(Option<u32>, Align, Vec<Tree>),
 }
 
 /// The node's id, if it has one (see the WIT identity note: a node the
@@ -78,9 +80,9 @@ fn to_tree(node: &Node) -> Tree {
         Node::Image(i) => Tree::Image(i.id, i.src.clone(), i.width, i.height),
         Node::Container(c) => {
             if c.direction == Direction::Row {
-                Tree::Row(c.align, Vec::new())
+                Tree::Row(c.id, c.align, Vec::new())
             } else {
-                Tree::Column(c.align, Vec::new())
+                Tree::Column(c.id, c.align, Vec::new())
             }
         }
     }
@@ -127,7 +129,7 @@ pub fn build_tree(nodes: &[Node]) -> Tree {
         }
         let (head, tail) = trees.split_at_mut(first);
         match head[i].as_mut() {
-            Some(Tree::Row(_, children) | Tree::Column(_, children)) => {
+            Some(Tree::Row(_, _, children) | Tree::Column(_, _, children)) => {
                 for k in kids {
                     if let Some(child) = tail[k - first].take() {
                         children.push(child);
@@ -149,9 +151,9 @@ pub fn build_tree(nodes: &[Node]) -> Tree {
         }
     }
     match roots.len() {
-        0 => Tree::Column(Align::Center, Vec::new()),
+        0 => Tree::Column(None, Align::Center, Vec::new()),
         1 => roots.pop().unwrap(),
-        _ => Tree::Column(Align::Center, roots),
+        _ => Tree::Column(None, Align::Center, roots),
     }
 }
 
@@ -472,7 +474,7 @@ mod tests {
         ]);
         assert!(r.apply(&[changed(text(3, Some(1), "-1"), 0)]));
         let tree = build_tree(r.nodes());
-        if let Tree::Column(_, children) = &tree {
+        if let Tree::Column(_, _, children) = &tree {
             // List order: the readout first, then the two buttons.
             assert_eq!(children.len(), 3);
             assert!(matches!(&children[0], Tree::Text(c, _) if c.as_str() == "-1"));
@@ -495,11 +497,49 @@ mod tests {
             text(4, Some(3), "a"),
         ]);
         match &tree {
-            Tree::Column(Align::Center, children) => match &children[0] {
-                Tree::Column(Align::Start, kids) => assert_eq!(kids.len(), 1),
+            Tree::Column(_, Align::Center, children) => match &children[0] {
+                Tree::Column(_, Align::Start, kids) => assert_eq!(kids.len(), 1),
                 _ => panic!("the wrapper should keep its start align"),
             },
             _ => panic!("expected the centered root column"),
+        }
+    }
+
+    #[test]
+    fn rebuild_carries_a_container_id() {
+        // A host that addresses containers (the desktop's tiles) needs the
+        // id; an id-less container carries None, and the synthetic roots
+        // (the multi-root wrapper) carry None too.
+        let tree = build_tree(&[
+            cont(1, None),
+            Node::Container(Container {
+                id: Some(2),
+                parent: Some(1),
+                direction: Direction::Row,
+                align: Align::Center,
+            }),
+            Node::Container(Container {
+                id: None,
+                parent: None,
+                direction: Direction::Column,
+                align: Align::Center,
+            }),
+        ]);
+        match &tree {
+            Tree::Column(None, _, roots) if roots.len() == 2 => {
+                match &roots[0] {
+                    Tree::Column(Some(1), _, children) => match &children[0] {
+                        Tree::Row(Some(2), _, _) => {}
+                        other => panic!("expected the id'd row: {other:?}"),
+                    },
+                    other => panic!("root 1 should keep its id: {other:?}"),
+                }
+                match &roots[1] {
+                    Tree::Column(None, _, _) => {}
+                    other => panic!("the id-less root should carry None: {other:?}"),
+                }
+            }
+            other => panic!("expected the two roots in a wrapper: {other:?}"),
         }
     }
 }
