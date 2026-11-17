@@ -10,6 +10,7 @@ WAT_COMPONENTS := demo-counter demo-stopwatch demo-todo
          run-iced-wat run-stop-iced-wat run-todo-iced-wat run-desktop-iced-wat \
          web web-as web-wat web-test web-test-as web-test-wat \
          web-test-desktop web-test-desktop-as web-test-desktop-wat \
+         host-tui-wasm host-tui-wasm-test \
          site ui-test e2e screenshots fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model. The
@@ -288,6 +289,25 @@ web-test-desktop-as: components-as
 # gate's third producer.
 web-test-desktop-wat: components-wat
 	node web/desktop-selftest.mjs target/wat/demo-desktop.wasm
+
+# The browser TUI host: the wasmtime host as wasm (Pulley interpreter).
+# Builds the cdylib (no crossterm, no native binary), runs wasm-bindgen,
+# and precompiles the demo components natively for pulley32 — the artifacts
+# the page's `run` deserializes. Needs wasm-bindgen on the PATH.
+host-tui-wasm: components
+	cargo build -p host-tui --no-default-features --release --target $(WASM_TARGET)
+	wasm-bindgen target/$(WASM_TARGET)/release/host_tui.wasm --target web --out-dir target/host-tui/pkg
+	@for c in $(COMPONENTS); do \
+		echo "==> precompiling $$c for pulley32"; \
+		cargo run -p host-precompile -- target/components/$$c.component.wasm target/components/$$c.cwasm || exit 1; \
+	done
+	@echo "wrote target/host-tui/pkg/ and target/components/*.cwasm"
+
+# The byte-parity gate: the wasm host's `dump` frame against the native
+# `host-tui --dump` frame, per demo (Node).
+host-tui-wasm-test: host-tui-wasm
+	cargo build -p host-tui
+	node web/tui/selftest.mjs
 
 # The tree layer's diff channel, as a standalone module run via Node: the
 # structural cases (add, remove, re-parent) plus the bootstrap and id-less

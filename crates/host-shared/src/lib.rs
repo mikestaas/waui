@@ -27,6 +27,70 @@ wasmtime::component::bindgen!({
 // crate's root.
 use waui::ui::widget::{Align, Direction, Style};
 
+// --------------------------------------------------------------------------
+// The browser host's engine config, shared with the precompile tool.
+// --------------------------------------------------------------------------
+
+/// The engine config for running waui components on the Pulley interpreter
+/// (the browser host) and for precompiling them natively for pulley32 (the
+/// build tool). The two must agree: the browser deserializes the artifact
+/// the tool writes, and Wasmtime rejects an artifact whose serialized target
+/// and tunables do not match the deserializing engine.
+///
+/// The explicit `pulley32` target skips Wasmtime's platform-dependent
+/// refinement, so both sides start from the same base defaults. The
+/// no-virtual-memory refinements are applied explicitly on both sides (an
+/// explicit target skips the automatic refinement): the base defaults (a
+/// 10 MB reservation, copy-on-write) fail at runtime on wasm32, which
+/// allocates memories from the heap.
+///
+/// `concurrency_support` is off on both sides: the browser build lacks the
+/// `component-model-async` cargo feature, so it computes the same value by
+/// construction, and the artifact records it. The build tool additionally
+/// disables `wasm_threads` (the `threads` feature is on by default in its
+/// full native build, and the artifact records it); the browser has it off
+/// by construction, so the tool sets it, not this shared config.
+pub fn pulley_config() -> wasmtime::Config {
+    let mut config = wasmtime::Config::default();
+    config.target("pulley32").expect("pulley32 target");
+    config.concurrency_support(false);
+    config.memory_reservation(0);
+    config.memory_reservation_for_growth(1 << 20);
+    config.memory_init_cow(false);
+    config.gc_heap_reservation(0);
+    config.gc_heap_reservation_for_growth(1 << 20);
+    config
+}
+
+// --------------------------------------------------------------------------
+// The embedder half of wasmtime's custom-platform contract (wasm32).
+// --------------------------------------------------------------------------
+//
+// On wasm32, wasmtime's runtime falls into its "custom platform" branch and
+// declares `wasmtime_tls_{get,set}` as imports, expecting the embedder to
+// link definitions. Wasmtime needs two thread-local slots (trap-handler
+// state and component-model-async state). A web page is single-threaded, so
+// a static array backs them — the same approach as wasmtime's min-platform
+// example. lld refuses undefined symbols without import attributes, so these
+// must be defined or the cdylib fails to link.
+
+#[cfg(target_arch = "wasm32")]
+mod tls {
+    use core::sync::atomic::{AtomicPtr, Ordering};
+
+    static SLOTS: [AtomicPtr<u8>; 2] = [const { AtomicPtr::new(core::ptr::null_mut()) }; 2];
+
+    #[no_mangle]
+    extern "C" fn wasmtime_tls_get(slot: usize) -> *mut u8 {
+        SLOTS[slot].load(Ordering::Relaxed)
+    }
+
+    #[no_mangle]
+    extern "C" fn wasmtime_tls_set(slot: usize, val: *mut u8) {
+        SLOTS[slot].store(val, Ordering::Relaxed);
+    }
+}
+
 /// A rebuilt widget tree.
 #[derive(Debug, Clone)]
 pub enum Tree {

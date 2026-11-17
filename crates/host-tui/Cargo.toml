@@ -3,13 +3,48 @@ name = "host-tui"
 version = "0.0.1"
 edition = "2021"
 
+[lib]
+# `rlib` for the native binary; `cdylib` for the browser module
+# (`--target wasm32-unknown-unknown`, wasm-bindgen).
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["native"]
+# Marker for the native binary (a real terminal via crossterm). The browser
+# build passes `--no-default-features`, which excludes it.
+native = []
+
+[[bin]]
+name = "host-tui"
+required-features = ["native"]
+
 [dependencies]
-wasmtime = { workspace = true }
+host-shared = { path = "../host-shared" }
 # `unstable-rendered-line-info` enables `Paragraph::line_count`: the rows
 # the hint bar needs at a given width.
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+wasmtime = { workspace = true }
 ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 crossterm = { workspace = true }
-host-shared = { path = "../host-shared" }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The default feature set pulls in `cache` (rustix/errno), which does not
+# support wasm32-unknown-unknown. Same reduced set as host-shared's wasm
+# branch: the component model, the runtime (Pulley is the default backend
+# where Cranelift JIT is unavailable), and the GC proposal. No `cranelift`
+# (it enables `std`) and no `std` itself: with `std` on, `MmapVec::from_file`
+# compiles against the `mmap` module, which is gated out where virtual
+# memory is unavailable (wasm32).
+wasmtime = { version = "49", default-features = false, features = ["anyhow", "runtime", "gc", "gc-copying", "gc-drc", "gc-null", "component-model", "demangle"] }
+# No crossterm (it does not compile for wasm32-unknown-unknown): the `web`
+# module's xterm.js backend replaces it.
+ratatui = { version = "0.30", default-features = false, features = ["all-widgets", "layout-cache", "macros", "underline-color", "std", "unstable-rendered-line-info"] }
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true, features = ["Window", "KeyboardEvent"] }
+# `now_ms` on wasm32: `performance.now()`, mirroring the `std::time` API.
+web-time = { workspace = true }
 
 [dev-dependencies]
 waui-test = { path = "../waui-test" }

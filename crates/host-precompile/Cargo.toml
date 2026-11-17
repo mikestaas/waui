@@ -1,0 +1,10 @@
+[package]
+name = "host-precompile"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+# Full default features: the native build has Cranelift, which compiles to
+# pulley bytecode for the pulley32 target.
+wasmtime = { workspace = true }
+host-shared = { path = "../host-shared" }

@@ -3,5 +3,16 @@ name = "host-shared"
 version = "0.0.1"
 edition = "2021"
 
-[dependencies]
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wasmtime = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# The default feature set pulls in `cache` (rustix/errno), which does not
+# support wasm32-unknown-unknown. The reduced set keeps the component model,
+# the runtime (Pulley is the default backend where Cranelift JIT is
+# unavailable), and the GC proposal (the WAT demos use it). No `cranelift`
+# (it enables `std`) and no `std` itself: with `std` on, `MmapVec::from_file`
+# compiles against the `mmap` module, which is gated out where virtual
+# memory is unavailable (wasm32). Without `std`, Wasmtime uses its no-std
+# sync primitives; on a single-threaded page they never contend.
+wasmtime = { version = "49", default-features = false, features = ["anyhow", "runtime", "gc", "gc-copying", "gc-drc", "gc-null", "component-model", "demangle"] }

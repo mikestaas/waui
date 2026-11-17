@@ -10,6 +10,8 @@
 #                                     --dump renders
 #   make ui-test                      the AssemblyScript tree/diff unit tests
 #   make web-test / -as / -wat        the Node selftest: the byte-parity gate
+#   make host-tui-wasm-test           the browser TUI host's byte-parity gate:
+#                                     the wasm host's frame vs the native one
 #   make e2e                          the Playwright browser suite: the demo
 #                                     pages and the site desktop, plus the
 #                                     screenshot goldens
@@ -84,6 +86,15 @@ jobs:
         with:
           version: 1.261.0
 
+      # The wasm-bindgen CLI, version-matched to the lockfile (the browser
+      # host builds run it; a mismatched CLI writes glue the runtime rejects).
+      - name: Install wasm-bindgen
+        run: |
+          v=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep '^version' | head -1 | cut -d'"' -f2)
+          curl -sSL "https://github.com/rustwasm/wasm-bindgen/releases/download/$v/wasm-bindgen-$v-x86_64-unknown-linux-musl.tar.gz" | tar xz
+          install -m 755 wasm-bindgen "$HOME/.cargo/bin/wasm-bindgen"
+          wasm-bindgen --version
+
       - name: npm toolchain
         run: npm ci
 
@@ -117,6 +128,12 @@ jobs:
           make web-test
           make web-test-as
           make web-test-wat
+
+      # The browser TUI host's byte-parity gate: the wasm host's `dump`
+      # frame against the native `host-tui --dump` frame (Node). The wasm
+      # host runs the component on the Pulley interpreter — no JIT in wasm.
+      - name: Browser host selftest (wasm TUI)
+        run: make host-tui-wasm-test
 
       # Browser E2E (Playwright, chromium): the nine demo pages and the site
       # desktop in a real browser — the rendered DOM against the selftest's
