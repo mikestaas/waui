@@ -16,6 +16,13 @@
 //! byte-identical PNGs; the stopwatch's readout is wall-clock time, so its
 //! running state runs on a fake clock that advances (`--now <base> <step>`).
 //!
+//! The desktop scenario (`--entry` registry, `--double-click` tiles,
+//! `--close` panels) exercises the host's windowing: the panel's chrome
+//! (title bar, close button, cascade), the framed tiles, and the menu
+//! bar's window count, on the desktop's larger canvas. The windows'
+//! content is deterministic (the counter at 0; the stopwatch paused at
+//! 0 ms), so no fake clock is needed.
+//!
 //! The goldens in `tests/goldens/` are the visual regression layer: the
 //! whole frame, byte-exact, shared by the three producers (the shared
 //! golden is also the parity check). Regenerate with
@@ -38,12 +45,12 @@ const FAKE_NOW: (u64, u64) = (1_000, 50);
 // The dump file: unique per call, so parallel tests do not collide.
 static DUMP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-/// Run the host binary in `--dump` mode and read the PNG back: the decoded
-/// RGBA pixels (the property assertions) and the raw bytes (the golden
-/// compares them). `clicks` are injected before the frame, like a pointer
-/// would drive them; `now` is the fake clock's base and step (`--now`), so
-/// a frame that reads the clock is deterministic.
-fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>) -> (u32, u32, Vec<u8>, Vec<u8>) {
+/// Run the host binary in `--dump` mode with the given argv elements
+/// (after `--dump <file>`, before the component path) and read the PNG
+/// back: the decoded RGBA pixels (the property assertions) and the raw
+/// bytes (the golden compares them). `now` is the fake clock's base and
+/// step (`--now`), so a frame that reads the clock is deterministic.
+fn run_dump(path: &Path, args: &[String], now: Option<(u64, u64)>) -> (u32, u32, Vec<u8>, Vec<u8>) {
     let bin = env!("CARGO_BIN_EXE_host-iced");
     let file = std::env::temp_dir().join(format!(
         "waui-host-iced-dump-{}-{}.png",
@@ -55,8 +62,8 @@ fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>) -> (u32, u32, Vec<
     if let Some((base, step)) = now {
         cmd.arg("--now").arg(base.to_string()).arg(step.to_string());
     }
-    for id in clicks {
-        cmd.arg("--click").arg(id.to_string());
+    for a in args {
+        cmd.arg(a);
     }
     cmd.arg(path);
     let out = cmd.output().expect("failed to run the host-iced binary");
@@ -69,6 +76,19 @@ fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>) -> (u32, u32, Vec<
     std::fs::remove_file(&file).ok();
     let (width, height, buf) = decode_png(&bytes);
     (width, height, buf, bytes)
+}
+
+/// Run the host binary in `--dump` mode and read the PNG back. `clicks`
+/// are injected before the frame, like a pointer would drive them; `now`
+/// is the fake clock's base and step (`--now`), so a frame that reads the
+/// clock is deterministic.
+fn dump(path: &Path, clicks: &[u32], now: Option<(u64, u64)>) -> (u32, u32, Vec<u8>, Vec<u8>) {
+    let mut args = Vec::new();
+    for id in clicks {
+        args.push("--click".to_string());
+        args.push(id.to_string());
+    }
+    run_dump(path, &args, now)
 }
 
 /// Decode a PNG into raw RGBA pixels (one row-major frame).
@@ -142,9 +162,19 @@ const NEGATIVE: [u8; 3] = [0xf7, 0x76, 0x8e];
 const ACCENT: [u8; 3] = [0x7a, 0xa2, 0xf7];
 const WARNING: [u8; 3] = [0xe0, 0xaf, 0x68];
 
+// The desktop's window chrome (site/desktop.css): the panel's fill is the
+// button's, the title bar is darker, and the border is the line color.
+const TITLEBAR: [u8; 3] = [0x1e, 0x21, 0x30];
+const BORDER: [u8; 3] = [0x41, 0x48, 0x68];
+
 // The dump canvas (host-iced's `WINDOW_WIDTH`/`WINDOW_HEIGHT`), at 1x.
 const WIDTH: u32 = 360;
 const HEIGHT: u32 = 340;
+
+// The desktop's canvas (host-iced's `DESKTOP_WIDTH`/`DESKTOP_HEIGHT`), at
+// 1x: a non-empty registry switches the window and the dump to it.
+const DESKTOP_WIDTH: u32 = 960;
+const DESKTOP_HEIGHT: u32 = 600;
 
 /// The dump canvas and the flat, non-antialiased regions: the theme's
 /// background (exact at the edges) and the button fill (present).
@@ -371,6 +401,157 @@ fn assert_todo_frame(path: &Path, producer: &str) {
     assert_todo(w, h, &buf);
     assert_png_golden(&bytes, "todo-added.png");
     save_producer_golden(&bytes, producer, "todo-added.png");
+}
+
+/// The registry's `--entry` argv elements for the producer's three demos,
+/// in tile order (the tile `i` is the registry entry `i`).
+fn entries(producer: &str) -> Vec<String> {
+    let suffix = match producer {
+        "rust" => "",
+        "as" => "-as",
+        _ => "-wat",
+    };
+    let mut out = Vec::new();
+    for name in ["counter", "stopwatch", "todo"] {
+        out.push("--entry".to_string());
+        out.push(format!(
+            "{name}={}",
+            component_path(&format!("demo-{name}{suffix}")).display()
+        ));
+    }
+    out
+}
+
+/// The desktop's frames: the panel's chrome (fill, title bar, border), the
+/// framed tiles, and the whole frame against the golden. The panels'
+/// content is the entries' demos (the counter at 0; the stopwatch paused
+/// at 0 ms), so the frames are deterministic without a fake clock.
+fn assert_desktop_frame(path: &Path, producer: &str) {
+    // One window: the counter, opened by a double-click on its tile.
+    let mut args = entries(producer);
+    args.push("--double-click".to_string());
+    args.push("100".to_string());
+    let (w, h, buf, bytes) = run_dump(path, &args, None);
+    assert_eq!(
+        (w, h),
+        (DESKTOP_WIDTH, DESKTOP_HEIGHT),
+        "the desktop canvas size"
+    );
+    // The background: exact at the corners.
+    for (x, y) in [(0u32, 0u32), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+        assert_eq!(
+            px(&buf, w, x, y),
+            [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 255],
+            "background at ({x}, {y})"
+        );
+    }
+    // The panel (the web's `.window`): its fill and its title bar, present
+    // at the first cascade position.
+    let panel = count_near(&buf, w, h, BUTTON_FILL, 8);
+    let titlebar = count_near(&buf, w, h, TITLEBAR, 8);
+    let border = count_near(&buf, w, h, BORDER, 8);
+    assert!(
+        panel > 50_000,
+        "the panel's fill is missing or too small: {panel} px"
+    );
+    assert!(
+        titlebar > 5_000,
+        "the panel's title bar is missing: {titlebar} px"
+    );
+    assert!(
+        border > 500,
+        "the panel's and the tiles' borders are missing: {border} px"
+    );
+    // The first cascade position (24, 48): the title bar, then the body.
+    assert!(
+        near(px(&buf, w, 30, 60), TITLEBAR, 8),
+        "the panel's title bar should be at the first cascade position: {:?}",
+        px(&buf, w, 30, 60)
+    );
+    assert!(
+        near(px(&buf, w, 30, 200), BUTTON_FILL, 8),
+        "the panel's body should be below its title bar: {:?}",
+        px(&buf, w, 30, 200)
+    );
+    assert_png_golden(&bytes, "desktop-1.png");
+    save_producer_golden(&bytes, producer, "desktop-1.png");
+
+    // Two windows: the stopwatch cascades down-right of the counter; its
+    // title bar adds pixels on top.
+    let mut args = entries(producer);
+    args.push("--double-click".to_string());
+    args.push("100".to_string());
+    args.push("--double-click".to_string());
+    args.push("101".to_string());
+    let (w, h, buf, bytes) = run_dump(path, &args, None);
+    let titlebar_two = count_near(&buf, w, h, TITLEBAR, 8);
+    assert!(
+        titlebar_two > titlebar,
+        "the second panel's title bar should add pixels: {titlebar} -> {titlebar_two}"
+    );
+    assert_png_golden(&bytes, "desktop-2.png");
+    save_producer_golden(&bytes, producer, "desktop-2.png");
+
+    // Close the first: the surviving panel's chrome is all that remains.
+    let mut args = entries(producer);
+    args.push("--double-click".to_string());
+    args.push("100".to_string());
+    args.push("--double-click".to_string());
+    args.push("101".to_string());
+    args.push("--close".to_string());
+    args.push("1".to_string());
+    let (w, h, buf, bytes) = run_dump(path, &args, None);
+    let titlebar_after = count_near(&buf, w, h, TITLEBAR, 8);
+    assert!(
+        titlebar_after < titlebar_two,
+        "the closed panel's title bar should be gone: {titlebar_two} -> {titlebar_after}"
+    );
+    assert_png_golden(&bytes, "desktop-close.png");
+    save_producer_golden(&bytes, producer, "desktop-close.png");
+}
+
+#[test]
+fn desktop_dump() {
+    let _guard = RUST_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component("demo-desktop");
+    build_component("demo-counter");
+    build_component("demo-stopwatch");
+    build_component("demo-todo");
+    assert_desktop_frame(&component_path("demo-desktop"), "rust");
+}
+
+#[test]
+fn desktop_dump_as() {
+    if !as_toolchain_available() {
+        eprintln!("skipping: AssemblyScript toolchain not installed (run `npm install`)");
+        return;
+    }
+    let _guard = AS_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_as("demo-desktop");
+    build_component_as("demo-counter");
+    build_component_as("demo-stopwatch");
+    build_component_as("demo-todo");
+    assert_desktop_frame(&component_path_as("demo-desktop"), "as");
+}
+
+#[test]
+fn desktop_dump_wat() {
+    if !wat_toolchain_available() {
+        eprintln!("skipping: wasm-tools not on the PATH");
+        return;
+    }
+    let _guard = WAT_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    build_component_wat("demo-desktop");
+    build_component_wat("demo-counter");
+    build_component_wat("demo-stopwatch");
+    build_component_wat("demo-todo");
+    assert_desktop_frame(&component_path_wat("demo-desktop"), "wat");
 }
 
 #[test]
