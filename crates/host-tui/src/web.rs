@@ -308,6 +308,9 @@ struct WebHost {
     /// The focused input's buffer (the component owns the field, per the
     /// WIT): re-synced from the active surface's tree each pass.
     input_buf: String,
+    /// Whether `q` was pressed: the terminal is cleared, and the host stops
+    /// redrawing (a page cannot exit, so this is the web's quit).
+    quit: bool,
 }
 
 // A web page is single-threaded, so a thread-local is a plain global. It
@@ -344,10 +347,33 @@ fn open_terminal() -> Result<Terminal<XtermBackend>, String> {
     Terminal::new(backend).map_err(|e| format!("terminal: {e}"))
 }
 
+/// The key names `handle_key` matches, from xterm's `onKey` write-string.
+/// xterm reports the bytes the key writes to a terminal (`"\r"` for
+/// enter, `"\u001b[B"` for down-arrow, ...); the native host gets the
+/// same bytes parsed into key names by crossterm, so the web host parses
+/// them the same way here.
+fn key_name(key: &str) -> &str {
+    match key {
+        "\r" => "Enter",
+        "\u{1b}" => "Escape",
+        "\u{1b}[A" => "ArrowUp",
+        "\u{1b}[B" => "ArrowDown",
+        "\u{1b}[C" => "ArrowRight",
+        "\u{1b}[D" => "ArrowLeft",
+        "\t" => "Tab",
+        "\u{7f}" => "Backspace",
+        other => other,
+    }
+}
+
 impl WebHost {
     /// The page's 50ms tick: wake the components whose refresh period has
     /// elapsed, apply the diffs, re-seat, fire activations, and redraw.
+    /// After a quit, the host is idle.
     fn tick(&mut self) {
+        if self.quit {
+            return;
+        }
         let now = now_ms();
         {
             let mut w = self.wake.lock().unwrap();
@@ -372,10 +398,13 @@ impl WebHost {
         self.run_pipeline();
     }
 
-    /// One key from xterm (`key` is the xterm key string, `shift` the
-    /// shift state): mutate the focus ring, the input buffer, and the
-    /// windows, then run the pipeline and redraw.
+    /// One key (a key name, `shift` the shift state): mutate the focus
+    /// ring, the input buffer, and the windows, then run the pipeline and
+    /// redraw. After a quit, keys do nothing.
     fn handle_key(&mut self, key: &str, shift: bool) {
+        if self.quit {
+            return;
+        }
         let (t_id, t_is_input, t_is_tile) =
             active_target(&mut self.store, &mut self.desktop_surf, self.active);
         match key {
@@ -454,7 +483,9 @@ impl WebHost {
                     let (a, s) = active_app(&mut self.store, &self.app, self.active);
                     report_input(a, s, t_id, &self.input_buf, &mut self.pending);
                 } else if key == "q" {
-                    // Quit: clear the terminal (a page cannot exit).
+                    // Quit: clear the terminal and stop redrawing (a page
+                    // cannot exit).
+                    self.quit = true;
                     if let Some(term) = &mut self.terminal {
                         let _ = term.clear();
                     }
@@ -462,7 +493,9 @@ impl WebHost {
             }
             _ => {}
         }
-        self.run_pipeline();
+        if !self.quit {
+            self.run_pipeline();
+        }
     }
 
     /// Apply the diffs, re-seat the active ring, re-sync the focused input,
@@ -621,6 +654,7 @@ pub fn run(bytes: &[u8]) -> Result<(), JsValue> {
         click_pending: false,
         double_click_pending: false,
         input_buf: String::new(),
+        quit: false,
     };
     // The first frame: the desktop's ring on its first focusable.
     reseat(
@@ -637,10 +671,13 @@ pub fn run(bytes: &[u8]) -> Result<(), JsValue> {
     let on_key = Closure::wrap(Box::new(|ev: JsValue| {
         with_host(|host| {
             let obj = ev.unchecked_ref::<Object>();
+            // xterm's `onKey` passes the bytes the key writes, not a key
+            // name; parse them into the names the host matches.
             let key = Reflect::get(obj, &JsValue::from_str("key"))
                 .ok()
                 .and_then(|v| v.as_string())
                 .unwrap_or_default();
+            let key = key_name(&key);
             let shift = Reflect::get(obj, &JsValue::from_str("domEvent"))
                 .ok()
                 .map(|d| {
@@ -648,7 +685,7 @@ pub fn run(bytes: &[u8]) -> Result<(), JsValue> {
                         .is_some_and(|e| e.shift_key())
                 })
                 .unwrap_or(false);
-            host.handle_key(&key, shift);
+            host.handle_key(key, shift);
         });
     }) as Box<dyn FnMut(JsValue)>);
     let on_resize = Closure::wrap(Box::new(|_ev: JsValue| {
@@ -674,8 +711,9 @@ pub fn run(bytes: &[u8]) -> Result<(), JsValue> {
     Ok(())
 }
 
-/// One key from the page's xterm terminal: `key` is xterm's key string
-/// (e.g. `"Enter"`, `"ArrowUp"`, `"a"`), `shift` the shift state.
+/// One key, from the page: `key` is a key name (`"Enter"`, `"ArrowUp"`,
+/// `"a"`; xterm's write-strings are parsed into names by the `onKey`
+/// wiring, not by this export), `shift` the shift state.
 #[wasm_bindgen]
 pub fn key(key: &str, shift: bool) {
     with_host(|host| host.handle_key(key, shift));

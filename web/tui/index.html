@@ -1,0 +1,91 @@
+<!doctype html>
+<!--
+  The browser TUI host: the same host as the native binary, running in the
+  browser as wasm. The component is a precompiled pulley32 artifact (the
+  host-precompile tool; the browser has no JIT, so it only interprets),
+  fetched by ?demo= and ?producer= — counter|stopwatch|todo and
+  rust|as|wat, so the nine demos share this one page.
+
+  The page owns the xterm.js terminal (window.term): the host draws SGR
+  into it and reads its keys, and a 50ms interval drives the host's tick.
+  xterm.js is vendored (vendor/, the @xterm/xterm 5.5.0 package, MIT), so
+  the page needs no network beyond the artifact and the host module.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>waui (tui host)</title>
+    <link rel="stylesheet" href="vendor/xterm.css" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #111;
+        overflow: hidden;
+      }
+      #badge {
+        height: 28px;
+        line-height: 28px;
+        padding: 0 12px;
+        font:
+          13px ui-monospace,
+          monospace;
+        color: #7a86a8;
+        background: #1a1b26;
+      }
+      #terminal {
+        width: 100%;
+        height: calc(100% - 28px);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="badge">waui (tui host) — loading</div>
+    <div id="terminal"></div>
+    <!-- The xterm.js package ships a UMD build; in a browser it attaches
+         its exports (Terminal, ...) to globalThis. -->
+    <script src="vendor/xterm.js"></script>
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const demo = params.get('demo') ?? 'counter';
+      const producer = params.get('producer') ?? 'rust';
+      // The rust producer's artifact has no suffix (demo-counter.cwasm);
+      // the others do (demo-counter-as.cwasm, demo-counter-wat.cwasm).
+      const suffix = producer === 'rust' ? '' : `-${producer}`;
+      const artifact = `demo-${demo}${suffix}.cwasm`;
+
+      const badge = document.getElementById('badge');
+      const fail = (message) => {
+        badge.textContent = `waui (tui host) — ${message}`;
+      };
+
+      // The page owns the terminal; the host's run reads window.term and
+      // wires the keyboard and resize to it.
+      const term = new Terminal({
+        cols: 80,
+        rows: 24,
+        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        fontSize: 14,
+        cursorBlink: true,
+      });
+      term.open(document.getElementById('terminal'));
+      window.term = term;
+
+      try {
+        const mod = await import('./host_tui.js');
+        await mod.default();
+        badge.textContent = `waui (tui host) — loading ${artifact}`;
+        const bytes = new Uint8Array(await (await fetch(artifact)).arrayBuffer());
+        mod.run(bytes);
+        badge.textContent = `waui (tui host) — ${demo} (${producer})`;
+        // The host's 50ms clock: wake the components whose refresh period
+        // has elapsed, apply the diffs, and redraw.
+        setInterval(() => mod.tick(), 50);
+      } catch (err) {
+        fail(`${err.message} (${artifact})`);
+      }
+    </script>
+  </body>
+</html>

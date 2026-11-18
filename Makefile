@@ -10,7 +10,7 @@ WAT_COMPONENTS := demo-counter demo-stopwatch demo-todo
          run-iced-wat run-stop-iced-wat run-todo-iced-wat run-desktop-iced-wat \
          web web-as web-wat web-test web-test-as web-test-wat \
          web-test-desktop web-test-desktop-as web-test-desktop-wat \
-         host-tui-wasm host-tui-wasm-test host-iced-wasm host-iced-wasm-test \
+         host-tui-wasm host-tui-wasm-test host-iced-wasm host-iced-wasm-test site-hosts \
          site ui-test e2e screenshots fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model. The
@@ -330,6 +330,34 @@ host-iced-wasm-test: host-iced-wasm
 	cargo build -p host-iced
 	node web/iced/selftest.mjs
 
+# The browser host pages, next to the site: each host's pkg (wasm-bindgen),
+# its page (web/tui, web/iced), and the nine precompiled artifacts the
+# pages fetch by ?demo= and ?producer= (the tui page also takes the
+# vendored xterm.js). The pages fetch, so they need a server, exactly like
+# the site's demo pages. Needs wasm-bindgen on the PATH.
+site-hosts: site host-tui-wasm host-iced-wasm
+	@mkdir -p target/site/tui/vendor target/site/iced
+	@cp web/tui/index.html target/site/tui/
+	@cp web/tui/vendor/xterm.js web/tui/vendor/xterm.css web/tui/vendor/LICENSE target/site/tui/vendor/
+	@cp target/host-tui/pkg/host_tui.js target/host-tui/pkg/host_tui_bg.wasm target/site/tui/
+	@cp web/iced/index.html target/site/iced/
+	@cp target/host-iced/pkg/host_iced.js target/host-iced/pkg/host_iced_bg.wasm target/site/iced/
+	# The rust artifacts came with the host builds; precompile the other
+	# two producers (the pages take all nine).
+	@for c in $(COMPONENTS); do \
+		for s in -as -wat; do \
+			echo "==> precompiling $$c$$s for pulley32"; \
+			cargo run -p host-precompile -- target/components/$$c$$s.component.wasm target/components/$$c$$s.cwasm || exit 1; \
+		done; \
+	done
+	@for d in counter stopwatch todo; do \
+		for s in "" -as -wat; do \
+			cp target/components/demo-$$d$$s.cwasm target/site/tui/ || exit 1; \
+			cp target/components/demo-$$d$$s.cwasm target/site/iced/ || exit 1; \
+		done; \
+	done
+	@echo "wrote target/site/tui/ and target/site/iced/"
+
 # The tree layer's diff channel, as a standalone module run via Node: the
 # structural cases (add, remove, re-parent) plus the bootstrap and id-less
 # rules — the AS twin of the Rust `component-ui` unit tests. The trees are
@@ -345,10 +373,12 @@ ui-test:
 	node assembly/patch-env-abort.mjs target/assembly/tree-test.raw.wasm target/assembly/tree-test.core.wasm || exit 1; \
 	node assembly/ui/tree.test.mjs target/assembly/tree-test.core.wasm
 
-# Browser E2E (Playwright, chromium): the nine demo pages and the site
-# desktop, served from target/site/ (make site). Needs `npm install` and a
-# one-time `npx playwright install chromium`.
-e2e: site
+# Browser E2E (Playwright, chromium): the nine demo pages, the site
+# desktop, and the two browser host pages, served from target/site/
+# (make site site-hosts). Needs `npm install`, a one-time
+# `npx playwright install chromium`, and wasm-bindgen on the PATH
+# (the host pages' builds).
+e2e: site site-hosts
 	@test -d node_modules/@playwright/test || { echo "e2e needs node/npm — run: npm install"; exit 1; }
 	npx playwright test $(E2E_ARGS)
 

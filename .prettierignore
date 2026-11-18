@@ -17,3 +17,5 @@ wat/
 # Playwright's run artifacts (make e2e).
 test-results/
 playwright-report/
+# Vendored third-party builds (the xterm.js package, from npm).
+web/tui/vendor/
