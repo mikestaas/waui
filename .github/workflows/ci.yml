@@ -12,6 +12,8 @@
 #   make web-test / -as / -wat        the Node selftest: the byte-parity gate
 #   make host-tui-wasm-test           the browser TUI host's byte-parity gate:
 #                                     the wasm host's frame vs the native one
+#   make host-iced-wasm-test          the browser iced host's byte-parity gate:
+#                                     the wasm host's PNG vs the native one
 #   make e2e                          the Playwright browser suite: the demo
 #                                     pages and the site desktop, plus the
 #                                     screenshot goldens
@@ -134,6 +136,13 @@ jobs:
       # host runs the component on the Pulley interpreter — no JIT in wasm.
       - name: Browser host selftest (wasm TUI)
         run: make host-tui-wasm-test
+
+      # The browser iced host's byte-parity gate: the wasm host's `dump`
+      # PNG against the native `host-iced --dump` PNG (Node): the component
+      # on the Pulley interpreter, the frame through the same software
+      # `tiny-skia` backend, the font database pinned to the bundled fonts.
+      - name: Browser host selftest (wasm iced)
+        run: make host-iced-wasm-test
 
       # Browser E2E (Playwright, chromium): the nine demo pages and the site
       # desktop in a real browser — the rendered DOM against the selftest's

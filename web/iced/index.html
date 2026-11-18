@@ -1,0 +1,67 @@
+<!doctype html>
+<!--
+  The browser iced host: the same host as the native binary, running in
+  the browser as wasm. The component is a precompiled pulley32 artifact
+  (the host-precompile tool; the browser has no JIT, so it only
+  interprets), fetched by ?demo= and ?producer= — counter|stopwatch|todo
+  and rust|as|wat, so the nine demos share this one page.
+
+  The page owns the body: iced's Web runtime appends its canvas to it
+  (the canvas fills the body, so the body is the demo's 360x340 box,
+  centered). No terminal here — iced handles the pointer and the keyboard
+  on the canvas, and its own 50ms clock drives the host's tick. A failed
+  load leaves a message in the body instead of a blank one.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>waui (iced host)</title>
+    <style>
+      html {
+        height: 100%;
+        display: grid;
+        place-items: center;
+        background: #111;
+      }
+      /* The host's standalone canvas, at 1x: the canvas iced appends
+         fills this box. */
+      body {
+        width: 360px;
+        height: 340px;
+        margin: 0;
+        background: #1a1b26;
+        color: #c0caf5;
+        font:
+          13px ui-monospace,
+          monospace;
+        padding: 12px;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <script type="module">
+      const params = new URLSearchParams(location.search);
+      const demo = params.get('demo') ?? 'counter';
+      const producer = params.get('producer') ?? 'rust';
+      // The rust producer's artifact has no suffix (demo-counter.cwasm);
+      // the others do (demo-counter-as.cwasm, demo-counter-wat.cwasm).
+      const suffix = producer === 'rust' ? '' : `-${producer}`;
+      const artifact = `demo-${demo}${suffix}.cwasm`;
+
+      const fail = (message) => {
+        document.body.textContent = `waui (iced host) — ${message} (${artifact})`;
+      };
+
+      try {
+        const mod = await import('./host_iced.js');
+        await mod.default();
+        const bytes = new Uint8Array(await (await fetch(artifact)).arrayBuffer());
+        mod.run(bytes);
+      } catch (err) {
+        fail(err.message);
+      }
+    </script>
+  </body>
+</html>

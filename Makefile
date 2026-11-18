@@ -10,7 +10,7 @@ WAT_COMPONENTS := demo-counter demo-stopwatch demo-todo
          run-iced-wat run-stop-iced-wat run-todo-iced-wat run-desktop-iced-wat \
          web web-as web-wat web-test web-test-as web-test-wat \
          web-test-desktop web-test-desktop-as web-test-desktop-wat \
-         host-tui-wasm host-tui-wasm-test \
+         host-tui-wasm host-tui-wasm-test host-iced-wasm host-iced-wasm-test \
          site ui-test e2e screenshots fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model. The
@@ -308,6 +308,27 @@ host-tui-wasm: components
 host-tui-wasm-test: host-tui-wasm
 	cargo build -p host-tui
 	node web/tui/selftest.mjs
+
+# The browser iced host: the wasmtime host as wasm (Pulley interpreter)
+# with iced's Web runtime. Builds the cdylib (no native windowing
+# backends), runs wasm-bindgen, and precompiles the demo components
+# natively for pulley32 — the artifacts the page's `run` deserializes
+# (the same ones the tui host takes; the artifact is host-independent).
+# Needs wasm-bindgen on the PATH.
+host-iced-wasm: components
+	cargo build -p host-iced --no-default-features --release --target $(WASM_TARGET)
+	wasm-bindgen target/$(WASM_TARGET)/release/host_iced.wasm --target web --out-dir target/host-iced/pkg
+	@for c in $(COMPONENTS); do \
+		echo "==> precompiling $$c for pulley32"; \
+		cargo run -p host-precompile -- target/components/$$c.component.wasm target/components/$$c.cwasm || exit 1; \
+	done
+	@echo "wrote target/host-iced/pkg/ and target/components/*.cwasm"
+
+# The byte-parity gate: the wasm host's `dump` PNG against the native
+# `host-iced --dump` PNG, per demo (Node).
+host-iced-wasm-test: host-iced-wasm
+	cargo build -p host-iced
+	node web/iced/selftest.mjs
 
 # The tree layer's diff channel, as a standalone module run via Node: the
 # structural cases (add, remove, re-parent) plus the bootstrap and id-less
