@@ -90,10 +90,12 @@ jobs:
 
       # The wasm-bindgen CLI, version-matched to the lockfile (the browser
       # host builds run it; a mismatched CLI writes glue the runtime rejects).
+      # The release tarball wraps its files in a directory; the extract
+      # strips it.
       - name: Install wasm-bindgen
         run: |
           v=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep '^version' | head -1 | cut -d'"' -f2)
-          curl -sSL "https://github.com/rustwasm/wasm-bindgen/releases/download/$v/wasm-bindgen-$v-x86_64-unknown-linux-musl.tar.gz" | tar xz
+          curl -sSfL "https://github.com/rustwasm/wasm-bindgen/releases/download/$v/wasm-bindgen-$v-x86_64-unknown-linux-musl.tar.gz" | tar xz --strip-components=1
           install -m 755 wasm-bindgen "$HOME/.cargo/bin/wasm-bindgen"
           wasm-bindgen --version
 
