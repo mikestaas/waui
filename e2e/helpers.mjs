@@ -245,10 +245,11 @@ export async function settle(page) {
   );
 }
 
-// The per-channel tolerance of the pixel comparison. Zero: pages rendered
-// in one browser yield identical pixels for identical content, so any
-// difference is a real divergence.
-const PIXEL_TOL = 0;
+// The per-channel tolerance of the pixel comparison. One: chromium's
+// anti-aliasing of an edge is not bit-stable across contexts, so identical
+// content can differ by a step at an edge. A real divergence (a color, a
+// glyph, a layout shift) differs by more.
+const PIXEL_TOL = 1;
 
 // Compare two screenshots pixel by pixel: a canvas in the browser decodes
 // the PNGs (the suite has no PNG dependency). Returns the differing-pixel
