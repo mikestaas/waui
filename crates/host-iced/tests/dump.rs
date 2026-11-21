@@ -16,12 +16,14 @@
 //! byte-identical PNGs; the stopwatch's readout is wall-clock time, so its
 //! running state runs on a fake clock that advances (`--now <base> <step>`).
 //!
-//! The desktop scenario (`--entry` registry, `--double-click` tiles,
-//! `--close` panels) exercises the host's windowing: the panel's chrome
-//! (title bar, close button, cascade), the framed tiles, and the menu
-//! bar's window count, on the desktop's larger canvas. The windows'
-//! content is deterministic (the counter at 0; the stopwatch paused at
-//! 0 ms), so no fake clock is needed.
+//! The multi-component scenario (`--entry` registry, `--double-click`
+//! tiles, `--click` the window's close button) runs the desktop app, which
+//! draws the whole desktop — the menu bar, the icon grid, and each window's
+//! chrome (title bar, close button, cascade) — as its own widget tree. The
+//! host seats each opened entry's content in the window's content slot and
+//! routes the pointer and key events to the app. The windows' content is
+//! deterministic (the counter at 0; the stopwatch paused at 0 ms), so no
+//! fake clock is needed.
 //!
 //! The goldens in `tests/goldens/` are the visual regression layer: the
 //! whole frame, byte-exact, shared by the three producers (the shared
@@ -171,8 +173,8 @@ const BORDER: [u8; 3] = [0x41, 0x48, 0x68];
 const WIDTH: u32 = 360;
 const HEIGHT: u32 = 340;
 
-// The desktop's canvas (host-iced's `DESKTOP_WIDTH`/`DESKTOP_HEIGHT`), at
-// 1x: a non-empty registry switches the window and the dump to it.
+// The app's canvas (host-iced's `APP_WIDTH`/`APP_HEIGHT`), at 1x: a
+// non-empty registry switches the window and the dump to it.
 const DESKTOP_WIDTH: u32 = 960;
 const DESKTOP_HEIGHT: u32 = 600;
 
@@ -422,10 +424,10 @@ fn entries(producer: &str) -> Vec<String> {
     out
 }
 
-/// The desktop's frames: the panel's chrome (fill, title bar, border), the
-/// framed tiles, and the whole frame against the golden. The panels'
-/// content is the entries' demos (the counter at 0; the stopwatch paused
-/// at 0 ms), so the frames are deterministic without a fake clock.
+/// The desktop's frames: the app-drawn window chrome (panel fill, title
+/// bar, border), the menu bar, and the whole frame against the golden. The
+/// windows' content is the entries' demos (the counter at 0; the stopwatch
+/// paused at 0 ms), so the frames are deterministic without a fake clock.
 fn assert_desktop_frame(path: &Path, producer: &str) {
     // One window: the counter, opened by a double-click on its tile.
     let mut args = entries(producer);
@@ -437,40 +439,53 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
         (DESKTOP_WIDTH, DESKTOP_HEIGHT),
         "the desktop canvas size"
     );
-    // The background: exact at the corners.
-    for (x, y) in [(0u32, 0u32), (w - 1, 0), (0, h - 1), (w - 1, h - 1)] {
+    // The canvas background (the theme's clear color) shows through the
+    // desktop's transparent root and grid area: exact at the bottom corners.
+    for (x, y) in [(0u32, h - 1), (w - 1, h - 1)] {
         assert_eq!(
             px(&buf, w, x, y),
             [BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 255],
             "background at ({x}, {y})"
         );
     }
-    // The panel (the web's `.window`): its fill and its title bar, present
-    // at the first cascade position.
+    // The menu bar: bar fill across the top, its line border on the top edge.
+    assert!(
+        near(px(&buf, w, w / 2, 17), TITLEBAR, 8),
+        "the menu bar should fill the top: {:?}",
+        px(&buf, w, w / 2, 17)
+    );
+    assert!(
+        near(px(&buf, w, 100, 0), BORDER, 8),
+        "the menu bar's top border should be at the top edge: {:?}",
+        px(&buf, w, 100, 0)
+    );
+    // The window's chrome (the app draws it): its panel fill, its title bar
+    // (bar fill), and its border (line), present at the first cascade
+    // position. The bar-fill count also includes the menu bar.
     let panel = count_near(&buf, w, h, BUTTON_FILL, 8);
     let titlebar = count_near(&buf, w, h, TITLEBAR, 8);
     let border = count_near(&buf, w, h, BORDER, 8);
     assert!(
         panel > 50_000,
-        "the panel's fill is missing or too small: {panel} px"
+        "the window's panel fill is missing or too small: {panel} px"
     );
     assert!(
         titlebar > 5_000,
-        "the panel's title bar is missing: {titlebar} px"
+        "the window's title bar (and the menu bar) are missing: {titlebar} px"
     );
     assert!(
         border > 500,
-        "the panel's and the tiles' borders are missing: {border} px"
+        "the window's and the tiles' borders are missing: {border} px"
     );
     // The first cascade position (24, 48): the title bar, then the body.
     assert!(
         near(px(&buf, w, 30, 60), TITLEBAR, 8),
-        "the panel's title bar should be at the first cascade position: {:?}",
+        "the window's title bar should be at the first cascade position: {:?}",
         px(&buf, w, 30, 60)
     );
     assert!(
         near(px(&buf, w, 30, 200), BUTTON_FILL, 8),
-        "the panel's body should be below its title bar: {:?}",
+        "the window's body should be below its title bar: {:?}",
         px(&buf, w, 30, 200)
     );
     assert_png_golden(&bytes, "desktop-1.png");
@@ -492,19 +507,21 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     assert_png_golden(&bytes, "desktop-2.png");
     save_producer_golden(&bytes, producer, "desktop-2.png");
 
-    // Close the first: the surviving panel's chrome is all that remains.
+    // Close the first window: click its close button (the app's own, id =
+    // handle + the close offset). The surviving window's chrome is all that
+    // remains.
     let mut args = entries(producer);
     args.push("--double-click".to_string());
     args.push("100".to_string());
     args.push("--double-click".to_string());
     args.push("101".to_string());
-    args.push("--close".to_string());
-    args.push("1".to_string());
+    args.push("--click".to_string());
+    args.push("410000".to_string());
     let (w, h, buf, bytes) = run_dump(path, &args, None);
     let titlebar_after = count_near(&buf, w, h, TITLEBAR, 8);
     assert!(
         titlebar_after < titlebar_two,
-        "the closed panel's title bar should be gone: {titlebar_two} -> {titlebar_after}"
+        "the closed window's title bar should be gone: {titlebar_two} -> {titlebar_after}"
     );
     assert_png_golden(&bytes, "desktop-close.png");
     save_producer_golden(&bytes, producer, "desktop-close.png");

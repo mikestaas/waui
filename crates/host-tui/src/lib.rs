@@ -15,18 +15,20 @@
 //! component has no focus concept; which button is highlighted is a host
 //! concern.
 //!
-//! With a registry (`--entry name=path`, repeatable) the host is a desktop:
-//! a multi-document interface. A double-clicked tile (a container with an
-//! id in the tile range, as the web host's `.tile` marks it) opens its
-//! entry as a window — the entry's component running in its own store,
-//! drawn as an overlapping bordered box. Windows stack in z-order (newest
-//! on top), cascade their placement, and are raised and lowered with tab
-//! and shift+tab; esc closes the active window, and quits on the desktop.
+//! With a registry (`--entry name=path`, repeatable) the host is a
+//! multi-window interface: a window manager. A double-clicked tile (a
+//! container with an id in the tile range, as the web host's `.tile` marks
+//! it) opens its entry as a window — the entry's component running in its
+//! own store, drawn as an overlapping bordered box. Windows stack in z-order
+//! (newest on top), cascade their placement, and are raised and lowered with
+//! tab and shift+tab; esc closes the active window, and quits the app.
 //!
-//! The loop wakes each component — the desktop and every window — at the
+//! The loop wakes each component — the app and every window — at the
 //! period it requests with `schedule` (0 = never; the 50ms event poll sets
-//! the granularity) and rebuilds its retained tree only when the diff is
-//! non-empty; otherwise it redraws.
+//! the granularity) and, when the `changes` diff is non-empty, refreshes
+//! its retained tree — a content-only diff in place, a structural one
+//! re-queried from `view` (a diff cannot carry id-less nodes) — and
+//! rebuilds; otherwise it redraws.
 
 use std::sync::{Arc, Mutex};
 
@@ -43,20 +45,22 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, waui, App, AppImports, Entry, Error, Retained, Tree};
+use host_shared::{
+    build_tree, waui, App, AppImports, ContainerStyle, Entry, Error, Retained, Tree, ViewportSize,
+};
 
 // The contract's style tokens, aliased to avoid clashing with ratatui's
 // `Color` and `Style`.
 use host_shared::waui::ui::widget::{
-    Align as WAlign, Color as WColor, Size as WSize, Style as WStyle,
+    Align as WAlign, Color as WColor, Cursor as WCursor, Size as WSize, Stretch as WStretch,
+    Style as WStyle,
 };
 
 use ratatui::{
     backend::TestBackend,
     layout::{Alignment, Constraint, Layout, Margin, Rect},
     style::{Color, Modifier, Style},
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame, Terminal,
 };
 
@@ -90,12 +94,12 @@ pub struct Surface {
 
 /// An open window: the entry's component running in its own store (the
 /// world's imports take the store's data, not a store handle, so a window
-/// gets its own), its retained tree, its cascade placement, and its ring.
+/// gets its own), its retained tree, and its ring. The window's chrome and
+/// placement are the app's (the component draws them); the host only seats
+/// this component's tree in the app's content slot (the container whose id
+/// is the handle).
 pub struct Window {
     pub handle: u32,
-    pub title: String,
-    pub x: u16,
-    pub y: u16,
     pub store: Store<Host>,
     pub app: App,
     pub retained: Retained,
@@ -120,13 +124,19 @@ pub struct Host {
     pub fake_calls: u64,
     pub engine: Engine,
     pub linker: Linker<Host>,
-    /// The registry (`--entry`): a non-empty one makes this host a desktop.
+    /// The registry (`--entry`): a non-empty one makes this host a
+    /// multi-window host.
     pub entries: Vec<EntrySpec>,
     /// The open windows, in z-order (last = topmost).
     pub windows: Vec<Window>,
-    /// The next window handle (the host's flat id, from 1).
+    /// The next window handle (the host's flat id, from [`HANDLE_BASE`]).
     pub next_handle: u32,
 }
+
+/// The first window handle. The app uses a window's handle as the id of the
+/// content slot it seats the opened component's tree in, so the base is the
+/// world's handle base (the component's `open-entry` returns it).
+const HANDLE_BASE: u32 = 10_000;
 
 impl Default for Host {
     fn default() -> Self {
@@ -140,7 +150,7 @@ impl Default for Host {
             linker,
             entries: Vec::new(),
             windows: Vec::new(),
-            next_handle: 1,
+            next_handle: HANDLE_BASE,
         }
     }
 }
@@ -174,8 +184,8 @@ impl Host {
     }
 
     /// The host for a window this host opens: the same engine, linker, and
-    /// clock, but an empty registry (a window runs a demo, not a desktop,
-    /// so the tile rule never fires in it) and its own window list.
+    /// clock, but an empty registry (a window runs a demo, not a window
+    /// manager, so the tile rule never fires in it) and its own window list.
     fn window_host(&self) -> Host {
         Host {
             wake: Arc::new(Mutex::new(Wake::default())),
@@ -185,7 +195,7 @@ impl Host {
             linker: self.linker.clone(),
             entries: Vec::new(),
             windows: Vec::new(),
-            next_handle: 1,
+            next_handle: HANDLE_BASE,
         }
     }
 }
@@ -209,10 +219,16 @@ impl AppImports for Host {
             })
             .collect()
     }
+    // This host has no viewport: the unknown size (see the WIT note). A
+    // component skips viewport-dependent math (a drag clamp) on `(0, 0)`.
+    fn viewport(&mut self) -> ViewportSize {
+        ViewportSize { w: 0, h: 0 }
+    }
     /// Open a window running the entry with `name`: the entry's component
-    /// in a new store, drawn as an overlapping box. The placement cascades
-    /// (0,0 = the host's default); a pixel size is meaningless in a
-    /// terminal, so the window is sized by its content.
+    /// in a new store, seated in the app's content slot (the container whose
+    /// id is the returned handle). The placement and size are the app's (the
+    /// component draws the window); the geometry arguments are the
+    /// component's request and are ignored here.
     fn open_entry(
         &mut self,
         name: String,
@@ -251,12 +267,8 @@ impl AppImports for Host {
         let wake = store.data().wake.clone();
         let handle = self.next_handle;
         self.next_handle = self.next_handle.saturating_add(1);
-        let n = self.windows.len();
         self.windows.push(Window {
             handle,
-            title: spec.name,
-            x: cascade_x(n),
-            y: cascade_y(n),
             store,
             app,
             retained,
@@ -266,6 +278,11 @@ impl AppImports for Host {
             surface: Surface::default(),
         });
         Ok(handle)
+    }
+    /// Drop the window with `handle` (the component closed it): the host
+    /// frees the entry's store. Idempotent — an unknown handle is a no-op.
+    fn close_entry(&mut self, handle: u32) {
+        self.windows.retain(|w| w.handle != handle);
     }
 }
 
@@ -298,51 +315,33 @@ pub fn now_ms() -> u64 {
 impl waui::ui::widget::Host for Host {}
 
 // --------------------------------------------------------------------------
-// Window placement and sizing: the host's cascade and box geometry.
-
-// The cascade, in cells (the web host's 28px step, scaled to a terminal):
-// a new window steps down-right from the first, wrapping after 9.
-const CASCADE_X: u16 = 10;
-const CASCADE_Y: u16 = 1;
-const CASCADE_STEP_X: u16 = 5;
-const CASCADE_STEP_Y: u16 = 2;
-
-fn cascade_x(n: usize) -> u16 {
-    CASCADE_X + (n % 9) as u16 * CASCADE_STEP_X
-}
-
-fn cascade_y(n: usize) -> u16 {
-    CASCADE_Y + (n % 9) as u16 * CASCADE_STEP_Y
-}
-
-/// A window's box size: its content (the demo's tree) with one cell of
-/// padding, its title row, and its border. The title row floors the width
-/// (the title plus the close marker).
-fn window_size(win: &Window) -> (u16, u16) {
-    let cw = width_of(&win.tree, false);
-    let ch = height_of(&win.tree, false);
-    let title = win.title.chars().count() as u16;
-    let inner_w = cw.saturating_add(2).max(title.saturating_add(3));
-    (inner_w.saturating_add(2), ch.saturating_add(4))
-}
-
 // --------------------------------------------------------------------------
 // Layout sizing: how much terminal space a tree needs.
 
-/// The tile range: the web host marks a node `.tile` when its id is at
-/// least this (the desktop's tile base); a container in the range is a
-/// double-clickable tile.
-const TILE_BASE: u32 = 100;
-
-/// A container the desktop makes double-clickable: an id in the tile range.
-/// The rule is host-local (the WIT has no double-clickable marker), and it
-/// applies only on a desktop (a non-empty registry): a standalone demo's
-/// id'd containers (the todo's rows) are not tiles.
-fn is_tile(id: Option<u32>) -> bool {
-    id.is_some_and(|i| i >= TILE_BASE)
+/// A container the app makes double-clickable: one the component marked
+/// `cursor: pointer` (the WIT's double-clickable marker, replacing the old
+/// id-range hack). The rule applies only on a multi-window host (a non-empty
+/// registry): a standalone demo's containers are not tiles.
+fn is_tile(style: &ContainerStyle) -> bool {
+    style.cursor == WCursor::Pointer
 }
 
-pub fn width_of(node: &Tree, desktop: bool) -> u16 {
+// The tui's geometry scale: the component's pixel geometry (a positioned
+// container's `x`/`y`/`w`/`h`, an image's size) mapped onto the terminal's
+// character cells — 8px wide, 16px tall, the cell's aspect. `0` leaves a
+// dimension to the host's default. The input's width is in characters and
+// stays 1:1 (a cell is a character).
+const CELL_W: u32 = 8;
+const CELL_H: u32 = 16;
+
+/// A container's box, if it has one: a positioned container (a window) or a
+/// tile (the component's `cursor: pointer` marker, in-flow) is a bordered
+/// box; the rest flow without a box.
+fn is_box(style: &ContainerStyle, has_registry: bool) -> bool {
+    style.positioned || (has_registry && is_tile(style))
+}
+
+pub fn width_of(node: &Tree, has_registry: bool) -> u16 {
     match node {
         Tree::Text(content, _) => content.chars().count() as u16,
         Tree::Button(_, label, _) => label.chars().count() as u16 + 2, // borders
@@ -358,72 +357,101 @@ pub fn width_of(node: &Tree, desktop: bool) -> u16 {
             inner + 2
         }
         // A framed placeholder (a terminal has no pixels): the node's width
-        // in cells — a host default when it is 0 — plus its two border
-        // columns.
+        // in the host's units — a pixel size scaled to cells, or the host
+        // default when it is 0 — plus its two border columns.
         Tree::Image(_, _, width, _) => {
-            let inner = if *width > 0 { *width as u16 } else { 8 };
+            let inner = if *width > 0 {
+                (*width / CELL_W).max(1) as u16
+            } else {
+                8
+            };
             inner + 2
         }
-        // A tile is a bordered box: its widest child plus the two border
-        // columns.
-        Tree::Row(id, _, children) if desktop && is_tile(*id) => {
-            children
-                .iter()
-                .map(|c| width_of(c, false))
-                .max()
-                .unwrap_or(0)
-                + 2
+        // A bordered box (a tile or a window): a positioned box with an
+        // explicit width uses it (scaled); the rest size to their widest
+        // child plus the two border columns and the padding (the component's
+        // pixel padding scaled to cells).
+        Tree::Row(_, _, style, children) | Tree::Column(_, _, style, children)
+            if is_box(style, has_registry) =>
+        {
+            if style.positioned && style.w > 0 {
+                (style.w / CELL_W).max(1) as u16
+            } else {
+                let pad = (style.padding / CELL_W) as u16;
+                children
+                    .iter()
+                    .map(|c| width_of(c, false))
+                    .max()
+                    .unwrap_or(0)
+                    + 2
+                    + 2 * pad
+            }
         }
-        Tree::Column(id, _, children) if desktop && is_tile(*id) => {
-            children
-                .iter()
-                .map(|c| width_of(c, false))
-                .max()
-                .unwrap_or(0)
-                + 2
-        }
-        Tree::Row(_, _, children) => children.iter().map(|c| width_of(c, desktop)).sum(),
-        Tree::Column(_, _, children) => children
+        // In-flow: a positioned child (a window) is out of flow, so it takes
+        // no space in the row/column's extent.
+        Tree::Row(_, _, _, children) => children
             .iter()
-            .map(|c| width_of(c, desktop))
+            .filter(|c| !is_positioned(c))
+            .map(|c| width_of(c, has_registry))
+            .sum(),
+        Tree::Column(_, _, _, children) => children
+            .iter()
+            .filter(|c| !is_positioned(c))
+            .map(|c| width_of(c, has_registry))
             .max()
             .unwrap_or(0),
     }
 }
 
-pub fn height_of(node: &Tree, desktop: bool) -> u16 {
+pub fn height_of(node: &Tree, has_registry: bool) -> u16 {
     match node {
         Tree::Text(..) => 1,
         Tree::Button(..) => 3, // border top, label, border bottom
         Tree::Input(..) => 3,  // border top, content, border bottom
-        // The placeholder's height in cells, a host default when it is 0,
-        // plus its two border rows.
+        // The placeholder's height in the host's units — a pixel size scaled
+        // to cells, or the host default when it is 0 — plus its two border
+        // rows.
         Tree::Image(_, _, _, height) => {
-            let inner = if *height > 0 { *height as u16 } else { 3 };
+            let inner = if *height > 0 {
+                (*height / CELL_H).max(1) as u16
+            } else {
+                3
+            };
             inner + 2
         }
-        Tree::Row(id, _, children) if desktop && is_tile(*id) => {
-            children
-                .iter()
-                .map(|c| height_of(c, false))
-                .max()
-                .unwrap_or(0)
-                + 2
+        // A bordered box (a tile or a window): a positioned box with an
+        // explicit height uses it (scaled); the rest size to their tallest
+        // child plus the two border rows and the padding (the component's
+        // pixel padding scaled to cells).
+        Tree::Row(_, _, style, children) | Tree::Column(_, _, style, children)
+            if is_box(style, has_registry) =>
+        {
+            if style.positioned && style.h > 0 {
+                (style.h / CELL_H).max(1) as u16
+            } else {
+                let pad = (style.padding / CELL_H) as u16;
+                children
+                    .iter()
+                    .map(|c| height_of(c, false))
+                    .max()
+                    .unwrap_or(0)
+                    + 2
+                    + 2 * pad
+            }
         }
-        Tree::Column(id, _, children) if desktop && is_tile(*id) => {
-            children
-                .iter()
-                .map(|c| height_of(c, false))
-                .max()
-                .unwrap_or(0)
-                + 2
-        }
-        Tree::Row(_, _, children) => children
+        // In-flow: a positioned child (a window) is out of flow, so it takes
+        // no space in the row/column's extent.
+        Tree::Row(_, _, _, children) => children
             .iter()
-            .map(|c| height_of(c, desktop))
+            .filter(|c| !is_positioned(c))
+            .map(|c| height_of(c, has_registry))
             .max()
             .unwrap_or(0),
-        Tree::Column(_, _, children) => children.iter().map(|c| height_of(c, desktop)).sum(),
+        Tree::Column(_, _, _, children) => children
+            .iter()
+            .filter(|c| !is_positioned(c))
+            .map(|c| height_of(c, has_registry))
+            .sum(),
     }
 }
 
@@ -438,6 +466,7 @@ fn tint(c: WColor) -> Color {
         WColor::Positive => Color::Green,
         WColor::Negative => Color::Red,
         WColor::Warning => Color::Yellow,
+        WColor::Dim => Color::DarkGray,
     }
 }
 
@@ -465,36 +494,304 @@ fn cross_offset(align: WAlign, extent: u16, child: u16) -> u16 {
     }
 }
 
-/// Each child's rect: the main axis stacks children in order (flush from the
-/// container's origin); the cross axis places each child per `align`.
+/// A node's stretch token (containers only; a leaf never stretches).
+fn stretch_of(node: &Tree) -> WStretch {
+    match node {
+        Tree::Row(_, _, style, _) | Tree::Column(_, _, style, _) => style.stretch,
+        _ => WStretch::None,
+    }
+}
+
+/// A node's positioned flag (containers only; a leaf is never positioned).
+fn is_positioned(node: &Tree) -> bool {
+    matches!(
+        node,
+        Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) if s.positioned
+    )
+}
+
+/// A positioned container's origin in cells (its pixel position scaled).
+fn pos_x(node: &Tree) -> u16 {
+    match node {
+        Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) => (s.x / CELL_W) as u16,
+        _ => 0,
+    }
+}
+
+/// A positioned container's y in cells (its pixel position scaled).
+fn pos_y(node: &Tree) -> u16 {
+    match node {
+        Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) => (s.y / CELL_H) as u16,
+        _ => 0,
+    }
+}
+
+/// A node's stacking order (a positioned container's `z`; `0` for the rest).
+fn z_of(node: &Tree) -> u32 {
+    match node {
+        Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) => s.z,
+        _ => 0,
+    }
+}
+
+/// A container's explicit size in cells (its pixel `w`/`h` scaled); `(0, 0)`
+/// for a dimension left to content, and for a leaf (which has no size).
+fn explicit_wh(node: &Tree) -> (u16, u16) {
+    match node {
+        Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) => {
+            let w = if s.w > 0 {
+                (s.w / CELL_W).max(1) as u16
+            } else {
+                0
+            };
+            let h = if s.h > 0 {
+                (s.h / CELL_H).max(1) as u16
+            } else {
+                0
+            };
+            (w, h)
+        }
+        _ => (0, 0),
+    }
+}
+
+/// A child's explicit `(main, cross)` size in cells, per the container's
+/// direction; `0` leaves a dimension open. The main axis is the `direction`
+/// axis: width for a row, height for a column.
+fn explicit_main_cross(node: &Tree, row: bool) -> (u16, u16) {
+    let (w, h) = explicit_wh(node);
+    if row {
+        (w, h)
+    } else {
+        (h, w)
+    }
+}
+
+/// Whether a child stretches the main axis.
+fn stretches_main(node: &Tree) -> bool {
+    matches!(stretch_of(node), WStretch::Main | WStretch::Both)
+}
+
+/// Whether a child stretches the cross axis.
+fn stretches_cross(node: &Tree) -> bool {
+    matches!(stretch_of(node), WStretch::Cross | WStretch::Both)
+}
+
+/// Whether a child's main axis is the container's cross axis: the child's
+/// `direction` is orthogonal to the container's. A leaf never stretches.
+fn orthogonal(node: &Tree, row: bool) -> bool {
+    match node {
+        Tree::Row(..) => !row,
+        Tree::Column(..) => row,
+        _ => false,
+    }
+}
+
+/// Whether a child fills the container's main axis. The WIT's axes are the
+/// child's own (`main` is its `direction` axis): a same-direction child's
+/// `main` stretch, or an orthogonal child's `cross` stretch, is the
+/// container's main.
+fn fills_main(node: &Tree, row: bool) -> bool {
+    if orthogonal(node, row) {
+        stretches_cross(node)
+    } else {
+        stretches_main(node)
+    }
+}
+
+/// Whether a child fills the container's cross axis (the other case).
+fn fills_cross(node: &Tree, row: bool) -> bool {
+    if orthogonal(node, row) {
+        stretches_main(node)
+    } else {
+        stretches_cross(node)
+    }
+}
+
+/// A child's content size along the main / cross axes, per the container's
+/// direction.
+fn content_main_cross(node: &Tree, row: bool, has_registry: bool) -> (u16, u16) {
+    let (w, h) = (width_of(node, has_registry), height_of(node, has_registry));
+    if row {
+        (w, h)
+    } else {
+        (h, w)
+    }
+}
+
+/// Each child's rect, in draw order: the in-flow children first (stacked in
+/// order along the main axis with the container's `gap`, placed on the cross
+/// axis per `align`), then the positioned children (at their `x`/`y`, scaled
+/// to cells) sorted by `z` — the later drawn wins, so a higher `z` sits on
+/// top. The container's `padding` insets the whole layout.
+///
+/// A child's size: its explicit size when set (an explicit size wins over a
+/// stretch, as in the web host's flexbox), else the space it fills along a
+/// filled axis, else its content size. Children that fill the main axis
+/// share its leftover space equally (the menubar's spacer). `0` gap and
+/// padding (the demos) reproduce the old flush layout.
 fn child_rects(
     area: Rect,
     align: WAlign,
     row: bool,
+    style: &ContainerStyle,
     children: &[Tree],
-    desktop: bool,
-) -> Vec<Rect> {
-    let mut rects = Vec::with_capacity(children.len());
+    has_registry: bool,
+) -> Vec<(usize, Rect)> {
+    // The content area, inset by the container's padding (the component's
+    // pixel padding scaled to cells along each axis).
+    let pad_x = (style.padding / CELL_W) as u16;
+    let pad_y = (style.padding / CELL_H) as u16;
+    let inner = Rect::new(
+        area.x + pad_x,
+        area.y + pad_y,
+        area.width.saturating_sub(pad_x * 2),
+        area.height.saturating_sub(pad_y * 2),
+    );
+    let main_size = if row { inner.width } else { inner.height };
+    let cross_size = if row { inner.height } else { inner.width };
+    // The gap between children, in cells (the component's pixel gap scaled
+    // along the main axis).
+    let gap = if row {
+        (style.gap / CELL_W) as u16
+    } else {
+        (style.gap / CELL_H) as u16
+    };
+
+    let in_flow: Vec<usize> = (0..children.len())
+        .filter(|&i| !is_positioned(&children[i]))
+        .collect();
+
+    // Pass 1: the main-axis space the non-filling children and the gaps
+    // take, so the main-filling children can share what is left.
+    let fixed_main: u16 = in_flow
+        .iter()
+        .map(|&i| {
+            let child = &children[i];
+            let (ex_main, _) = explicit_main_cross(child, row);
+            if ex_main > 0 {
+                ex_main
+            } else if fills_main(child, row) {
+                0
+            } else {
+                content_main_cross(child, row, has_registry).0
+            }
+        })
+        .sum::<u16>()
+        + gap.saturating_mul((in_flow.len().saturating_sub(1)) as u16);
+    let remaining = main_size.saturating_sub(fixed_main);
+    let n_stretch = in_flow
+        .iter()
+        .filter(|&&i| {
+            let (ex_main, _) = explicit_main_cross(&children[i], row);
+            ex_main == 0 && fills_main(&children[i], row)
+        })
+        .count() as u16;
+    let stretch_share = if n_stretch > 0 {
+        remaining / n_stretch
+    } else {
+        0
+    };
+
+    // Pass 2: place the in-flow children in order.
+    let mut out = Vec::with_capacity(children.len());
     let mut main = 0u16;
-    for child in children {
-        let (w, h) = (width_of(child, desktop), height_of(child, desktop));
-        let (x, y) = if row {
-            (area.x + main, area.y + cross_offset(align, area.height, h))
+    let mut placed_any = false;
+    for &i in &in_flow {
+        let child = &children[i];
+        if placed_any && gap > 0 {
+            main += gap;
+        }
+        placed_any = true;
+        let (ex_main, ex_cross) = explicit_main_cross(child, row);
+        let (c_main, c_cross) = content_main_cross(child, row, has_registry);
+        let main_sz = if ex_main > 0 {
+            ex_main
+        } else if fills_main(child, row) {
+            stretch_share
         } else {
-            (area.x + cross_offset(align, area.width, w), area.y + main)
+            c_main
         };
-        main += if row { w } else { h };
-        rects.push(Rect::new(x, y, w, h));
+        let cross_sz = if ex_cross > 0 {
+            ex_cross
+        } else if fills_cross(child, row) {
+            cross_size
+        } else {
+            c_cross
+        };
+        let (w, h) = if row {
+            (main_sz, cross_sz)
+        } else {
+            (cross_sz, main_sz)
+        };
+        let (x, y) = if row {
+            (inner.x + main, inner.y + cross_offset(align, cross_size, h))
+        } else {
+            (inner.x + cross_offset(align, cross_size, w), inner.y + main)
+        };
+        main += main_sz;
+        out.push((i, Rect::new(x, y, w, h)));
     }
-    rects
+
+    // The positioned children, sorted by `z` (stable, so equal `z` keeps the
+    // component's order); the later drawn wins.
+    let mut positioned: Vec<usize> = (0..children.len())
+        .filter(|&i| is_positioned(&children[i]))
+        .collect();
+    positioned.sort_by_key(|&i| z_of(&children[i]));
+    for i in positioned {
+        let child = &children[i];
+        let (w, h) = (
+            width_of(child, has_registry),
+            height_of(child, has_registry),
+        );
+        let x = inner.x + pos_x(child).min(inner.width.saturating_sub(w.max(1)));
+        let y = inner.y + pos_y(child).min(inner.height.saturating_sub(h.max(1)));
+        out.push((i, Rect::new(x, y, w, h)));
+    }
+    out
 }
 
 // --------------------------------------------------------------------------
 // Rendering: the tree as ratatui widgets.
 
-/// Map a node to a widget and render it into `area`. `desktop` enables the
-/// tile chrome (a bordered box) on the desktop's tiles.
-fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>, desktop: bool) {
+/// Map a node to a widget and render it into `area`. `has_registry` enables
+/// the tile chrome (a bordered box) on the app's tiles. A content slot (a
+/// container whose id is a window's handle) seats the opened component's
+/// tree there, centered in the slot's area.
+fn render(
+    frame: &mut Frame,
+    node: &Tree,
+    area: Rect,
+    focus: Option<u32>,
+    has_registry: bool,
+    windows: &[Window],
+) {
+    // A content slot: seat the opened component's tree here (centered). The
+    // slot is empty in the app's tree; the window's tree fills it.
+    if let Some(i) = match node {
+        Tree::Row(id, ..) | Tree::Column(id, ..) => *id,
+        _ => None,
+    } {
+        if let Some(win) = windows.iter().find(|w| w.handle == i) {
+            let (cw, ch) = (width_of(&win.tree, false), height_of(&win.tree, false));
+            let cw = cw.min(area.width);
+            let ch = ch.min(area.height);
+            if cw > 0 && ch > 0 {
+                let x = area.x + (area.width - cw) / 2;
+                let y = area.y + (area.height - ch) / 2;
+                render(
+                    frame,
+                    &win.tree,
+                    Rect::new(x, y, cw, ch),
+                    focus,
+                    false,
+                    windows,
+                );
+            }
+            return;
+        }
+    }
     match node {
         Tree::Text(content, style) => {
             frame.render_widget(
@@ -556,121 +853,114 @@ fn render(frame: &mut Frame, node: &Tree, area: Rect, focus: Option<u32>, deskto
                 area,
             );
         }
-        // A tile: a bordered box around its children (the web host's
-        // `.tile` chrome), the focus ring on the border when focused.
-        Tree::Row(id, align, children) if desktop && is_tile(*id) => {
-            render_tile(frame, id, *align, children, area, focus);
+        // A box (a tile or a window): a bordered box around its children,
+        // the focus ring on the border when a focused tile.
+        Tree::Row(id, align, style, children) if is_box(style, has_registry) => {
+            render_box(
+                frame,
+                id,
+                *align,
+                style,
+                true,
+                children,
+                area,
+                focus,
+                has_registry,
+                windows,
+            );
         }
-        Tree::Column(id, align, children) if desktop && is_tile(*id) => {
-            render_tile(frame, id, *align, children, area, focus);
+        Tree::Column(id, align, style, children) if is_box(style, has_registry) => {
+            render_box(
+                frame,
+                id,
+                *align,
+                style,
+                false,
+                children,
+                area,
+                focus,
+                has_registry,
+                windows,
+            );
         }
-        Tree::Row(_, align, children) => {
-            let areas = child_rects(area, *align, true, children, desktop);
-            for (child, child_area) in children.iter().zip(areas) {
-                render(frame, child, child_area, focus, desktop);
+        Tree::Row(_, align, style, children) => {
+            let placed = child_rects(area, *align, true, style, children, has_registry);
+            for (i, child_area) in placed {
+                render(
+                    frame,
+                    &children[i],
+                    child_area,
+                    focus,
+                    has_registry,
+                    windows,
+                );
             }
         }
-        Tree::Column(_, align, children) => {
-            let areas = child_rects(area, *align, false, children, desktop);
-            for (child, child_area) in children.iter().zip(areas) {
-                render(frame, child, child_area, focus, desktop);
+        Tree::Column(_, align, style, children) => {
+            let placed = child_rects(area, *align, false, style, children, has_registry);
+            for (i, child_area) in placed {
+                render(
+                    frame,
+                    &children[i],
+                    child_area,
+                    focus,
+                    has_registry,
+                    windows,
+                );
             }
         }
     }
 }
 
-/// One tile: a bordered box (the focus ring on the border when focused),
-/// its children stacked inside.
-fn render_tile(
+/// A bordered box (a tile or a window): its border (a focus ring in the
+/// accent when a focused tile, dim otherwise), its children laid out inside.
+/// A terminal has no pixels for the component's background token, so the
+/// interior is the terminal default; it is cleared before the children, so a
+/// window covers the grid (or a lower window) behind it.
+fn render_box(
     frame: &mut Frame,
     id: &Option<u32>,
     align: WAlign,
+    style: &ContainerStyle,
+    row: bool,
     children: &[Tree],
     area: Rect,
     focus: Option<u32>,
+    has_registry: bool,
+    windows: &[Window],
 ) {
+    // A window is never the focus target (its content is), so its border is
+    // dim; a focused tile takes the ring.
     let focused = *id == focus;
-    let style = if focused {
+    let border_style = if focused {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
-    let block = Block::default().borders(Borders::ALL).border_style(style);
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(border_style);
     frame.render_widget(Paragraph::new("").block(block), area);
-    // The children inside the border, stacked as a column.
+    // The children inside the border, laid out per the container.
     let inner = area.inner(Margin {
         horizontal: 1,
         vertical: 1,
     });
-    let areas = child_rects(inner, align, false, children, false);
-    for (child, child_area) in children.iter().zip(areas) {
-        render(frame, child, child_area, focus, false);
-    }
-}
-
-/// One window: a bordered box, its title bar (the entry's name and the
-/// close marker), the demo's tree centered in the content, and the focus
-/// ring when the window is the active surface.
-fn draw_window(frame: &mut Frame, win: &Window, area: Rect, active: bool) {
-    let focus = if active { win.surface.focus } else { None };
-    draw_window_box(frame, &win.title, &win.tree, area, focus, active);
-}
-
-/// A window's box: its border (the accent when active), its title bar (the
-/// name and the close marker, on the top border row), and its content (the
-/// tree centered, with one cell of padding).
-pub fn draw_window_box(
-    frame: &mut Frame,
-    title: &str,
-    tree: &Tree,
-    area: Rect,
-    focus: Option<u32>,
-    active: bool,
-) {
-    let border = if active { Color::Cyan } else { Color::DarkGray };
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border));
-    frame.render_widget(Paragraph::new("").block(block), area);
-
-    // The title bar: the name (bold when active, dim otherwise) and the
-    // close marker, on the top border row.
-    let title_style = Style::default()
-        .fg(if active { Color::Cyan } else { Color::DarkGray })
-        .add_modifier(if active {
-            Modifier::BOLD
-        } else {
-            Modifier::DIM
-        });
-    let title_w = title.chars().count() as u16 + 2;
-    // The bar's inner width, reserving the last cell for the close marker.
-    let inner = area.width.saturating_sub(2);
-    let mut line = Line::default();
-    line.push_span(Span::styled(format!(" {} ", title), title_style));
-    for _ in 0..inner.saturating_sub(title_w).saturating_sub(1) {
-        line.push_span(Span::raw(" "));
-    }
-    line.push_span(Span::styled("×", title_style));
-    frame.render_widget(
-        Paragraph::new(line),
-        Rect::new(area.x + 1, area.y, area.width.saturating_sub(2), 1),
-    );
-
-    // The content: one cell of padding, the tree centered in the rest.
-    let content = Rect::new(
-        area.x + 1,
-        area.y + 2,
-        area.width.saturating_sub(2),
-        area.height.saturating_sub(3),
-    );
-    let cw = width_of(tree, false).min(content.width);
-    let ch = height_of(tree, false).min(content.height);
-    if cw > 0 && ch > 0 {
-        let x = content.x + (content.width - cw) / 2;
-        let y = content.y + (content.height - ch) / 2;
-        render(frame, tree, Rect::new(x, y, cw, ch), focus, false);
+    // A terminal cell keeps whatever was last drawn in it, so a positioned
+    // box (a window) must clear its interior to cover what is behind it.
+    frame.render_widget(Clear, inner);
+    let placed = child_rects(inner, align, row, style, children, has_registry);
+    for (i, child_area) in placed {
+        render(
+            frame,
+            &children[i],
+            child_area,
+            focus,
+            has_registry,
+            windows,
+        );
     }
 }
 
@@ -706,17 +996,63 @@ pub fn hint_rows(width: u16, has_windows: bool) -> u16 {
     hint_bar(has_windows).line_count(width).max(1) as u16
 }
 
-/// Draw one full frame: a hint bar, the desktop centered below it, and the
-/// open windows (in z-order, bottom to top) in their cascade positions,
-/// clipped to the terminal. `has_registry` marks a desktop (the tile
-/// chrome applies to its tiles whether or not a window is open); the hint
-/// bar's windowing keys apply only while a window is open.
+/// The root's area within `area`: it fills the space along a stretched axis
+/// (the app's root is `stretch: both`, filling the terminal) and is centered
+/// along the rest; a non-stretched root (the demos) is centered at its
+/// content size, as before.
+fn root_area(root: &Tree, area: Rect, has_registry: bool) -> Rect {
+    let (w, h) = match root {
+        Tree::Row(_, _, style, _) => {
+            // A row: main = width, cross = height.
+            let w = match style.stretch {
+                WStretch::Main | WStretch::Both => area.width,
+                _ => width_of(root, has_registry).min(area.width),
+            };
+            let h = match style.stretch {
+                WStretch::Cross | WStretch::Both => area.height,
+                _ => height_of(root, has_registry).min(area.height),
+            };
+            (w, h)
+        }
+        Tree::Column(_, _, style, _) => {
+            // A column: main = height, cross = width.
+            let w = match style.stretch {
+                WStretch::Cross | WStretch::Both => area.width,
+                _ => width_of(root, has_registry).min(area.width),
+            };
+            let h = match style.stretch {
+                WStretch::Main | WStretch::Both => area.height,
+                _ => height_of(root, has_registry).min(area.height),
+            };
+            (w, h)
+        }
+        // A leaf root (a single widget) is centered at its content size.
+        _ => (
+            width_of(root, has_registry).min(area.width),
+            height_of(root, has_registry).min(area.height),
+        ),
+    };
+    Rect::new(
+        area.x + (area.width - w) / 2,
+        area.y + (area.height - h) / 2,
+        w,
+        h,
+    )
+}
+
+/// Draw one full frame: a hint bar, and the app below it. The open windows
+/// are the app's own positioned children (the component draws their chrome
+/// and placement); the host seats each in its content slot. `has_registry`
+/// marks a multi-window host (the tile chrome applies to its tiles whether
+/// or not a window is open); the hint bar's windowing keys apply only while
+/// a window is open. The ring's focus highlights its target wherever it sits
+/// (the app or a seated window).
 pub fn draw(
     frame: &mut Frame,
-    desktop: &Tree,
-    desktop_focus: Option<u32>,
+    app: &Tree,
+    app_focus: Option<u32>,
     windows: &[Window],
-    active: usize,
+    _active: usize,
     has_registry: bool,
 ) {
     let area = frame.area();
@@ -727,47 +1063,41 @@ pub fn draw(
         Layout::vertical([Constraint::Length(rows), Constraint::Min(0)]).areas(area);
     frame.render_widget(hint_bar(has_windows), bars[0]);
 
-    // The desktop: centered in the remaining space. Its ring only when it
-    // is the active surface.
-    let desktop_focus = if active == 0 { desktop_focus } else { None };
-    let w = width_of(desktop, has_registry).min(bars[1].width);
-    let h = height_of(desktop, has_registry).min(bars[1].height);
-    if w > 0 && h > 0 {
-        let x = bars[1].x + (bars[1].width - w) / 2;
-        let y = bars[1].y + (bars[1].height - h) / 2;
-        render(
-            frame,
-            desktop,
-            Rect::new(x, y, w, h),
-            desktop_focus,
-            has_registry,
-        );
-    }
-
-    // The windows, in z-order (the topmost last, over the desktop).
-    for (i, win) in windows.iter().enumerate() {
-        let (ww, wh) = window_size(win);
-        let x = bars[1].x + win.x.min(bars[1].width.saturating_sub(ww.max(1)));
-        let y = bars[1].y + win.y.min(bars[1].height.saturating_sub(wh.max(1)));
-        draw_window(frame, win, Rect::new(x, y, ww, wh), i + 1 == active);
+    // The app: its root fills the space along a stretched axis (the app's
+    // root is `stretch: both`) and is centered along the rest.
+    let root_area = root_area(app, bars[1], has_registry);
+    if root_area.width > 0 && root_area.height > 0 {
+        render(frame, app, root_area, app_focus, has_registry, windows);
     }
 }
 
 // --------------------------------------------------------------------------
 // Focus: a host-local ring over a surface's buttons, inputs, and (on a
-// desktop) tiles, in pre-order.
+// multi-window host) tiles, in pre-order.
 
 /// One widget the focus ring can move to: its id, whether it is a text
 /// input (printable keys type into it; enter/space does not activate it),
-/// and whether it is a tile (enter opens its entry, not a click).
+/// whether it is a tile (enter opens its entry, not a click), and the
+/// surface it belongs to (0 = the app, else a window's handle) — events
+/// activate the owning surface's component.
 #[derive(Clone, Copy)]
 pub struct FocusTarget {
     pub id: u32,
     pub is_input: bool,
     pub is_tile: bool,
+    pub owner: u32,
 }
 
-fn focusables(node: &Tree, out: &mut Vec<FocusTarget>, desktop: bool) {
+/// The ring's targets in pre-order. A content slot (a container whose id is
+/// a window's handle) inlines that window's focusables in its place, so one
+/// ring spans the app and every open window.
+fn focusables(
+    node: &Tree,
+    out: &mut Vec<FocusTarget>,
+    has_registry: bool,
+    windows: &[Window],
+    owner: u32,
+) {
     match node {
         // A button the component gave no id cannot be clicked, so it is
         // not focusable.
@@ -777,6 +1107,7 @@ fn focusables(node: &Tree, out: &mut Vec<FocusTarget>, desktop: bool) {
                     id: *i,
                     is_input: false,
                     is_tile: false,
+                    owner,
                 });
             }
         }
@@ -788,23 +1119,33 @@ fn focusables(node: &Tree, out: &mut Vec<FocusTarget>, desktop: bool) {
                     id: *i,
                     is_input: true,
                     is_tile: false,
+                    owner,
                 });
             }
         }
-        Tree::Row(id, _, children) | Tree::Column(id, _, children) => {
-            // A tile is a focusable container (the desktop's
-            // double-clickable node); enter on it opens its entry.
-            if desktop && is_tile(*id) {
+        Tree::Row(id, _, style, children) | Tree::Column(id, _, style, children) => {
+            // A content slot (id = a window's handle): inline that window's
+            // focusables in its place, owned by the window.
+            if let Some(i) = id {
+                if let Some(win) = windows.iter().find(|w| w.handle == *i) {
+                    focusables(&win.tree, out, false, windows, *i);
+                    return;
+                }
+            }
+            // A tile (`cursor: pointer`) is a focusable container; enter on
+            // it synthesizes a double-click.
+            if has_registry && is_tile(style) {
                 if let Some(i) = id {
                     out.push(FocusTarget {
                         id: *i,
                         is_input: false,
                         is_tile: true,
+                        owner,
                     });
                 }
             }
             for child in children {
-                focusables(child, out, desktop);
+                focusables(child, out, has_registry, windows, owner);
             }
         }
         // An image is display-only; it is not focusable.
@@ -816,18 +1157,19 @@ fn focusables(node: &Tree, out: &mut Vec<FocusTarget>, desktop: bool) {
 pub fn input_content(node: &Tree, id: u32) -> Option<&str> {
     match node {
         Tree::Input(iid, content, _, _) if *iid == Some(id) => Some(content),
-        Tree::Row(_, _, children) | Tree::Column(_, _, children) => {
+        Tree::Row(_, _, _, children) | Tree::Column(_, _, _, children) => {
             children.iter().find_map(|c| input_content(c, id))
         }
         _ => None,
     }
 }
 
-/// Re-seat one surface's ring on its (possibly rebuilt) tree: recompute
-/// the targets, normalize the saved index, and the focused id.
-pub fn reseat(tree: &Tree, desktop: bool, surf: &mut Surface) {
+/// Re-seat the app's ring on its (possibly rebuilt) tree: recompute the
+/// targets (the open windows' focusables inlined at their content slots),
+/// normalize the saved index, and the focused id.
+pub fn reseat(tree: &Tree, has_registry: bool, windows: &[Window], surf: &mut Surface) {
     surf.targets.clear();
-    focusables(tree, &mut surf.targets, desktop);
+    focusables(tree, &mut surf.targets, has_registry, windows, 0);
     if surf.targets.is_empty() {
         surf.focus_idx = 0;
         surf.focus = None;
@@ -838,40 +1180,72 @@ pub fn reseat(tree: &Tree, desktop: bool, surf: &mut Surface) {
     }
 }
 
-/// The active surface: the desktop, or a window by its z-order index.
+/// The active surface's ring: always the app's. The ring is unified — it
+/// spans the app and every open window (each window's focusables inlined at
+/// its content slot) — so there is one ring, not one per surface.
 pub fn active_surface<'a>(
-    store: &'a mut Store<Host>,
-    desktop: &'a mut Surface,
-    active: usize,
+    _store: &'a mut Store<Host>,
+    app: &'a mut Surface,
+    _active: usize,
 ) -> &'a mut Surface {
-    if active == 0 {
-        desktop
-    } else {
-        &mut store.data_mut().windows[active - 1].surface
-    }
+    app
 }
 
-/// Re-seat the active surface's ring on its tree (after a rebuild or a
-/// surface switch).
+/// Re-derive `active` from the focused target's `owner` without a full
+/// re-seat: 0 for the app, else the owning window's 1-based z-order index.
+/// A handle with no open window (it was closed) resolves to the app.
+pub fn derive_active(store: &Store<Host>, app: &Surface, active: &mut usize) {
+    let owner = app.targets.get(app.focus_idx).map(|t| t.owner).unwrap_or(0);
+    *active = if owner == 0 {
+        0
+    } else {
+        store
+            .data()
+            .windows
+            .iter()
+            .position(|w| w.handle == owner)
+            .map(|i| i + 1)
+            .unwrap_or(0)
+    };
+}
+
+/// Move the ring's focus to the first focusable owned by the newest window
+/// (after a tile opens it), so the new window is the active surface. Returns
+/// whether it moved (a window with no focusables leaves the focus where it
+/// was).
+pub fn focus_newest_window(app: &mut Surface, windows: &[Window]) -> bool {
+    let Some(newest) = windows.last() else {
+        return false;
+    };
+    let handle = newest.handle;
+    app.targets
+        .iter()
+        .position(|t| t.owner == handle)
+        .map(|idx| {
+            app.focus_idx = idx;
+            app.focus = Some(app.targets[idx].id);
+        })
+        .is_some()
+}
+
+/// Re-seat the app's ring on its (possibly rebuilt) tree — the windows'
+/// focusables inlined at their content slots — and re-derive `active` from
+/// the focused target's owner.
 pub fn reseat_active(
     store: &mut Store<Host>,
     tree: &Tree,
     has_registry: bool,
     active: &mut usize,
-    desktop: &mut Surface,
+    app: &mut Surface,
 ) {
-    if *active == 0 {
-        reseat(tree, has_registry, desktop);
-    } else if let Some(win) = store.data_mut().windows.get_mut(*active - 1) {
-        reseat(&win.tree, false, &mut win.surface);
-    } else {
-        // The active window was closed; the desktop is active.
-        *active = 0;
-        reseat(tree, has_registry, desktop);
+    {
+        let windows = &store.data().windows;
+        reseat(tree, has_registry, windows, app);
     }
+    derive_active(store, app, active);
 }
 
-/// The active surface's component and store: the desktop, or the window's.
+/// The active surface's component and store: the app, or the window's.
 pub fn active_app<'a>(
     store: &'a mut Store<Host>,
     app: &'a App,
@@ -885,7 +1259,7 @@ pub fn active_app<'a>(
     }
 }
 
-/// The active surface's tree: the desktop's, or the window's.
+/// The active surface's tree: the app's, or the window's.
 pub fn active_tree<'a>(store: &'a Store<Host>, tree: &'a Tree, active: usize) -> &'a Tree {
     if active == 0 {
         tree
@@ -895,17 +1269,19 @@ pub fn active_tree<'a>(store: &'a Store<Host>, tree: &'a Tree, active: usize) ->
 }
 
 /// The active surface's ring target, as values (a key handler that also
-/// needs the store cannot hold a borrow of the surface).
+/// needs the store cannot hold a borrow of the surface): the id, whether it
+/// is a text input, whether it is a tile, and its owner (0 = the app, else a
+/// window's handle). The ring is the app's (unified), so the target is read
+/// from it regardless of `active`.
 pub fn active_target(
-    store: &mut Store<Host>,
-    desktop: &mut Surface,
-    active: usize,
-) -> (u32, bool, bool) {
-    let surf = active_surface(store, desktop, active);
-    surf.targets
-        .get(surf.focus_idx)
-        .map(|t| (t.id, t.is_input, t.is_tile))
-        .unwrap_or((0, false, false))
+    _store: &mut Store<Host>,
+    app: &mut Surface,
+    _active: usize,
+) -> (u32, bool, bool, u32) {
+    app.targets
+        .get(app.focus_idx)
+        .map(|t| (t.id, t.is_input, t.is_tile, t.owner))
+        .unwrap_or((0, false, false, 0))
 }
 
 /// Report the focused input's whole buffer to the component (`on-text`)
@@ -944,64 +1320,85 @@ fn sgr_fg(c: Color) -> Option<&'static str> {
     })
 }
 
+/// The rightmost and bottommost edge (in cells) of any positioned
+/// descendant: the dump buffer must fit the app's windows, which sit at
+/// their (pixel) positions and sizes, scaled to cells.
+fn positioned_extent(node: &Tree) -> (u16, u16) {
+    fn walk(node: &Tree, max_x: &mut u16, max_y: &mut u16) {
+        match node {
+            Tree::Row(_, _, s, children) | Tree::Column(_, _, s, children) => {
+                if s.positioned {
+                    let x = (s.x / CELL_W) as u16;
+                    let y = (s.y / CELL_H) as u16;
+                    let w = if s.w > 0 {
+                        (s.w / CELL_W).max(1) as u16
+                    } else {
+                        0
+                    };
+                    let h = if s.h > 0 {
+                        (s.h / CELL_H).max(1) as u16
+                    } else {
+                        0
+                    };
+                    *max_x = (*max_x).max(x.saturating_add(w));
+                    *max_y = (*max_y).max(y.saturating_add(h));
+                }
+                for c in children {
+                    walk(c, max_x, max_y);
+                }
+            }
+            _ => {}
+        }
+    }
+    let (mut max_x, mut max_y) = (0u16, 0u16);
+    walk(node, &mut max_x, &mut max_y);
+    (max_x, max_y)
+}
+
 /// One full frame as text: rendered into a memory buffer (`TestBackend`)
 /// and serialized with ANSI SGR codes for the styled cells, trailing
 /// spaces trimmed per row — the same bytes the `--dump` flag prints.
 ///
-/// The buffer fits the desktop whole (floored at half the hint's length,
-/// so the bar wraps to at most two rows) and the windows' cascade extent,
-/// or `width` columns when given (the hint bar wraps, as on a narrow
-/// terminal). A dump has no pointer to raise a window: the topmost is
-/// active, with its ring on its first focusable.
+/// The buffer fits the app whole (floored at half the hint's length, so the
+/// bar wraps to at most two rows) and the windows' extent, or `width`
+/// columns when given (the hint bar wraps, as on a narrow terminal). The
+/// windows are the app's positioned children, so their extent comes from the
+/// app's tree, not from the host. A dump has no pointer to raise a window:
+/// the ring seats on the app's first focusable, and the windows' content is
+/// inlined at their content slots.
 ///
 /// This is the byte-parity surface between the native and the browser
 /// host: a pure function of the tree, the windows, the width, and whether
 /// a registry is present, so the two must render identically.
 pub fn dump_frame(
     tree: &Tree,
-    windows: &mut [Window],
+    windows: &[Window],
     width: Option<u16>,
     has_registry: bool,
 ) -> String {
-    // The topmost window is active: re-seat its ring on its first focusable.
-    if let Some(win) = windows.last_mut() {
-        reseat(&win.tree, false, &mut win.surface);
-    }
     let has_windows = !windows.is_empty();
-    // The buffer fits the desktop whole, floored at half the hint's length,
-    // so the bar wraps to at most two rows.
+    // The buffer fits the app whole, floored at half the hint's length, so
+    // the bar wraps to at most two rows; it also widens and grows until the
+    // app's positioned windows fit.
+    let (pos_x, pos_y) = positioned_extent(tree);
     let w = width.unwrap_or_else(|| {
         let base = width_of(tree, has_registry)
             .max((hint_text(has_windows).chars().count() / 2) as u16)
             + 2;
-        // The desktop is centered and the windows sit at their cascade
-        // positions, so the buffer also widens until a window no longer
-        // overlaps the desktop (a real terminal is wider still; the dump
-        // shows the frame without the overlap).
-        let no_overlap = windows
-            .iter()
-            .map(|win| 2 * (win.x + window_size(win).0) + width_of(tree, has_registry))
-            .max()
-            .unwrap_or(0);
-        base.max(no_overlap)
+        base.max(pos_x)
     });
-    // The bar's wrapped rows, then the desktop with one margin row above
-    // and below, and the windows' cascade extent.
+    // The bar's wrapped rows, then the app with one margin row above and
+    // below, and the windows' extent.
     let hint = hint_rows(w, has_windows);
-    let area_h = height_of(tree, has_registry).saturating_add(2).max(
-        windows
-            .iter()
-            .map(|win| win.y + window_size(win).1 + 2)
-            .max()
-            .unwrap_or(0),
-    );
+    let area_h = height_of(tree, has_registry).max(pos_y).saturating_add(2);
     let h = area_h + hint;
     let mut terminal = Terminal::new(TestBackend::new(w, h)).expect("failed to create terminal");
-    let mut desktop_surf = Surface::default();
-    reseat(tree, has_registry, &mut desktop_surf);
-    let active = if has_windows { windows.len() } else { 0 };
+    // The ring seats on the app's first focusable (a tile); the first target
+    // is an app one, so the app is active.
+    let mut app_surf = Surface::default();
+    reseat(tree, has_registry, windows, &mut app_surf);
     let completed = terminal
-        .draw(|f| draw(f, tree, desktop_surf.focus, &windows, active, has_registry))
+        .draw(|f| draw(f, tree, app_surf.focus, windows, 0, has_registry))
         .expect("draw failed");
     let buf = completed.buffer;
     let area = buf.area();
@@ -1051,7 +1448,7 @@ mod tests {
     //! The frame is a pure function of (tree, focus, windows, terminal
     //! size), so a `TestBackend` pins the host-local behavior the component
     //! goldens do not reach: the hint bar on a terminal narrower than the
-    //! hint, and the window's chrome.
+    //! hint.
 
     use super::*;
 
@@ -1078,7 +1475,7 @@ mod tests {
     fn the_hint_bar_wraps_on_a_narrow_terminal() {
         let mut terminal =
             Terminal::new(TestBackend::new(40, 12)).expect("failed to create terminal");
-        let tree = Tree::Column(None, WAlign::Center, Vec::new());
+        let tree = Tree::Column(None, WAlign::Center, ContainerStyle::default(), Vec::new());
         terminal
             .draw(|f| draw(f, &tree, None, &[], 0, false))
             .expect("draw failed");
@@ -1096,7 +1493,7 @@ mod tests {
     fn the_hint_bar_is_one_row_on_a_wide_terminal() {
         let mut terminal =
             Terminal::new(TestBackend::new(100, 10)).expect("failed to create terminal");
-        let tree = Tree::Column(None, WAlign::Center, Vec::new());
+        let tree = Tree::Column(None, WAlign::Center, ContainerStyle::default(), Vec::new());
         terminal
             .draw(|f| draw(f, &tree, None, &[], 0, false))
             .expect("draw failed");
@@ -1112,37 +1509,6 @@ mod tests {
         assert!(
             (1..buf.area().height).all(|y| row(y).trim().is_empty()),
             "the bar should take exactly one row on a wide terminal"
-        );
-    }
-
-    /// A window: its title bar (the entry's name and the close marker) and
-    /// its border, the demo's tree centered in the content.
-    #[test]
-    fn a_window_draws_its_title_and_border() {
-        let mut terminal =
-            Terminal::new(TestBackend::new(40, 16)).expect("failed to create terminal");
-        let tree = Tree::Column(
-            None,
-            WAlign::Center,
-            vec![Tree::Text(
-                "0".to_string(),
-                WStyle {
-                    color: WColor::Neutral,
-                    size: WSize::Large,
-                },
-            )],
-        );
-        terminal
-            .draw(|f| draw_window_box(f, "counter", &tree, Rect::new(4, 2, 14, 8), None, true))
-            .expect("draw failed");
-        let words = visible_words(&terminal);
-        assert!(
-            words.iter().any(|w| w == "counter"),
-            "the title bar should show the entry's name: {words:?}"
-        );
-        assert!(
-            words.iter().any(|w| w.contains('×')),
-            "the title bar should show the close marker: {words:?}"
         );
     }
 }

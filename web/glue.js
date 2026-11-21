@@ -7,11 +7,11 @@
 //
 //   view() -> list<node>     : `view() -> i32`, a pointer to an 8-byte
 //                              little-endian {ptr, len} descriptor; the
-//                              items are a contiguous run of 36-byte
+//                              items are a contiguous run of 60-byte
 //                              nodes. The result is guest-allocated and
 //                              must be returned to the guest with
 //                              `cabi_post_view(desc)`.
-//   changes() -> list<mut.>  : same shape; the items are 44-byte
+//   changes() -> list<mut.>  : same shape; the items are 68-byte
 //                              mutations and the buffer is returned with
 //                              `cabi_post_changes(desc)`.
 //   on-click(id: u32)        : `on-click(i32)` — passes directly.
@@ -25,6 +25,13 @@
 //   on-tick()                : `on-tick()`.
 //   on-double-click(id: u32) : `on-double-click(i32)` — passes directly.
 //   on-window-close(w: u32)  : `on-window-close(i32)` — passes directly.
+//   on-pointer-down(id, x, y): `on-pointer-down(i32, i32, i32)` — the node
+//                              under the press, then the position in the
+//                              host's units (pixels on this host).
+//   on-pointer-move(x, y)    : `on-pointer-move(i32, i32)`.
+//   on-pointer-up(x, y)      : `on-pointer-up(i32, i32)`.
+//   on-key(key: string)      : `on-key(i32, i32)` — the key name's pointer
+//                              + length in the guest's memory, like `text`.
 //   schedule(p: u64)         : `$root"."schedule"`, `(i64)` — the
 //                              component's refresh request in ms (0 = no
 //                              periodic wake). Delivered to the
@@ -33,6 +40,14 @@
 //   now() -> u64             : imported as `$root"."now"`, `() -> i64`
 //                              (JS BigInt). Provided unconditionally; the
 //                              counter never calls it.
+//   viewport() -> viewport-size
+//                              : `$root"."viewport"`, `(i32 retPtr)` — the
+//                              guest passes a return pointer; the host
+//                              writes the 8-byte record {w, h} (the
+//                              viewport's size in the host's units) to it.
+//                              The values come from the `viewport` hook
+//                              (a function, so a resize is seen); `(0, 0)`
+//                              (unknown) without it.
 //   list-entries() -> list<entry>
 //                              : `$root"."list-entries"`, `(i32 retPtr)` —
 //                              the guest passes a return pointer; the host
@@ -52,8 +67,12 @@
 //                              byte 4 is the handle (Ok) or the error tag
 //                              (Err). Delivered to the `onOpenWindow` hook;
 //                              without it the result is `not-found`.
+//   close-entry(handle: u32) : `$root"."close-entry"`, `(i32)` — the
+//                              component closed a window it opened.
+//                              Delivered to the `onCloseWindow` hook; a
+//                              no-op without it (idempotent, per the WIT).
 //
-// The 36-byte node (all little-endian):
+// The 60-byte node (all little-endian):
 //   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container,
 //                   3 = input, 4 = image (the WIT case order in waui:ui/widget)
 //   bytes [1..4]    padding
@@ -65,11 +84,31 @@
 //   bytes [16..20]  parent id: u32 (valid only when the flag is set)
 //   bytes [20]      container: direction (u8, 0 = row, 1 = column)
 //   bytes [21]      container: align (u8, 0 = start, 1 = center, 2 = end)
+//   bytes [22]      container: positioned (u8, 0 = in flow, 1 = at (x, y))
+//   bytes [23]      padding
+//   bytes [24..28]  container: x (u32, host units, relative to the parent)
+//   bytes [28..32]  container: y (u32)
+//   bytes [32..36]  container: w (u32; 0 = the host's default)
+//   bytes [36..40]  container: h (u32; 0 = the host's default)
+//   bytes [40..44]  container: z (u32, stacking order; 0 = none)
+//   bytes [44..48]  container: gap (u32, host units; 0 = the host's default)
+//   bytes [48..52]  container: padding (u32; 0 = none)
+//   bytes [52]      container: stretch (u8: 0 = none, 1 = main, 2 = cross,
+//                   3 = both)
+//   bytes [53]      container: overflow (u8: 0 = clip, 1 = scroll)
+//   bytes [54]      container: background (u8: 0 = none, 1 = panel,
+//                   2 = bar)
+//   bytes [55]      container: border (u8: 0 = none, 1 = line, 2 = ring)
+//   bytes [56]      container: radius (u8: 0 = none, 1 = small, 2 = large)
+//   bytes [57]      container: shadow (u8: 0 = none, 1 = raised)
+//   bytes [58]      container: cursor (u8: 0 = default, 1 = pointer,
+//                   2 = grab, 3 = grabbing, 4 = resize)
+//   bytes [59]      padding
 //   bytes [20..24]  text/button/input/image: string pointer
 //   bytes [24..28]  text/button/input/image: string length (UTF-8 bytes)
 //   bytes [28]      text/button/input: style.color (u8, WIT case order in
 //                   waui:ui/widget: 0 = neutral, 1 = accent, 2 = positive,
-//                   3 = negative, 4 = warning)
+//                   3 = negative, 4 = warning, 5 = dim)
 //   bytes [29]      text/button/input: style.size (u8: 0 = small,
 //                   1 = medium, 2 = large)
 //   bytes [30..32]  padding (text/button/input)
@@ -77,14 +116,14 @@
 //   bytes [32..36]  input: width (u32, characters; 0 = the host's default)
 //                   image: height (u32, host units; 0 = the host's default)
 //
-// The 44-byte mutation (a variant with a record- or u32-sized payload):
+// The 68-byte mutation (a variant with a record- or u32-sized payload):
 //   bytes [0]       tag: 0 = changed, 1 = removed (one byte, like the node
 //                   tag — the canonical ABI sizes a variant's discriminant
 //                   to the case count: u8 for 256 or fewer cases)
 //   bytes [1..4]    padding
-//   changed   : the 36-byte node above at byte 4, then the node's index
+//   changed   : the 60-byte node above at byte 4, then the node's index
 //               (a u32, its 0-based position among its parent's children)
-//               at byte 40
+//               at byte 64
 //   removed   : the node id, u32 at byte 4
 //
 // The tag is read as a single byte, not a word: the padding bytes are not
@@ -93,17 +132,22 @@
 //
 // Note: a WIT enum lowers to a single byte in the canonical ABI when it has
 // 256 or fewer variants (wasmtime's generated bindings assert SIZE32 = 1),
-// so the two style tokens pack into two adjacent bytes.
+// so the container's semantic tokens pack into adjacent bytes.
 //
 // This module is written to run in both a browser and Node so the same code
 // can be exercised headlessly (see selftest.mjs).
 
-// The world's imports (now, schedule, list-entries, open-entry), as the
-// pre-lift module expects. `hooks.onSchedule` arms the host's wake loop (see
-// app.js); a no-op without it. `hooks.registry` is the entry registry
-// `list-entries` returns, each `{ name, data }`; empty without it.
+// The world's imports (now, schedule, viewport, list-entries, open-entry,
+// close-entry), as the pre-lift module expects. A module that uses none of
+// them imports none, and the extras here are ignored. `hooks.onSchedule`
+// arms the host's wake loop (see app.js); a no-op without it.
+// `hooks.viewport` is a function returning [w, h] in the host's units (a
+// function, so a resize is seen); `(0, 0)` (unknown) without it.
+// `hooks.registry` is the entry registry `list-entries` returns, each
+// `{ name, data }`; empty without it.
 // `hooks.onOpenWindow(name, x, y, w, h)` opens a window and returns its
 // handle; `null` (or its absence) reports `not-found`.
+// `hooks.onCloseWindow(handle)` closes one; a no-op without it.
 //
 // `getInstance` yields the instance once it exists: the import functions
 // run only after instantiation, but the import object is built before it,
@@ -180,6 +224,21 @@ function appImports(hooks = {}, getInstance) {
           i32[(retPtr + 4) >> 2] = handle;
         }
       },
+      // The world's `viewport: func() -> viewport-size` import: the guest
+      // passes a return pointer; the host writes the 8-byte record {w, h}
+      // to it. The values come from the `viewport` hook (a function, so a
+      // resize is seen); `(0, 0)` (unknown) without it.
+      viewport: (retPtr) => {
+        const [w, h] = hooks.viewport ? hooks.viewport() : [0, 0];
+        const i32 = new Int32Array(getInstance().exports.memory.buffer);
+        i32[retPtr >> 2] = w;
+        i32[(retPtr + 4) >> 2] = h;
+      },
+      // The world's `close-entry: func(handle: u32)` import: the component
+      // closed a window it opened. Idempotent, per the WIT.
+      'close-entry': (handle) => {
+        if (hooks.onCloseWindow) hooks.onCloseWindow(handle);
+      },
     },
   };
 }
@@ -189,11 +248,18 @@ function appImports(hooks = {}, getInstance) {
 // and `instantiateApp` (sync, from a pre-compiled module).
 // The semantic tokens each host maps onto its own palette, in the WIT case
 // order of waui:ui/widget (unknown values degrade safely).
-const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning'];
+const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning', 'dim'];
 const SIZES = ['small', 'medium', 'large'];
 const ALIGNS = ['start', 'center', 'end'];
+const STRETCHES = ['none', 'main', 'cross', 'both'];
+const OVERFLOWS = ['clip', 'scroll'];
+const BACKGROUNDS = ['none', 'panel', 'bar'];
+const BORDERS = ['none', 'line', 'ring'];
+const RADII = ['none', 'small', 'large'];
+const SHADOWS = ['none', 'raised'];
+const CURSORS = ['default', 'pointer', 'grab', 'grabbing', 'resize'];
 
-// Decode one 36-byte node record at byte offset `o`.
+// Decode one 60-byte node record at byte offset `o`.
 function decodeNode(i32, u8, o) {
   const id = u8[o + 4] !== 0 ? i32[(o + 8) >> 2] : null;
   const parent = u8[o + 12] !== 0 ? i32[(o + 16) >> 2] : null;
@@ -205,6 +271,21 @@ function decodeNode(i32, u8, o) {
       parent,
       direction: u8[o + 20] === 1 ? 'column' : 'row',
       align: ALIGNS[u8[o + 21]] ?? 'center',
+      positioned: u8[o + 22] !== 0,
+      x: i32[(o + 24) >> 2],
+      y: i32[(o + 28) >> 2],
+      w: i32[(o + 32) >> 2],
+      h: i32[(o + 36) >> 2],
+      z: i32[(o + 40) >> 2],
+      gap: i32[(o + 44) >> 2],
+      padding: i32[(o + 48) >> 2],
+      stretch: STRETCHES[u8[o + 52]] ?? 'none',
+      overflow: OVERFLOWS[u8[o + 53]] ?? 'clip',
+      background: BACKGROUNDS[u8[o + 54]] ?? 'none',
+      border: BORDERS[u8[o + 55]] ?? 'none',
+      radius: RADII[u8[o + 56]] ?? 'none',
+      shadow: SHADOWS[u8[o + 57]] ?? 'none',
+      cursor: CURSORS[u8[o + 58]] ?? 'default',
     };
   }
   const sp = i32[(o + 20) >> 2];
@@ -264,12 +345,12 @@ function makeAppApi(ex) {
 
   return {
     /// Decode `view()`'s result into a flat list of node objects.
-    view: () => readList(mem, ex.view, ex.cabi_post_view, 36, decodeNode),
+    view: () => readList(mem, ex.view, ex.cabi_post_view, 60, decodeNode),
 
     /// Decode `changes()`'s result into a list of mutation objects:
     /// { kind: 'changed', node, index } or { kind: 'removed', id }.
     changes: () =>
-      readList(mem, ex.changes, ex.cabi_post_changes, 44, (i32, u8, o) => {
+      readList(mem, ex.changes, ex.cabi_post_changes, 68, (i32, u8, o) => {
         // The tag is one byte (see the layout note above); the padding after
         // it is unwritten, so it must not be read as part of the tag.
         return u8[o] === 1
@@ -277,7 +358,7 @@ function makeAppApi(ex) {
           : {
               kind: 'changed',
               node: decodeNode(i32, u8, o + 4),
-              index: i32[(o + 40) >> 2],
+              index: i32[(o + 64) >> 2],
             };
       }),
 
@@ -291,6 +372,36 @@ function makeAppApi(ex) {
     /// The world's `on-window-close` export: the window with `handle` was
     /// closed by the user.
     windowClose: (handle) => ex['on-window-close'](handle),
+
+    /// The world's `on-pointer-down` export: the pointer was pressed over
+    /// the node with `id`, at (x, y) in the host's units.
+    pointerDown: (id, x, y) => ex['on-pointer-down'](id, x, y),
+
+    /// The world's `on-pointer-move` export: the pointer moved to (x, y)
+    /// while a button is held.
+    pointerMove: (x, y) => ex['on-pointer-move'](x, y),
+
+    /// The world's `on-pointer-up` export: the pointer was released at
+    /// (x, y) after a press.
+    pointerUp: (x, y) => ex['on-pointer-up'](x, y),
+
+    /// The world's `on-key` export: a key was pressed, by the host's name
+    /// (the host's convention: `"Escape"`, `"Tab"`, `"Shift+Tab"`, ...).
+    /// Like `text`, the string goes through the guest's allocator; the key
+    /// names are host-bounded, so no over-long clamp.
+    key: (name) => {
+      const bytes = enc.encode(name);
+      if (bytes.length === 0) {
+        ex['on-key'](0, 0);
+        return;
+      }
+      const ptr = ex.cabi_realloc(0, 0, 1, bytes.length);
+      // The allocation may have grown the guest's memory, detaching the
+      // previous ArrayBuffer: build the view after it.
+      const u8 = new Uint8Array(mem());
+      u8.set(bytes, ptr);
+      ex['on-key'](ptr, bytes.length);
+    },
 
     /// The world's `on-text` export: the input with `id` now holds `text`
     /// (the host's whole current buffer). The canonical ABI wants the string
@@ -336,11 +447,12 @@ function makeAppApi(ex) {
 }
 
 // Instantiate a component from its bytes: the standalone demo pages, the
-// desktop page, and the Node selftest boot this way. `wasmBytes` may be a
+// windowing page, and the Node selftest boot this way. `wasmBytes` may be a
 // promise of the bytes (the site's fetch boot); awaiting a non-promise is the
 // identity, so the inlined form works too. The hooks are as in
-// `appImports`; the windowing ones (`registry`, `onOpenWindow`) are used by
-// the desktop, ignored by the plain demos.
+// `appImports`; the windowing ones (`registry`, `onOpenWindow`,
+// `onCloseWindow`) and `viewport` are used by a windowing page, ignored by
+// the plain demos.
 export async function createApp(wasmBytes, hooks = {}) {
   const bytes = await wasmBytes;
   let instance;

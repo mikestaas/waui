@@ -13,27 +13,40 @@ package waui:ui;
 ///
 /// The host calls `on-tick` at the period the component requests with
 /// `schedule` (0 = never) and provides a `now` clock the component can
-/// poll. User events flow the other way: `on-click` for activations and
-/// `on-text` for text-input edits.
+/// poll. User events flow the other way: `on-click` for activations,
+/// `on-text` for text-input edits, `on-pointer-down` / `on-pointer-move` /
+/// `on-pointer-up` for presses and held-button movement (a window drag or
+/// resize), and `on-key` for keys. A host without a pointer never emits the
+/// pointer events, as it may ignore `schedule`; a host without a keyboard
+/// never emits `on-key`.
 ///
-/// The windowing functions are for components that run *other* components —
-/// the desktop: the icon grid, the menu bar, and the set of open windows.
-/// The component owns the *logical* state — which entries are open, the
-/// grid, the menu bar — and exports it via `view`/`changes`, as any
-/// component does. It *requests* window operations through the `open-entry`
-/// import; the host owns the *presentation* — the chrome, the pixel
-/// geometry, the z-order — and echoes user actions back through
-/// `on-double-click` (a node was activated) and `on-window-close` (a window
-/// was closed by the user). Drag, resize, and raise are host-internal: the
-/// host draws the chrome and handles its own pointer events, reporting only
-/// the close.
+/// The multi-component functions are for a component that runs *other*
+/// components. It lists what the host can run (`list-entries`), opens one by
+/// name (`open-entry`, which returns a handle the host assigns), and closes
+/// one (`close-entry`). The host reports a host-side close
+/// (`on-window-close`) and a double-activation (`on-double-click`). A
+/// component that runs no other components ignores all five, as a plain app
+/// does.
+///
+/// Presentation splits between the two. The host owns the opened component —
+/// its sandbox and the rendering of its tree. The opening component owns the
+/// rest. It may leave the window's chrome to the host (then `on-window-close`
+/// reports closes), or it may draw its own windows in its tree — containers
+/// placed with the contract's geometry tokens (`x`/`y`/`w`/`h`, `z`,
+/// `stretch`, ...), driven through the pointer and key channels above — and
+/// seat the opened component's tree in a slot of its own, closing with
+/// `close-entry`. Either way the opened component's tree is the host's to
+/// render; the opening component only ever sees its own tree.
 ///
 /// The registry and the open are in the wasi:filesystem shape: a
 /// host-provided list of entries (`list-entries`, its `readdir`), an open
 /// by name (`open-entry`, its `open-at`), and a `result` error model. An
 /// entry's `name` is its identifier, like a dirent; its `data` is a JSON
 /// object of host-defined per-entry metadata. Window references are flat
-/// handles (a `u32` the host assigns).
+/// handles (a `u32` the host assigns). A component that draws its own
+/// windows takes a handle as a node id (the content slot), so the host
+/// assigns handles from a base above the component's own ids; the hosts
+/// in this project use 10_000.
 ///
 /// A host that cannot run other components returns an empty registry from
 /// `list-entries` and `not-found` from `open-entry`; a component that
@@ -76,6 +89,23 @@ world app {
   /// host's chrome): the component drops it from its open set.
   export on-window-close: func(window: u32);
 
+  /// The pointer was pressed over the node with the given id, at `(x, y)`
+  /// in the host's units. A host without a pointer never emits this; a
+  /// component that manages no pointer-driven UI ignores it.
+  export on-pointer-down: func(id: u32, x: u32, y: u32);
+
+  /// The pointer moved to `(x, y)` in the host's units while a button is
+  /// held. Emitted only while a press is in progress, so an idle pointer
+  /// never wakes the component.
+  export on-pointer-move: func(x: u32, y: u32);
+
+  /// The pointer was released at `(x, y)` after a press.
+  export on-pointer-up: func(x: u32, y: u32);
+
+  /// A key was pressed: the host's key name (`"Escape"`, `"Enter"`,
+  /// `"a"`, ...). Keys typed into a text input go to `on-text`, not here.
+  export on-key: func(key: string);
+
   /// Request a refresh period, in ms: the host wakes the component
   /// (`on-tick`, then `changes`) at that period until the component
   /// schedules a new one; 0 cancels. A host may ignore the request — a
@@ -85,6 +115,16 @@ world app {
 
   /// The host's clock, in milliseconds (arbitrary, monotonic epoch).
   import now: func() -> u64;
+
+  /// The host's viewport size, in the host's units (pixels on the web
+  /// host). A host with no notion of a viewport reports `(0, 0)`, which a
+  /// component treats as unknown and skips viewport-dependent math (a
+  /// drag clamp) rather than clamping to nothing.
+  record viewport-size {
+    w: u32,
+    h: u32,
+  }
+  import viewport: func() -> viewport-size;
 
   /// A launchable entry in the host's registry: its `name` (the identifier
   /// `open-entry` takes, like a dirent; the display label when the blob has
@@ -122,4 +162,9 @@ world app {
       w: u32,
       h: u32,
     ) -> result<u32, error>;
+
+  /// Close the window the host opened for `handle` (via `open-entry`): the
+  /// host drops the component it is running. Idempotent — an unknown or
+  /// already-closed handle is a no-op.
+  import close-entry: func(handle: u32);
 }

@@ -30,6 +30,8 @@ interface widget {
     negative,
     /// Caution / in-progress.
     warning,
+    /// Muted secondary text (captions, counts, hints).
+    dim,
   }
 
   /// A semantic text size, mapped by each host to its own scale.
@@ -90,16 +92,90 @@ interface widget {
     height: u32,
   }
 
+  /// How a container fills the space available to it. `main` is the
+  /// `direction` axis, `cross` the other; a host that cannot express a token
+  /// renders without it.
+  enum stretch {
+    /// Size to content on both axes.
+    none,
+    /// Fill the main axis.
+    main,
+    /// Fill the cross axis.
+    cross,
+    /// Fill both axes.
+    both,
+  }
+
+  /// How a container treats content past its bounds.
+  enum overflow {
+    /// Clip to the container's bounds.
+    clip,
+    /// Scroll content past the bounds.
+    scroll,
+  }
+
+  /// A semantic background. Each host maps these onto its own palette; a
+  /// host that cannot express a token renders without it.
+  enum background {
+    /// The host's own background shows through.
+    none,
+    /// A raised surface (a window panel, a card).
+    panel,
+    /// A flat bar (a title bar, a menu bar).
+    bar,
+  }
+
+  /// A semantic border.
+  enum border {
+    none,
+    /// A 1px line in the host's line color.
+    line,
+    /// A 2px outline in the host's accent color (a selection ring).
+    ring,
+  }
+
+  /// A corner-radius scale.
+  enum radius {
+    none,
+    small,
+    large,
+  }
+
+  /// A drop shadow.
+  enum shadow {
+    none,
+    /// The host's elevation shadow.
+    raised,
+  }
+
+  /// A cursor shape, for hosts that set one.
+  enum cursor {
+    default,
+    pointer,
+    grab,
+    grabbing,
+    resize,
+  }
+
   /// A horizontal or vertical container.
   ///
   /// (Named `container` rather than `box`: the latter would clash with
   /// `std::boxed::Box` in generated Rust bindings.)
   ///
-  /// Containers carry layout only — no `style` field; how a host decorates
-  /// one is a host concern, like focus. `direction` is the axis the children
+  /// Containers carry layout and chrome — no `style` field; text styling is
+  /// the children's concern, like focus. `direction` is the axis the children
   /// stack along; `align` is the cross axis it places them on (a column
   /// aligns its children horizontally, a row vertically). A host that cannot
   /// express a token renders without it, as with `style`.
+  ///
+  /// Geometry is in the host's units (pixels on the web host); `0` leaves a
+  /// dimension to the host's default, as with the style tokens. `positioned`
+  /// (`1`) places the container at `(x, y)` relative to its parent instead of
+  /// flowing with its siblings; `z` is its stacking order (`0` = none, a
+  /// positioned container above unpositioned siblings). `gap` is the space
+  /// between children, `padding` the space around them. `stretch`,
+  /// `overflow`, `background`, `border`, `radius`, `shadow`, and `cursor` are
+  /// semantic tokens, degraded per host as above.
   ///
   /// A container's `id` is *required in practice* (see the identity note
   /// above). A host that sees a child with a parent it does not have will
@@ -109,6 +185,21 @@ interface widget {
     parent: option<u32>,
     direction: direction,
     align: align,
+    positioned: u8,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    z: u32,
+    gap: u32,
+    padding: u32,
+    stretch: stretch,
+    overflow: overflow,
+    background: background,
+    border: border,
+    radius: radius,
+    shadow: shadow,
+    cursor: cursor,
   }
 
   enum direction {

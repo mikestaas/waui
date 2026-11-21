@@ -2,25 +2,24 @@
 // the byte-level mirror of what `wit-bindgen` emits for the Rust
 // components, and of what the hosts' decoders (e.g. `web/glue.js`) read.
 //
-//   `node` (a variant; 36 bytes, the widest case):
+//   `node` (a variant; 60 bytes, the widest case — the container):
 //     [0]       tag: 0 = text, 1 = button, 2 = container, 3 = input, 4 = image
 //     [4]       id option flag        [8..12)   id
 //     [12]      parent option flag    [16..20)  parent
-//     [20..24)  text/button/input: string pointer
-//               image: the `src` string pointer
-//               container: [20] direction byte, [21] align byte
-//     [24..28)  text/button/input: string length (UTF-8 bytes)
-//               image: the `src` string length
-//     [28]      text/button/input: style.color    [29] style.size
-//     [28..32)  image: width (u32, host units; 0 = the host's default)
-//     [32..36)  input: width (u32, characters; 0 = the host's default)
-//               image: height (u32, host units; 0 = the host's default)
-//               text/button/container: padding
+//     text/button/input: [20..24) string pointer, [24..28) string length,
+//                         [28] style.color, [29] style.size
+//     image:      [20..24) src pointer, [24..28) src length,
+//                 [28..32) width, [32..36) height
+//     container:  [20] direction, [21] align, [22] positioned,
+//                 [24..28) x, [28..32) y, [32..36) w, [36..40) h,
+//                 [40..44) z, [44..48) gap, [48..52) padding,
+//                 [52] stretch, [53] overflow, [54] background, [55] border,
+//                 [56] radius, [57] shadow, [58] cursor
 //
-//   `mutation` (a variant; 44 bytes):
+//   `mutation` (a variant; 68 bytes):
 //     [0..4)    tag: 0 = changed, 1 = removed
-//     [4..40)   changed: a 36-byte `node` | removed: the node's id (u32)
-//     [40..44)  changed: the node's index (u32) | removed: padding
+//     [4..64)   changed: a 60-byte `node` | removed: the node's id (u32)
+//     [64..68)  changed: the node's index (u32) | removed: padding
 //
 // Enum values are the WIT case order in `wit/widget.wit`. Records are
 // zeroed before their fields are written: the arena is reused, and a host
@@ -39,6 +38,7 @@ export const COLOR_ACCENT = 1;
 export const COLOR_POSITIVE = 2;
 export const COLOR_NEGATIVE = 3;
 export const COLOR_WARNING = 4;
+export const COLOR_DIM = 5;
 export const SIZE_SMALL = 0;
 export const SIZE_MEDIUM = 1;
 export const SIZE_LARGE = 2;
@@ -47,6 +47,28 @@ export const DIRECTION_COLUMN = 1;
 export const ALIGN_START = 0;
 export const ALIGN_CENTER = 1;
 export const ALIGN_END = 2;
+export const STRETCH_NONE = 0;
+export const STRETCH_MAIN = 1;
+export const STRETCH_CROSS = 2;
+export const STRETCH_BOTH = 3;
+export const OVERFLOW_CLIP = 0;
+export const OVERFLOW_SCROLL = 1;
+export const BACKGROUND_NONE = 0;
+export const BACKGROUND_PANEL = 1;
+export const BACKGROUND_BAR = 2;
+export const BORDER_NONE = 0;
+export const BORDER_LINE = 1;
+export const BORDER_RING = 2;
+export const RADIUS_NONE = 0;
+export const RADIUS_SMALL = 1;
+export const RADIUS_LARGE = 2;
+export const SHADOW_NONE = 0;
+export const SHADOW_RAISED = 1;
+export const CURSOR_DEFAULT = 0;
+export const CURSOR_POINTER = 1;
+export const CURSOR_GRAB = 2;
+export const CURSOR_GRABBING = 3;
+export const CURSOR_RESIZE = 4;
 export const MUT_CHANGED = 0;
 export const MUT_REMOVED = 1;
 
@@ -68,7 +90,7 @@ function putId(rec: i32, id: i32, parent: i32): void {
   }
 }
 
-/// A `text` node record at `rec` (36 bytes).
+/// A `text` node record at `rec` (60 bytes).
 export function emitText(
   rec: i32,
   id: i32,
@@ -78,7 +100,7 @@ export function emitText(
   color: i32,
   size: i32,
 ): void {
-  zero(rec, 36);
+  zero(rec, 60);
   store<i8>(rec + 0, TAG_TEXT);
   putId(rec, id, parent);
   store<i32>(rec + 20, str);
@@ -87,7 +109,7 @@ export function emitText(
   store<i8>(rec + 29, size);
 }
 
-/// A `button` node record at `rec` (36 bytes).
+/// A `button` node record at `rec` (60 bytes).
 export function emitButton(
   rec: i32,
   id: i32,
@@ -97,7 +119,7 @@ export function emitButton(
   color: i32,
   size: i32,
 ): void {
-  zero(rec, 36);
+  zero(rec, 60);
   store<i8>(rec + 0, TAG_BUTTON);
   putId(rec, id, parent);
   store<i32>(rec + 20, str);
@@ -106,7 +128,7 @@ export function emitButton(
   store<i8>(rec + 29, size);
 }
 
-/// An `input` node record at `rec` (36 bytes).
+/// An `input` node record at `rec` (60 bytes). The width is in characters.
 export function emitInput(
   rec: i32,
   id: i32,
@@ -117,7 +139,7 @@ export function emitInput(
   size: i32,
   width: i32,
 ): void {
-  zero(rec, 36);
+  zero(rec, 60);
   store<i8>(rec + 0, TAG_INPUT);
   putId(rec, id, parent);
   store<i32>(rec + 20, str);
@@ -127,7 +149,7 @@ export function emitInput(
   store<i32>(rec + 32, width);
 }
 
-/// An `image` node record at `rec` (36 bytes). An image carries no style:
+/// An `image` node record at `rec` (60 bytes). An image carries no style:
 /// its `[28..36)` is the width and the height, not the two style bytes.
 export function emitImage(
   rec: i32,
@@ -138,7 +160,7 @@ export function emitImage(
   width: i32,
   height: i32,
 ): void {
-  zero(rec, 36);
+  zero(rec, 60);
   store<i8>(rec + 0, TAG_IMAGE);
   putId(rec, id, parent);
   store<i32>(rec + 20, str);
@@ -147,19 +169,58 @@ export function emitImage(
   store<i32>(rec + 32, height);
 }
 
-/// A `container` node record at `rec` (36 bytes).
-export function emitContainer(rec: i32, id: i32, parent: i32, direction: i32, align: i32): void {
-  zero(rec, 36);
+/// A `container` node record at `rec` (60 bytes). The 19 WIT fields, in the
+/// record's order: the two option ids, then direction, align, positioned,
+/// the x/y/w/h/z geometry, gap and padding, and the seven chrome tokens.
+export function emitContainer(
+  rec: i32,
+  id: i32,
+  parent: i32,
+  direction: i32,
+  align: i32,
+  positioned: i32,
+  x: i32,
+  y: i32,
+  w: i32,
+  h: i32,
+  z: i32,
+  gap: i32,
+  padding: i32,
+  stretch: i32,
+  overflow: i32,
+  background: i32,
+  border: i32,
+  radius: i32,
+  shadow: i32,
+  cursor: i32,
+): void {
+  zero(rec, 60);
   store<i8>(rec + 0, TAG_CONTAINER);
   putId(rec, id, parent);
   store<i8>(rec + 20, direction);
   store<i8>(rec + 21, align);
+  store<i8>(rec + 22, positioned);
+  store<i32>(rec + 24, x);
+  store<i32>(rec + 28, y);
+  store<i32>(rec + 32, w);
+  store<i32>(rec + 36, h);
+  store<i32>(rec + 40, z);
+  store<i32>(rec + 44, gap);
+  store<i32>(rec + 48, padding);
+  store<i8>(rec + 52, stretch);
+  store<i8>(rec + 53, overflow);
+  store<i8>(rec + 54, background);
+  store<i8>(rec + 55, border);
+  store<i8>(rec + 56, radius);
+  store<i8>(rec + 57, shadow);
+  store<i8>(rec + 58, cursor);
 }
 
 // The `changed` mutation's payload is a full node record at byte 4, so it
-// is written by the same node emitters, one word in.
+// is written by the same node emitters, one word in. The index (the node's
+// 0-based position among its parent's children) sits after the 60-byte node.
 
-/// A `changed` mutation carrying a `text` node, at `rec` (44 bytes).
+/// A `changed` mutation carrying a `text` node, at `rec` (68 bytes).
 export function emitChangedText(
   rec: i32,
   id: i32,
@@ -168,13 +229,15 @@ export function emitChangedText(
   len: i32,
   color: i32,
   size: i32,
+  index: i32,
 ): void {
-  zero(rec, 44);
+  zero(rec, 68);
   store<i32>(rec + 0, MUT_CHANGED);
   emitText(rec + 4, id, parent, str, len, color, size);
+  store<i32>(rec + 64, index);
 }
 
-/// A `changed` mutation carrying a `button` node, at `rec` (44 bytes).
+/// A `changed` mutation carrying a `button` node, at `rec` (68 bytes).
 export function emitChangedButton(
   rec: i32,
   id: i32,
@@ -183,13 +246,15 @@ export function emitChangedButton(
   len: i32,
   color: i32,
   size: i32,
+  index: i32,
 ): void {
-  zero(rec, 44);
+  zero(rec, 68);
   store<i32>(rec + 0, MUT_CHANGED);
   emitButton(rec + 4, id, parent, str, len, color, size);
+  store<i32>(rec + 64, index);
 }
 
-/// A `changed` mutation carrying an `input` node, at `rec` (44 bytes).
+/// A `changed` mutation carrying an `input` node, at `rec` (68 bytes).
 export function emitChangedInput(
   rec: i32,
   id: i32,
@@ -199,13 +264,15 @@ export function emitChangedInput(
   color: i32,
   size: i32,
   width: i32,
+  index: i32,
 ): void {
-  zero(rec, 44);
+  zero(rec, 68);
   store<i32>(rec + 0, MUT_CHANGED);
   emitInput(rec + 4, id, parent, str, len, color, size, width);
+  store<i32>(rec + 64, index);
 }
 
-/// A `changed` mutation carrying an `image` node, at `rec` (44 bytes).
+/// A `changed` mutation carrying an `image` node, at `rec` (68 bytes).
 export function emitChangedImage(
   rec: i32,
   id: i32,
@@ -214,28 +281,68 @@ export function emitChangedImage(
   len: i32,
   width: i32,
   height: i32,
+  index: i32,
 ): void {
-  zero(rec, 44);
+  zero(rec, 68);
   store<i32>(rec + 0, MUT_CHANGED);
   emitImage(rec + 4, id, parent, str, len, width, height);
+  store<i32>(rec + 64, index);
 }
 
-/// A `changed` mutation carrying a `container` node, at `rec` (44 bytes).
+/// A `changed` mutation carrying a `container` node, at `rec` (68 bytes).
 export function emitChangedContainer(
   rec: i32,
   id: i32,
   parent: i32,
   direction: i32,
   align: i32,
+  positioned: i32,
+  x: i32,
+  y: i32,
+  w: i32,
+  h: i32,
+  z: i32,
+  gap: i32,
+  padding: i32,
+  stretch: i32,
+  overflow: i32,
+  background: i32,
+  border: i32,
+  radius: i32,
+  shadow: i32,
+  cursor: i32,
+  index: i32,
 ): void {
-  zero(rec, 44);
+  zero(rec, 68);
   store<i32>(rec + 0, MUT_CHANGED);
-  emitContainer(rec + 4, id, parent, direction, align);
+  emitContainer(
+    rec + 4,
+    id,
+    parent,
+    direction,
+    align,
+    positioned,
+    x,
+    y,
+    w,
+    h,
+    z,
+    gap,
+    padding,
+    stretch,
+    overflow,
+    background,
+    border,
+    radius,
+    shadow,
+    cursor,
+  );
+  store<i32>(rec + 64, index);
 }
 
-/// A `removed` mutation (the node's id) at `rec` (44 bytes).
+/// A `removed` mutation (the node's id) at `rec` (68 bytes).
 export function emitRemoved(rec: i32, id: i32): void {
-  zero(rec, 44);
+  zero(rec, 68);
   store<i32>(rec + 0, MUT_REMOVED);
   store<i32>(rec + 4, id);
 }

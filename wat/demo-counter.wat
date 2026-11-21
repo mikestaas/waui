@@ -18,7 +18,21 @@
     (field $size i32)          ;; the WIT size token
     (field $direction i32)     ;; containers: 0 row, 1 column
     (field $align i32)         ;; containers: 0 start, 1 center, 2 end
-    (field $width i32)         ;; inputs: characters (0 = the host's default)
+    (field $width i32)         ;; inputs: characters; images and containers: host units
+    (field $height i32)        ;; images and containers: host units (0 = the host's default)
+    (field $positioned i32)    ;; containers: 1 = the x/y are relative to the parent
+    (field $x i32)             ;; containers: the host's units
+    (field $y i32)             ;; containers: the host's units
+    (field $z i32)             ;; containers: the stacking order (0 = none)
+    (field $gap i32)           ;; containers: the child gap (0 = the host's default)
+    (field $padding i32)       ;; containers: the host's units
+    (field $stretch i32)       ;; containers: 0 none, 1 main, 2 cross, 3 both
+    (field $overflow i32)      ;; containers: 0 clip, 1 scroll
+    (field $background i32)    ;; containers: 0 none, 1 panel, 2 bar
+    (field $border i32)        ;; containers: 0 none, 1 line, 2 ring
+    (field $radius i32)        ;; containers: 0 none, 1 small, 2 large
+    (field $shadow i32)        ;; containers: 0 none, 1 raised
+    (field $cursor i32)        ;; containers: 0 default, 1 pointer, 2 grab, 3 grabbing, 4 resize
     (field $label (ref null $bytes))
     (field $index i32)         ;; position among the parent's children
   ))
@@ -228,10 +242,11 @@
 
   ;; =========================================================== the records
 
-  ;; The 36-byte node record for f at rec. Every byte a host reads is
+  ;; The 60-byte node record for f at rec. Every byte a host reads is
   ;; written: the tag, both option flags (0 = none), the id and parent words
-  ;; (when flagged), the per-kind payload, and — for an input — the width
-  ;; word. The canonical ABI's padding is never written and never read (see
+  ;; (when flagged), and the per-kind payload. An image's [28..36) is the
+  ;; width and the height; a container's [20..59) is its 17 record fields.
+  ;; The canonical ABI's padding is never written and never read (see
   ;; web/glue.js), so no zero-fill.
   (func $emit-node (param $rec i32) (param $f (ref $flat))
     (local $kind i32)
@@ -253,6 +268,36 @@
           (struct.get $flat $direction (local.get $f)))
          (i32.store8 (i32.add (local.get $rec) (i32.const 21))
           (struct.get $flat $align (local.get $f)))
+         (i32.store8 (i32.add (local.get $rec) (i32.const 22))
+          (struct.get $flat $positioned (local.get $f)))
+         (i32.store (i32.add (local.get $rec) (i32.const 24))
+          (struct.get $flat $x (local.get $f)))
+         (i32.store (i32.add (local.get $rec) (i32.const 28))
+          (struct.get $flat $y (local.get $f)))
+         (i32.store (i32.add (local.get $rec) (i32.const 32))
+          (struct.get $flat $width (local.get $f)))
+         (i32.store (i32.add (local.get $rec) (i32.const 36))
+          (struct.get $flat $height (local.get $f)))
+         (i32.store (i32.add (local.get $rec) (i32.const 40))
+          (struct.get $flat $z (local.get $f)))
+         (i32.store (i32.add (local.get $rec) (i32.const 44))
+          (struct.get $flat $gap (local.get $f)))
+         (i32.store (i32.add (local.get $rec) (i32.const 48))
+          (struct.get $flat $padding (local.get $f)))
+         (i32.store8 (i32.add (local.get $rec) (i32.const 52))
+          (struct.get $flat $stretch (local.get $f)))
+         (i32.store8 (i32.add (local.get $rec) (i32.const 53))
+          (struct.get $flat $overflow (local.get $f)))
+         (i32.store8 (i32.add (local.get $rec) (i32.const 54))
+          (struct.get $flat $background (local.get $f)))
+         (i32.store8 (i32.add (local.get $rec) (i32.const 55))
+          (struct.get $flat $border (local.get $f)))
+         (i32.store8 (i32.add (local.get $rec) (i32.const 56))
+          (struct.get $flat $radius (local.get $f)))
+         (i32.store8 (i32.add (local.get $rec) (i32.const 57))
+          (struct.get $flat $shadow (local.get $f)))
+         (i32.store8 (i32.add (local.get $rec) (i32.const 58))
+          (struct.get $flat $cursor (local.get $f)))
       )
       (else
         (call $emit-label (local.get $rec) (struct.get $flat $label (local.get $f)))
@@ -268,17 +313,17 @@
       ))
   )
 
-  ;; A 44-byte `changed` mutation carrying f, at rec: the tag byte, the
-  ;; 36-byte node one word in, and the index after it. The tag and the index
+  ;; A 68-byte `changed` mutation carrying f, at rec: the tag byte, the
+  ;; 60-byte node one word in, and the index after it. The tag and the index
   ;; are the only bytes of this record a host reads besides the node's.
   (func $emit-changed (param $rec i32) (param $f (ref $flat))
      (i32.store8 (local.get $rec) (i32.const 0))
     (call $emit-node (i32.add (local.get $rec) (i32.const 4)) (local.get $f))
-     (i32.store (i32.add (local.get $rec) (i32.const 40))
+     (i32.store (i32.add (local.get $rec) (i32.const 64))
       (struct.get $flat $index (local.get $f)))
   )
 
-  ;; A 44-byte `removed` mutation for id, at rec: the tag byte and the id.
+  ;; A 68-byte `removed` mutation for id, at rec: the tag byte and the id.
   (func $emit-removed (param $rec i32) (param $id i32)
      (i32.store8 (local.get $rec) (i32.const 1))
      (i32.store (i32.add (local.get $rec) (i32.const 4)) (local.get $id))
@@ -318,27 +363,74 @@
   )
 
   ;; Whether f's record differs from the one with the same id in last.
-  ;; Every field is compared uniformly: a container's color/size/label, a
-  ;; leaf's direction/align, and a non-input's width are zero, so the
-  ;; comparison holds across kinds.
+  ;; Every field is compared uniformly: the fields a kind does not use
+  ;; are zero (a container's color/size, a leaf's geometry and chrome
+  ;; tokens, an image's direction/align), so the same test holds across
+  ;; kinds; the label is compared after the scalars.
   (func $fields-differ (param $f (ref $flat)) (param $r (ref $flat)) (result i32)
     (local $d i32)
     (local.set $d
       (i32.or
-        (i32.ne (struct.get $flat $kind (local.get $f)) (struct.get $flat $kind (local.get $r)))
-        (i32.ne (struct.get $flat $parent (local.get $f)) (struct.get $flat $parent (local.get $r)))))
-    (if (call $nez (local.get $d))
-      (then (return (i32.const 1))))
-    (local.set $d
-      (i32.or
         (i32.or
           (i32.or
-            (i32.ne (struct.get $flat $direction (local.get $f)) (struct.get $flat $direction (local.get $r)))
-            (i32.ne (struct.get $flat $align (local.get $f)) (struct.get $flat $align (local.get $r))))
-          (i32.ne (struct.get $flat $width (local.get $f)) (struct.get $flat $width (local.get $r))))
+            (i32.or
+              (i32.ne (struct.get $flat $kind (local.get $f)) (struct.get $flat $kind (local.get $r)))
+              (i32.ne (struct.get $flat $parent (local.get $f)) (struct.get $flat $parent (local.get $r)))
+            )
+            (i32.or
+              (i32.ne (struct.get $flat $color (local.get $f)) (struct.get $flat $color (local.get $r)))
+              (i32.or
+                (i32.ne (struct.get $flat $size (local.get $f)) (struct.get $flat $size (local.get $r)))
+                (i32.ne (struct.get $flat $direction (local.get $f)) (struct.get $flat $direction (local.get $r)))
+              )
+            )
+          )
+          (i32.or
+            (i32.or
+              (i32.ne (struct.get $flat $align (local.get $f)) (struct.get $flat $align (local.get $r)))
+              (i32.ne (struct.get $flat $width (local.get $f)) (struct.get $flat $width (local.get $r)))
+            )
+            (i32.or
+              (i32.ne (struct.get $flat $height (local.get $f)) (struct.get $flat $height (local.get $r)))
+              (i32.or
+                (i32.ne (struct.get $flat $positioned (local.get $f)) (struct.get $flat $positioned (local.get $r)))
+                (i32.ne (struct.get $flat $x (local.get $f)) (struct.get $flat $x (local.get $r)))
+              )
+            )
+          )
+        )
         (i32.or
-          (i32.ne (struct.get $flat $color (local.get $f)) (struct.get $flat $color (local.get $r)))
-          (i32.ne (struct.get $flat $size (local.get $f)) (struct.get $flat $size (local.get $r))))))
+          (i32.or
+            (i32.or
+              (i32.ne (struct.get $flat $y (local.get $f)) (struct.get $flat $y (local.get $r)))
+              (i32.ne (struct.get $flat $z (local.get $f)) (struct.get $flat $z (local.get $r)))
+            )
+            (i32.or
+              (i32.ne (struct.get $flat $gap (local.get $f)) (struct.get $flat $gap (local.get $r)))
+              (i32.or
+                (i32.ne (struct.get $flat $padding (local.get $f)) (struct.get $flat $padding (local.get $r)))
+                (i32.ne (struct.get $flat $stretch (local.get $f)) (struct.get $flat $stretch (local.get $r)))
+              )
+            )
+          )
+          (i32.or
+            (i32.or
+              (i32.ne (struct.get $flat $overflow (local.get $f)) (struct.get $flat $overflow (local.get $r)))
+              (i32.or
+                (i32.ne (struct.get $flat $background (local.get $f)) (struct.get $flat $background (local.get $r)))
+                (i32.ne (struct.get $flat $border (local.get $f)) (struct.get $flat $border (local.get $r)))
+              )
+            )
+            (i32.or
+              (i32.ne (struct.get $flat $radius (local.get $f)) (struct.get $flat $radius (local.get $r)))
+              (i32.or
+                (i32.ne (struct.get $flat $shadow (local.get $f)) (struct.get $flat $shadow (local.get $r)))
+                (i32.ne (struct.get $flat $cursor (local.get $f)) (struct.get $flat $cursor (local.get $r)))
+              )
+            )
+          )
+        )
+      ))
     (if (call $nez (local.get $d))
       (then (return (i32.const 1))))
     (call $labels-differ
@@ -437,30 +529,45 @@
     (local.set $v (global.get $value))
     (local.set $arr (array.new_default $flats (i32.const 4)))
     (array.set $flats (local.get $arr) (i32.const 0)
-      (struct.new $flat
-        (i32.const 2) (i32.const 1) (i32.const 0)
-        (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 1)
-        (i32.const 0)
-        (ref.null $bytes) (i32.const 0)))
+            (struct.new $flat
+              (i32.const 2) (i32.const 1) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 1)
+              (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0)
+              (ref.null $bytes) (i32.const 0)))
     (array.set $flats (local.get $arr) (i32.const 1)
-      (struct.new $flat
-        (i32.const 1) (i32.const 2) (i32.const 1)
-        (i32.const 2) (i32.const 1) (i32.const 0) (i32.const 1)
-        (i32.const 0)
-        (call $label (i32.const 65536) (i32.const 1)) (i32.const 0)))
+            (struct.new $flat
+              (i32.const 1) (i32.const 2) (i32.const 1)
+              (i32.const 2) (i32.const 1) (i32.const 0) (i32.const 1)
+              (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0)
+              (call $label (i32.const 65536) (i32.const 1)) (i32.const 0)))
     (array.set $flats (local.get $arr) (i32.const 2)
-      (struct.new $flat
-        (i32.const 0) (i32.const 3) (i32.const 1)
-        (if (result i32) (i32.lt_s (local.get $v) (i32.const 0)) (then (i32.const 3)) (else (i32.const 0)))
-        (i32.const 2) (i32.const 0) (i32.const 1)
-        (i32.const 0)
-        (call $itoa (local.get $v)) (i32.const 1)))
+            (struct.new $flat
+              (i32.const 0) (i32.const 3) (i32.const 1)
+              (if (result i32) (i32.lt_s (local.get $v) (i32.const 0)) (then (i32.const 3)) (else (i32.const 0))) (i32.const 2) (i32.const 0) (i32.const 1)
+              (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0)
+              (call $itoa (local.get $v)) (i32.const 1)))
     (array.set $flats (local.get $arr) (i32.const 3)
-      (struct.new $flat
-        (i32.const 1) (i32.const 4) (i32.const 1)
-        (i32.const 3) (i32.const 1) (i32.const 0) (i32.const 1)
-        (i32.const 0)
-        (call $label (i32.const 65537) (i32.const 1)) (i32.const 2)))
+            (struct.new $flat
+              (i32.const 1) (i32.const 4) (i32.const 1)
+              (i32.const 3) (i32.const 1) (i32.const 0) (i32.const 1)
+              (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+              (i32.const 0)
+              (call $label (i32.const 65537) (i32.const 1)) (i32.const 2)))
     (local.get $arr)
   )
 
@@ -474,12 +581,12 @@
     (local.set $arr (call $build))
     (global.set $last (local.get $arr))
     (local.set $n (array.len (local.get $arr)))
-    (local.set $buf (call $arena-alloc (i32.mul (local.get $n) (i32.const 36))))
+    (local.set $buf (call $arena-alloc (i32.mul (local.get $n) (i32.const 60))))
     (block $done
       (loop $lp
         (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
         (call $emit-node
-          (i32.add (local.get $buf) (i32.mul (local.get $i) (i32.const 36)))
+          (i32.add (local.get $buf) (i32.mul (local.get $i) (i32.const 60)))
           (ref.cast (ref $flat) (array.get $flats (local.get $arr) (local.get $i))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $lp)
@@ -505,7 +612,7 @@
     (local.set $n (call $diff-count (local.get $arr) (local.get $last) (local.get $first)))
     (if (i32.eqz (local.get $n))
       (then (return (call $make-list (i32.const 0) (i32.const 0)))))
-    (local.set $buf (call $arena-alloc (i32.mul (local.get $n) (i32.const 44))))
+    (local.set $buf (call $arena-alloc (i32.mul (local.get $n) (i32.const 68))))
     ;; The changed nodes, in the new tree's pre-order.
     (block $done
       (loop $lp
@@ -514,7 +621,7 @@
         (if (call $nez (call $is-changed (local.get $f) (local.get $last) (local.get $first)))
           (then
             (call $emit-changed
-              (i32.add (local.get $buf) (i32.mul (local.get $off) (i32.const 44)))
+              (i32.add (local.get $buf) (i32.mul (local.get $off) (i32.const 68)))
               (local.get $f))
             (local.set $off (i32.add (local.get $off) (i32.const 1)))
           ))
@@ -534,7 +641,7 @@
                   (i32.eqz (call $present-in (local.get $arr) (local.get $id))))
               (then
                 (call $emit-removed
-                  (i32.add (local.get $buf) (i32.mul (local.get $off) (i32.const 44)))
+                  (i32.add (local.get $buf) (i32.mul (local.get $off) (i32.const 68)))
                   (local.get $id))
                 (local.set $off (i32.add (local.get $off) (i32.const 1)))
               ))
@@ -563,4 +670,14 @@
   ;; so both are ignored.
   (func (export "on-double-click") (param $id i32))
   (func (export "on-window-close") (param $window i32))
+
+  ;; The pointer and key events (the `app` world): this demo manages no
+  ;; pointer-driven or key-driven UI, so all four are ignored. `on-key` takes
+  ;; a string in the module's memory (the host allocates it), so it is freed.
+  (func (export "on-pointer-down") (param $id i32) (param $x i32) (param $y i32))
+  (func (export "on-pointer-move") (param $x i32) (param $y i32))
+  (func (export "on-pointer-up") (param $x i32) (param $y i32))
+  (func (export "on-key") (param $ptr i32) (param $len i32)
+    (drop (call $cabi-realloc (local.get $ptr) (local.get $len) (i32.const 1) (i32.const 0)))
+  )
 )

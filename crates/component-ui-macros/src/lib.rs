@@ -23,6 +23,7 @@ pub fn to_node(input: TokenStream) -> TokenStream {
                     component_ui::Color::Positive => {wit}::Color::Positive,
                     component_ui::Color::Negative => {wit}::Color::Negative,
                     component_ui::Color::Warning => {wit}::Color::Warning,
+                    component_ui::Color::Dim => {wit}::Color::Dim,
                 }},
                 size: match s.size {{
                     component_ui::Size::Small => {wit}::Size::Small,
@@ -68,6 +69,50 @@ pub fn to_node(input: TokenStream) -> TokenStream {
                         component_ui::Align::Start => {wit}::Align::Start,
                         component_ui::Align::Center => {wit}::Align::Center,
                         component_ui::Align::End => {wit}::Align::End,
+                    }},
+                    positioned: c.positioned as u8,
+                    x: c.x,
+                    y: c.y,
+                    w: c.w,
+                    h: c.h,
+                    z: c.z,
+                    gap: c.gap,
+                    padding: c.padding,
+                    stretch: match c.stretch {{
+                        component_ui::Stretch::None => {wit}::Stretch::None,
+                        component_ui::Stretch::Main => {wit}::Stretch::Main,
+                        component_ui::Stretch::Cross => {wit}::Stretch::Cross,
+                        component_ui::Stretch::Both => {wit}::Stretch::Both,
+                    }},
+                    overflow: match c.overflow {{
+                        component_ui::Overflow::Clip => {wit}::Overflow::Clip,
+                        component_ui::Overflow::Scroll => {wit}::Overflow::Scroll,
+                    }},
+                    background: match c.background {{
+                        component_ui::Background::None => {wit}::Background::None,
+                        component_ui::Background::Panel => {wit}::Background::Panel,
+                        component_ui::Background::Bar => {wit}::Background::Bar,
+                    }},
+                    border: match c.border {{
+                        component_ui::Border::None => {wit}::Border::None,
+                        component_ui::Border::Line => {wit}::Border::Line,
+                        component_ui::Border::Ring => {wit}::Border::Ring,
+                    }},
+                    radius: match c.radius {{
+                        component_ui::Radius::None => {wit}::Radius::None,
+                        component_ui::Radius::Small => {wit}::Radius::Small,
+                        component_ui::Radius::Large => {wit}::Radius::Large,
+                    }},
+                    shadow: match c.shadow {{
+                        component_ui::Shadow::None => {wit}::Shadow::None,
+                        component_ui::Shadow::Raised => {wit}::Shadow::Raised,
+                    }},
+                    cursor: match c.cursor {{
+                        component_ui::Cursor::Default => {wit}::Cursor::Default,
+                        component_ui::Cursor::Pointer => {wit}::Cursor::Pointer,
+                        component_ui::Cursor::Grab => {wit}::Cursor::Grab,
+                        component_ui::Cursor::Grabbing => {wit}::Cursor::Grabbing,
+                        component_ui::Cursor::Resize => {wit}::Cursor::Resize,
                     }},
                 }}),
             }}

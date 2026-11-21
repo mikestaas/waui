@@ -9,14 +9,13 @@ WAT_COMPONENTS := demo-counter demo-stopwatch demo-todo
          run-cli-wat run-stop-cli-wat run-todo-cli-wat run-tui-wat run-stop-tui-wat run-todo-tui-wat run-desktop-tui-wat \
          run-iced-wat run-stop-iced-wat run-todo-iced-wat run-desktop-iced-wat \
          web web-as web-wat web-test web-test-as web-test-wat \
-         web-test-desktop web-test-desktop-as web-test-desktop-wat \
          host-tui-wasm host-tui-wasm-test host-iced-wasm host-iced-wasm-test site-hosts \
          site ui-test e2e screenshots fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model. The
-# desktop (demo-desktop) is the multi-component host's component: it is built
-# explicitly, not in the demo loop, because it has no standalone web page in
-# the `web` target (it is the site's desktop page).
+# desktop (demo-desktop) is the multi-component host's component: it is
+# built explicitly, not in the demo loop, because the demo loop's variables
+# name the standalone demos only.
 components:
 	@mkdir -p target/components
 	@for c in $(COMPONENTS); do \
@@ -49,7 +48,9 @@ components-as:
 		node assembly/patch-env-abort.mjs target/assembly/$$c.raw.wasm target/assembly/$$c.core.wasm || exit 1; \
 		node assembly/rename-exports.mjs target/assembly/$$c.core.wasm target/assembly/$$c-as.wasm \
 			onclick=on-click ontext=on-text ontick=on-tick \
-			ondoubleclick=on-double-click onwindowclose=on-window-close || exit 1; \
+			ondoubleclick=on-double-click onwindowclose=on-window-close \
+			onpointerdown=on-pointer-down onpointermove=on-pointer-move \
+			onpointerup=on-pointer-up onkey=on-key || exit 1; \
 		wasm-tools component embed wit/ target/assembly/$$c-as.wasm \
 			--world app --output target/assembly/$$c-as.embedded.wasm || exit 1; \
 		wasm-tools component new target/assembly/$$c-as.embedded.wasm \
@@ -63,7 +64,9 @@ components-as:
 	@node assembly/patch-env-abort.mjs target/assembly/demo-desktop.raw.wasm target/assembly/demo-desktop.core.wasm || exit 1
 	@node assembly/rename-exports.mjs target/assembly/demo-desktop.core.wasm target/assembly/demo-desktop-as.wasm \
 		onclick=on-click ontext=on-text ontick=on-tick \
-		ondoubleclick=on-double-click onwindowclose=on-window-close || exit 1
+		ondoubleclick=on-double-click onwindowclose=on-window-close \
+		onpointerdown=on-pointer-down onpointermove=on-pointer-move \
+		onpointerup=on-pointer-up onkey=on-key || exit 1
 	@wasm-tools component embed wit/ target/assembly/demo-desktop-as.wasm \
 		--world app --output target/assembly/demo-desktop-as.embedded.wasm || exit 1
 	@wasm-tools component new target/assembly/demo-desktop-as.embedded.wasm \
@@ -199,13 +202,18 @@ run-desktop-iced: components
 	cargo run -p host-iced -- --entry counter=target/components/demo-counter.component.wasm --entry stopwatch=target/components/demo-stopwatch.component.wasm --entry todo=target/components/demo-todo.component.wasm target/components/demo-desktop.component.wasm
 
 # Web host: one self-contained HTML page per component (the wasm module
-# inlined as base64). The page runs straight from disk — no server, no npm.
+# inlined as base64), plus the desktop page (the registry's three demos as
+# entries). The pages run straight from disk — no server, no npm.
 web: components
 	@mkdir -p target/web
 	@for c in $(COMPONENTS); do \
 		lib=$$(printf '%s' "$$c" | tr '-' '_'); \
 		node web/build.mjs target/$(WASM_TARGET)/release/$$lib.wasm target/web/$$c.html || exit 1; \
 	done
+	@node web/build.mjs target/$(WASM_TARGET)/release/demo_desktop.wasm target/web/demo-desktop.html \
+		--entry counter=target/$(WASM_TARGET)/release/demo_counter.wasm \
+		--entry stopwatch=target/$(WASM_TARGET)/release/demo_stopwatch.wasm \
+		--entry todo=target/$(WASM_TARGET)/release/demo_todo.wasm || exit 1
 	@echo "wrote target/web/*.html — open them directly (no server needed)"
 
 # The same self-contained pages for the AssemblyScript components. The web
@@ -216,6 +224,10 @@ web-as: components-as
 	@for c in $(AS_COMPONENTS); do \
 		node web/build.mjs target/assembly/$$c-as.wasm target/web/$$c-as.html || exit 1; \
 	done
+	@node web/build.mjs target/assembly/demo-desktop-as.wasm target/web/demo-desktop-as.html \
+		--entry counter=target/assembly/demo-counter-as.wasm \
+		--entry stopwatch=target/assembly/demo-stopwatch-as.wasm \
+		--entry todo=target/assembly/demo-todo-as.wasm || exit 1
 	@echo "wrote target/web/*-as.html — open them directly (no server needed)"
 
 # The same self-contained pages for the WAT components. As with the AS
@@ -225,6 +237,10 @@ web-wat: components-wat
 	@for c in $(WAT_COMPONENTS); do \
 		node web/build.mjs target/wat/$$c.wasm target/web/$$c-wat.html || exit 1; \
 	done
+	@node web/build.mjs target/wat/demo-desktop.wasm target/web/demo-desktop-wat.html \
+		--entry counter=target/wat/demo-counter.wasm \
+		--entry stopwatch=target/wat/demo-stopwatch.wasm \
+		--entry todo=target/wat/demo-todo.wasm || exit 1
 	@echo "wrote target/web/*-wat.html — open them directly (no server needed)"
 
 # The GitHub Pages site: the desktop launcher (site/) plus the nine demo
@@ -252,12 +268,24 @@ site: components components-as components-wat
 	done
 	# The desktop page, per producer (the demo-desktop core module, the
 	# windowing host): desktop.html (Rust), desktop-as.html, desktop-wat.html.
+	# Each carries the nine-entry registry (the three demos, three languages);
+	# the data blobs are derived from the entry names (label, lang, icon,
+	# size), so the tiles and windows are labeled.
 	@cp target/$(WASM_TARGET)/release/demo_desktop.wasm target/site/demo-desktop.wasm || exit 1
-	@node web/build-desktop.mjs target/site/demo-desktop.wasm target/site/desktop.html --url demo-desktop.wasm || exit 1
+	@node web/build.mjs target/site/demo-desktop.wasm target/site/desktop.html --url demo-desktop.wasm \
+		--entry counter-rust=demo-counter.wasm --entry counter-as=demo-counter-as.wasm --entry counter-wat=demo-counter-wat.wasm \
+		--entry stopwatch-rust=demo-stopwatch.wasm --entry stopwatch-as=demo-stopwatch-as.wasm --entry stopwatch-wat=demo-stopwatch-wat.wasm \
+		--entry todo-rust=demo-todo.wasm --entry todo-as=demo-todo-as.wasm --entry todo-wat=demo-todo-wat.wasm || exit 1
 	@cp target/assembly/demo-desktop-as.wasm target/site/demo-desktop-as.wasm || exit 1
-	@node web/build-desktop.mjs target/site/demo-desktop-as.wasm target/site/desktop-as.html --url demo-desktop-as.wasm || exit 1
+	@node web/build.mjs target/site/demo-desktop-as.wasm target/site/desktop-as.html --url demo-desktop-as.wasm \
+		--entry counter-rust=demo-counter.wasm --entry counter-as=demo-counter-as.wasm --entry counter-wat=demo-counter-wat.wasm \
+		--entry stopwatch-rust=demo-stopwatch.wasm --entry stopwatch-as=demo-stopwatch-as.wasm --entry stopwatch-wat=demo-stopwatch-wat.wasm \
+		--entry todo-rust=demo-todo.wasm --entry todo-as=demo-todo-as.wasm --entry todo-wat=demo-todo-wat.wasm || exit 1
 	@cp target/wat/demo-desktop.wasm target/site/demo-desktop-wat.wasm || exit 1
-	@node web/build-desktop.mjs target/site/demo-desktop-wat.wasm target/site/desktop-wat.html --url demo-desktop-wat.wasm || exit 1
+	@node web/build.mjs target/site/demo-desktop-wat.wasm target/site/desktop-wat.html --url demo-desktop-wat.wasm \
+		--entry counter-rust=demo-counter.wasm --entry counter-as=demo-counter-as.wasm --entry counter-wat=demo-counter-wat.wasm \
+		--entry stopwatch-rust=demo-stopwatch.wasm --entry stopwatch-as=demo-stopwatch-as.wasm --entry stopwatch-wat=demo-stopwatch-wat.wasm \
+		--entry todo-rust=demo-todo.wasm --entry todo-as=demo-todo-as.wasm --entry todo-wat=demo-todo-wat.wasm || exit 1
 	@echo "wrote target/site/ — serve it over http; .github/workflows/site.yml deploys it"
 
 # Headless check of the web host's ABI layer (Node).
@@ -274,21 +302,6 @@ web-test-as: components-as
 web-test-wat: components-wat
 	node web/selftest.mjs target/wat/demo-counter.wasm target/wat/demo-stopwatch.wasm \
 		target/wat/demo-todo.wasm
-
-# The windowing side of the `app` world (web/desktop-selftest.mjs): the
-# registry round-trip (list-entries) and the window count (open-entry,
-# on-double-click, on-window-close) against the pre-lift module.
-web-test-desktop: components
-	node web/desktop-selftest.mjs
-
-# The same selftest against the AssemblyScript desktop core module.
-web-test-desktop-as: components-as
-	node web/desktop-selftest.mjs target/assembly/demo-desktop-as.wasm
-
-# The same selftest against the WAT desktop core module: the byte-parity
-# gate's third producer.
-web-test-desktop-wat: components-wat
-	node web/desktop-selftest.mjs target/wat/demo-desktop.wasm
 
 # The browser TUI host: the wasmtime host as wasm (Pulley interpreter).
 # Builds the cdylib (no crossterm, no native binary), runs wasm-bindgen,

@@ -183,6 +183,10 @@ pub fn build_component_as(demo: &str) {
             "ontick=on-tick",
             "ondoubleclick=on-double-click",
             "onwindowclose=on-window-close",
+            "onpointerdown=on-pointer-down",
+            "onpointermove=on-pointer-move",
+            "onpointerup=on-pointer-up",
+            "onkey=on-key",
         ]);
         steps.push(c);
     }

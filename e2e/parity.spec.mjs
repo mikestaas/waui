@@ -117,9 +117,8 @@ test.describe('producer parity', () => {
         desktopStates[state],
         (page) =>
           page.evaluate(() => ({
-            count: document.getElementById('window-count').textContent,
-            grid: document.getElementById('grid').outerHTML,
-            windows: document.getElementById('windows').outerHTML,
+            count: document.querySelector('[data-id="2"] [data-id="4"]')?.textContent ?? null,
+            app: document.getElementById('app').outerHTML,
           })),
       );
     });

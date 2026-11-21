@@ -12,11 +12,18 @@
 import { arenaAlloc, arenaAllocFit, HOST_SCRATCH_BASE, RESULT_END } from '../abi/arena';
 import {
   ALIGN_CENTER,
+  BACKGROUND_NONE,
+  BORDER_NONE,
   COLOR_NEUTRAL,
+  CURSOR_DEFAULT,
   DIRECTION_COLUMN,
   DIRECTION_ROW,
   MUT_CHANGED,
+  OVERFLOW_CLIP,
+  RADIUS_NONE,
+  SHADOW_NONE,
   SIZE_MEDIUM,
+  STRETCH_NONE,
   TAG_BUTTON,
   TAG_CONTAINER,
   TAG_IMAGE,
@@ -75,16 +82,34 @@ export class Widget {
   size: i32 = SIZE_MEDIUM;
   /// Containers only.
   direction: i32 = DIRECTION_ROW;
-  /// Containers only: the cross-axis placement of the children.
-  align: i32 = ALIGN_CENTER;
-  /// The width: an input's field width in characters, or an image's width in
-  /// the host's units (both `0` = the host's default). The storage is
-  /// `_width`, set with `.width()`: AssemblyScript cannot name a field and a
-  /// method alike the way Rust can.
+  /// Containers only: the cross-axis placement of the children. The storage
+  /// is `_align`, set with `.align()` (Rust's `Tree` has an `align` builder):
+  /// AssemblyScript cannot name a field and a method alike the way Rust can.
+  _align: i32 = ALIGN_CENTER;
+  /// The width: an input's field width in characters, an image's width, or a
+  /// container's `w` — in the host's units for the latter two (all `0` = the
+  /// host's default). The storage is `_width`, set with `.width()`:
+  /// AssemblyScript cannot name a field and a method alike the way Rust can.
   _width: i32 = 0;
-  /// Images only: the height in the host's units (0 = the host's default).
-  /// The storage is `_height`, set with `.height()`.
+  /// An image's height, or a container's `h` — in the host's units
+  /// (`0` = the host's default). The storage is `_height`, set with `.height()`.
   _height: i32 = 0;
+  // Containers only: the geometry and the chrome tokens. A `0`/token-default
+  // leaves the dimension to the host, as with the style tokens. The emitter
+  // reads these per kind, so a stray one on a leaf is inert.
+  _positioned: i32 = 0;
+  _x: i32 = 0;
+  _y: i32 = 0;
+  _z: i32 = 0;
+  _gap: i32 = 0;
+  _padding: i32 = 0;
+  _stretch: i32 = STRETCH_NONE;
+  _overflow: i32 = OVERFLOW_CLIP;
+  _background: i32 = BACKGROUND_NONE;
+  _border: i32 = BORDER_NONE;
+  _radius: i32 = RADIUS_NONE;
+  _shadow: i32 = SHADOW_NONE;
+  _cursor: i32 = CURSOR_DEFAULT;
   /// The children, in the contract's depth-first pre-order.
   children: Widget[];
   /// The label's (or an image's `src`) UTF-16 source; materialized to the
@@ -132,6 +157,12 @@ export class Widget {
     return this;
   }
 
+  /// Replace a container's cross-axis placement (a no-op on a leaf).
+  align(v: i32): this {
+    this._align = v;
+    return this;
+  }
+
   /// Set the width: an input's field width in characters, or an image's
   /// width in the host's units (both 0 = the host's default).
   width(n: i32): this {
@@ -139,10 +170,79 @@ export class Widget {
     return this;
   }
 
-  /// Set the image's height in the host's units (0 = the host's default).
-  /// Images only.
+  /// Set the image's height, or a container's `h`, in the host's units
+  /// (0 = the host's default).
   height(n: i32): this {
     this._height = n;
+    return this;
+  }
+
+  /// Place a container at `(x, y)` relative to its parent, marking it
+  /// positioned. Inert on a leaf.
+  at(x: i32, y: i32): this {
+    this._x = x;
+    this._y = y;
+    this._positioned = 1;
+    return this;
+  }
+
+  /// Replace a container's stacking order (`0` = none). Inert on a leaf.
+  z(n: i32): this {
+    this._z = n;
+    return this;
+  }
+
+  /// Replace a container's child gap, in the host's units. Inert on a leaf.
+  gap(n: i32): this {
+    this._gap = n;
+    return this;
+  }
+
+  /// Replace a container's padding, in the host's units. Inert on a leaf.
+  padding(n: i32): this {
+    this._padding = n;
+    return this;
+  }
+
+  /// Replace a container's fill behavior. Inert on a leaf.
+  stretch(v: i32): this {
+    this._stretch = v;
+    return this;
+  }
+
+  /// Replace a container's overflow behavior. Inert on a leaf.
+  overflow(v: i32): this {
+    this._overflow = v;
+    return this;
+  }
+
+  /// Replace a container's background. Inert on a leaf.
+  background(v: i32): this {
+    this._background = v;
+    return this;
+  }
+
+  /// Replace a container's border. Inert on a leaf.
+  border(v: i32): this {
+    this._border = v;
+    return this;
+  }
+
+  /// Replace a container's corner radius. Inert on a leaf.
+  radius(v: i32): this {
+    this._radius = v;
+    return this;
+  }
+
+  /// Replace a container's shadow. Inert on a leaf.
+  shadow(v: i32): this {
+    this._shadow = v;
+    return this;
+  }
+
+  /// Replace a container's cursor. Inert on a leaf.
+  cursor(v: i32): this {
+    this._cursor = v;
     return this;
   }
 }
@@ -275,7 +375,7 @@ export function h(tag: string, props: Props | null, ...children: Object[]): Widg
     // container tags take it (the props default is center, matching the
     // factory default, so an unstated one is a no-op).
     if (tag == 'container') w.direction = props.direction;
-    if (tag == 'row' || tag == 'column' || tag == 'container') w.align = props.align;
+    if (tag == 'row' || tag == 'column' || tag == 'container') w._align = props.align;
     // The WIT's `width` is an input field (characters) or an image (host
     // units); a `width` on any other tag is ignored, as in the Rust `ui!`.
     // `height` is an image field only.
@@ -372,8 +472,21 @@ class FlatRec {
   size: i32 = SIZE_MEDIUM;
   direction: i32 = DIRECTION_ROW;
   align: i32 = ALIGN_CENTER;
-  width: i32 = 0; // inputs (characters) and images (host units)
-  height: i32 = 0; // images only (host units)
+  width: i32 = 0; // inputs (characters), images and containers (host units)
+  height: i32 = 0; // images and containers (host units)
+  positioned: i32 = 0; // containers only
+  x: i32 = 0;
+  y: i32 = 0;
+  z: i32 = 0;
+  gap: i32 = 0;
+  padding: i32 = 0;
+  stretch: i32 = STRETCH_NONE;
+  overflow: i32 = OVERFLOW_CLIP;
+  background: i32 = BACKGROUND_NONE;
+  border: i32 = BORDER_NONE;
+  radius: i32 = RADIUS_NONE;
+  shadow: i32 = SHADOW_NONE;
+  cursor: i32 = CURSOR_DEFAULT;
   label: string = ''; // the content, or an image's `src`
 }
 
@@ -400,9 +513,22 @@ function flatten(w: Widget, parent: i32, out: FlatRec[]): void {
   r.color = w.color;
   r.size = w.size;
   r.direction = w.direction;
-  r.align = w.align;
+  r.align = w._align;
   r.width = w._width;
   r.height = w._height;
+  r.positioned = w._positioned;
+  r.x = w._x;
+  r.y = w._y;
+  r.z = w._z;
+  r.gap = w._gap;
+  r.padding = w._padding;
+  r.stretch = w._stretch;
+  r.overflow = w._overflow;
+  r.background = w._background;
+  r.border = w._border;
+  r.radius = w._radius;
+  r.shadow = w._shadow;
+  r.cursor = w._cursor;
   r.label = w.labelSrc;
   out.push(r);
   const id = w._id;
@@ -431,13 +557,19 @@ function isChanged(w: Widget, parent: i32, first: i32, last: FlatRec[]): i32 {
     const r = last[i];
     if (r._id != id) continue;
     // Same id: changed only if the record differs. A container's record is
-    // its direction and align (the WIT container carries no style); an
-    // image's is its `src`, its width, and its height (it carries no style);
-    // a text/button/input's is its label, its style, and — for an input — its
-    // width. AS compares strings by content.
+    // its direction, align, geometry, and chrome tokens (it carries no
+    // style); an image's is its `src`, its width, and its height (it carries
+    // no style); a text/button/input's is its label, its style, and — for an
+    // input — its width. AS compares strings by content.
     let differs = w.kind != r.kind || parent != r.parent;
     if (w.kind == TAG_CONTAINER) {
-      differs = differs || w.direction != r.direction || w.align != r.align;
+      differs = differs || w.direction != r.direction || w._align != r.align;
+      differs = differs || w._positioned != r.positioned || w._x != r.x || w._y != r.y;
+      differs = differs || w._width != r.width || w._height != r.height || w._z != r.z;
+      differs = differs || w._gap != r.gap || w._padding != r.padding;
+      differs = differs || w._stretch != r.stretch || w._overflow != r.overflow;
+      differs = differs || w._background != r.background || w._border != r.border;
+      differs = differs || w._radius != r.radius || w._shadow != r.shadow || w._cursor != r.cursor;
     } else if (w.kind == TAG_IMAGE) {
       differs = differs || w.labelSrc != r.label || w._width != r.width || w._height != r.height;
     } else {
@@ -473,14 +605,14 @@ function countRemoved(last: FlatRec[], newRecs: FlatRec[]): i32 {
 }
 
 /// Emit one record for `w` at `buf + off * stride`. With `isMutation`, the
-/// record is a 44-byte `changed` mutation (the tag word, the 36-byte node,
+/// record is a 68-byte `changed` mutation (the tag word, the 60-byte node,
 /// and the index). Returns the next offset; stops at the arena's cap rather
 /// than walk into the label pool.
 function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMutation: i32): i32 {
   // Computed first: AS (like JS) binds `<` tighter than `?:`, so an
-  // unparenthesized `buf + off * isMutation != 0 ? 44 : 36` would parse as
+  // unparenthesized `buf + off * isMutation != 0 ? 68 : 60` would parse as
   // a ternary *as* the comparison.
-  const stride = isMutation != 0 ? 44 : 36;
+  const stride = isMutation != 0 ? 68 : 60;
   const rec = buf + off * stride;
   if (rec + stride > RESULT_END) return off;
   materializeLabel(w);
@@ -488,7 +620,7 @@ function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMuta
   if (isMutation != 0) store<i32>(rec, MUT_CHANGED);
   // A `changed` mutation carries the node one word in (after the tag word);
   // a plain node record *is* the record base. The emitters self-zero their
-  // 36 bytes, so the offset must be exactly right: a stray word spills into
+  // 60 bytes, so the offset must be exactly right: a stray word spills into
   // the neighbor record.
   const node = rec + (isMutation != 0 ? 4 : 0);
   const kind = w.kind;
@@ -501,11 +633,32 @@ function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMuta
   } else if (kind == TAG_IMAGE) {
     emitImage(node, id, parent, w.labelPtr, w.labelLen, w._width, w._height);
   } else {
-    emitContainer(node, id, parent, w.direction, w.align);
+    emitContainer(
+      node,
+      id,
+      parent,
+      w.direction,
+      w._align,
+      w._positioned,
+      w._x,
+      w._y,
+      w._width,
+      w._height,
+      w._z,
+      w._gap,
+      w._padding,
+      w._stretch,
+      w._overflow,
+      w._background,
+      w._border,
+      w._radius,
+      w._shadow,
+      w._cursor,
+    );
   }
   // The `changed` mutation's index (the node's 0-based position among its
-  // parent's children) sits after the 36-byte node; a plain node has none.
-  if (isMutation != 0) store<i32>(rec + 40, index);
+  // parent's children) sits after the 60-byte node; a plain node has none.
+  if (isMutation != 0) store<i32>(rec + 64, index);
   return off + 1;
 }
 
@@ -555,14 +708,14 @@ function lowerRemoved(last: FlatRec[], newRecs: FlatRec[], buf: i32, off: i32): 
     const id = last[i]._id;
     if (id == 0) continue; // id-less: never removed
     if (presentIn(newRecs, id) == 0) {
-      emitRemoved(buf + next * 44, id);
+      emitRemoved(buf + next * 68, id);
       next += 1;
     }
   }
   return next;
 }
 
-/// Project the whole tree as a `view()` result: every node as a 36-byte node
+/// Project the whole tree as a `view()` result: every node as a 60-byte node
 /// record in depth-first pre-order, behind a list descriptor. The snapshot
 /// becomes the next diff's reference (see `../README.md`).
 export function viewOf(root: Widget): i32 {
@@ -571,7 +724,7 @@ export function viewOf(root: Widget): i32 {
   flatten(root, 0, recs);
   lastExport = recs;
   const n = count(root);
-  const buf = arenaAlloc(n * 36);
+  const buf = arenaAlloc(n * 60);
   lower(root, 0, 0, buf, 0, 0);
   return makeList(buf, n);
 }
@@ -593,7 +746,7 @@ export function diffOf(root: Widget): i32 {
   lastExport = newRecs; // the new tree is the next reference
 
   if (n == 0) return makeList(0, 0); // an empty list's ptr is 0
-  const buf = arenaAlloc(n * 44);
+  const buf = arenaAlloc(n * 68);
   let off = lowerChanged(root, 0, 0, buf, 0, first, last);
   if (first == 0) {
     lowerRemoved(last, newRecs, buf, off);

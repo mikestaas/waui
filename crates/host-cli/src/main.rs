@@ -6,12 +6,14 @@
 //! Ignores the diff channel — it re-queries `view()` after every event,
 //! which stays correct because `view()` is always the full tree — and
 //! ignores `style` (plain ASCII has no palette), `align` (an indented list
-//! has no cross axis to place on), and the input's `width` (a line has no
-//! box to size). Images have no pixels in a terminal: they render as their
-//! `src`, prefixed with `@`. Treats `schedule` as advisory too: it has no
-//! timer, so a time-based readout advances only when a click re-queries
-//! `view()`. Runs no entries: the registry is empty and `open-entry` fails,
-//! so the desktop component renders an empty grid.
+//! has no cross axis to place on), the input's `width` (a line has no box
+//! to size), and the container's chrome and geometry tokens (a line has no
+//! box to place or style). Images have no pixels in a terminal: they render
+//! as their `src`, prefixed with `@`. Treats `schedule` as advisory too: it
+//! has no timer, so a time-based readout advances only when a click
+//! re-queries `view()`. Runs no entries: the registry is empty and
+//! `open-entry` fails, so a registry-driven component renders an empty grid.
+//! Reports no viewport: `viewport` returns `(0, 0)`, the unknown size.
 
 use std::io::{self, BufRead, Write};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,7 +22,7 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, waui, App, AppImports, Entry, Error, Tree};
+use host_shared::{build_tree, waui, App, AppImports, Entry, Error, Tree, ViewportSize};
 
 /// The host's implementation of the world's imports.
 struct Host;
@@ -47,6 +49,12 @@ impl AppImports for Host {
         _h: u32,
     ) -> Result<u32, Error> {
         Err(Error::NotFound)
+    }
+    // This host runs no entries (see the header), so there is nothing to close.
+    fn close_entry(&mut self, _handle: u32) {}
+    // This host has no viewport: the unknown size (see the WIT note).
+    fn viewport(&mut self) -> ViewportSize {
+        ViewportSize { w: 0, h: 0 }
     }
 }
 
@@ -114,7 +122,7 @@ fn main() {
 fn first_input(node: &Tree) -> Option<u32> {
     match node {
         Tree::Input(id, _, _, _) => *id,
-        Tree::Row(_, _, children) | Tree::Column(_, _, children) => {
+        Tree::Row(_, _, _, children) | Tree::Column(_, _, _, children) => {
             children.iter().find_map(first_input)
         }
         _ => None,
@@ -145,13 +153,13 @@ fn render(node: &Tree, depth: usize, out: &mut String) {
             let id = id.map_or_else(String::new, |i| format!("{i}: "));
             out.push_str(&format!("{indent}@{id}{src}\n"));
         }
-        Tree::Row(_, _, children) => {
+        Tree::Row(_, _, _, children) => {
             out.push_str(&format!("{indent}row:\n"));
             for child in children {
                 render(child, depth + 1, out);
             }
         }
-        Tree::Column(_, _, children) => {
+        Tree::Column(_, _, _, children) => {
             out.push_str(&format!("{indent}column:\n"));
             for child in children {
                 render(child, depth + 1, out);

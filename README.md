@@ -18,17 +18,19 @@ component changes.
   are documented in [`widget.wit`](wit/widget.wit).
 - **`app` world** — the one component/host protocol: the component exports
   `view` (the current tree) and `changes` (the diff), and the host calls
-  `on-click`, `on-text`, and `on-tick`; the component imports `now` (a clock)
-  and `schedule` (a refresh request). The windowing functions are for
-  components that run *other* components — the desktop: the component imports
-  `list-entries` (the host's registry: each entry is a `name` and a `data`,
-  a JSON object of host-defined metadata, in the wasi:filesystem `readdir`
-  shape) and `open-entry` (an open by name, its `open-at`), and the host calls
+  `on-click`, `on-text`, `on-tick`, the pointer channels (`on-pointer-down`,
+  `on-pointer-move`, `on-pointer-up`), and `on-key`; the component imports
+  `now` (a clock), `schedule` (a refresh request), and `viewport` (the host's
+  size). The multi-component functions are for a component that runs *other*
+  components — a window manager: the component imports `list-entries` (the
+  host's registry: each entry is a `name` and a `data`, a JSON object of
+  host-defined metadata, in the wasi:filesystem `readdir` shape), `open-entry`
+  (an open by name, its `open-at`), and `close-entry`, and the host calls
   `on-double-click` and `on-window-close`. A host that cannot run other
   components returns an empty registry and an error; a component that manages
-  no windows ignores the two events, and a component that cannot parse an
-  entry's `data` renders the name only. The protocol rules are documented in
-  [`app.wit`](wit/app.wit). Hosts may ignore parts of the contract (host-cli
+  no windows ignores the windowing events, and a component that cannot parse
+  an entry's `data` renders the name only. The protocol rules are documented
+  in [`app.wit`](wit/app.wit). Hosts may ignore parts of the contract (host-cli
   ignores `style`, `align`, `changes`, `schedule`, and the windowing
   functions); components cannot, because the node layout is part of the ABI.
 
@@ -43,10 +45,10 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
 | `wit/`                   | the WIT contract (`widget` + `app`)                                                                 |
 | `crates/host-shared`     | wasmtime host core: the bindings, the list→tree rebuild, the retained tree diffs apply against      |
-| `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--entry <name=path>` registers an entry — a non-empty registry makes it a desktop: framed double-clickable tiles, and floating panels (title bar with close, cascade, raise on press, opaque to the desktop below); `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events, `--dump <file>` renders a headless PNG, `--now <base> <step>` fakes the clock (test-only) |
-| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--entry <name=path>` registers an entry — a non-empty registry makes it a desktop: framed double-clickable tiles, and overlapping windows (title bar with close, cascade, Tab/Shift+Tab raise/lower, Esc closes); `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events (Enter on a tile synthesizes a double-click), `--dump` prints one frame, `--width <n>` sizes the dump buffer, `--now <base> <step>` fakes the clock (test-only) |
+| `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; applies diffs, skips rebuild on empty diff; `--entry <name=path>` registers an entry — a non-empty registry lets it run multi-component apps: `cursor: pointer` containers are double-clickable tiles, and an opened entry runs in its own store, seated in the launching component's content slot (it draws the window's chrome and geometry); no keyboard channel, so it never emits `on-key`; `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events, `--dump <file>` renders a headless PNG, `--now <base> <step>` fakes the clock (test-only) |
+| `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; `--entry <name=path>` registers an entry — a non-empty registry makes it a multi-window host: framed double-clickable tiles, and framed overlapping windows (the component draws the title bar and close; Tab/Shift+Tab raise/lower, Esc closes); `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events (Enter on a tile synthesizes a double-click), `--dump` prints one frame, `--width <n>` sizes the dump buffer, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
-| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); the desktop pages (`glue.js` + `desktop.js`) run `demo-desktop` with the windowing host, one per producer; `expect.mjs` holds the expected views, shared with the selftest and the browser suite |
+| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); the `demo-desktop` pages (the same pair, with the entry registry) run the windowing side, one per producer; `expect.mjs` holds the expected views, shared with the selftest and the browser suite |
 | `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; plus the desktop as a component, in its three source languages; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
 | `e2e/`                   | the Playwright browser suite: the nine demo pages — each walking its states — in a 360x340 viewport (the iced window size), and both desktops (the static launcher, and the `demo-desktop` component in its three source languages), in chromium; the screenshot goldens are CI-only, the pixel-level producer parity runs everywhere |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests a refresh (the host never wakes it) |
@@ -109,9 +111,6 @@ make run-desktop-iced     # desktop, window (floating panels)
 make web                  # self-contained HTML pages in target/web/
 make site                 # the demo site in target/site/ (GitHub Pages)
 make web-test             # headless (Node) check of the web host's ABI layer
-make web-test-desktop     # the windowing side of that layer (registry, window round-trip)
-make web-test-desktop-as  # the same selftest against the AssemblyScript desktop
-make web-test-desktop-wat # the same selftest against the WAT desktop
 make e2e                  # the Playwright browser suite (needs `npx playwright install chromium`)
 make test                 # cargo test, all crates
 make fmt                  # format all sources (rustfmt + prettier)
@@ -203,11 +202,9 @@ Enabling it needs one manual step: repository Settings → Pages → Source:
   workflow's `update_snapshots` input regenerates them on the CI platform
   (and the cargo goldens with them) for download and commit.
 - `make web-test` (and `-as`, `-wat`): the same assertions from Node, against
-  the core modules, through the same `glue.js` the browser page uses.
-  `make web-test-desktop` covers the windowing side of that layer: the
-  registry round-trip and the window count, against `demo-desktop`; its
-  `-as`/`-wat` twins run the same checks against the other two producers —
-  the byte-parity gate for the desktop.
+  the core modules, through the same `glue.js` the browser page uses: the
+  views, the mutations, the text events, and the pointer and key channels
+  (no-ops for a plain demo).
 - `make ui-test`: the tree layer's diff channel, as a standalone module run
   via Node: the structural cases (add, remove, re-parent) plus the bootstrap,
   id-less, and input rules — the AS twin of the `component-ui` unit tests.

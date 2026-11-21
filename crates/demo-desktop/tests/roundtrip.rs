@@ -6,6 +6,8 @@
 //! The host implements the `app` world's imports: `list-entries` (the
 //! registry) and `open-entry` (which assigns a handle and records the
 //! call). `now` and `schedule` are stubbed: the desktop has no clock.
+//! `viewport` reports the unknown size (the cascade skips its clamp) and
+//! `close-entry` is a no-op (the host tracks no sandboxes).
 
 use std::sync::Mutex;
 use wasmtime::component::*;
@@ -22,14 +24,25 @@ wasmtime::component::bindgen!({
 });
 
 /// The host's side of the `app` world.
-#[derive(Default)]
 struct Host {
     /// The registry `list-entries` returns.
     entries: Vec<Entry>,
-    /// The next window handle to assign.
+    /// The next window handle to assign. The hosts' base (10_000): the
+    /// desktop's content slot takes a handle as its id, so a zero handle
+    /// would serialize as an id-less node and drop out of the diff.
     next: u32,
     /// The (name, width, height) of each `open-entry` call, in order.
     opens: Mutex<Vec<(String, u32, u32)>>,
+}
+
+impl Default for Host {
+    fn default() -> Self {
+        Host {
+            entries: Vec::new(),
+            next: 10_000,
+            opens: Mutex::new(Vec::new()),
+        }
+    }
 }
 
 impl AppImports for Host {
@@ -52,6 +65,15 @@ impl AppImports for Host {
         self.next += 1;
         self.opens.lock().unwrap().push((name, w, h));
         Ok(handle)
+    }
+    // The desktop closes via its own button, which calls this; a host-side
+    // close (`on-window-close`) frees the sandbox before the call, so there
+    // is nothing to free here.
+    fn close_entry(&mut self, _handle: u32) {}
+    // The cascade clamps to the viewport; the unknown size skips the clamp
+    // (see the WIT note).
+    fn viewport(&mut self) -> ViewportSize {
+        ViewportSize { w: 0, h: 0 }
     }
 }
 
@@ -119,7 +141,7 @@ fn assert_desktop_roundtrip(app: &mut App, mut store: &mut Store<Host>) {
     let summaries: Vec<String> = nodes.iter().map(node_summary).collect();
     // The menu bar: "waui" and "0 windows".
     assert!(summaries.iter().any(|s| s == "text:None:waui"));
-    assert!(summaries.iter().any(|s| s == "text:Some(2):0 windows"));
+    assert!(summaries.iter().any(|s| s == "text:Some(4):0 windows"));
     // The nine tiles, each an image + name + lang.
     assert!(summaries
         .iter()
@@ -146,32 +168,54 @@ fn assert_desktop_roundtrip(app: &mut App, mut store: &mut Store<Host>) {
     assert_eq!((opens[0].1, opens[0].2), (300, 380));
     drop(opens);
 
-    // The count is now 1: the diff reports the changed count node.
+    // The diff: the count changes, the tile takes the selection ring, and
+    // the window's six id'd nodes are added (window, title bar, spacer,
+    // close, content slot, grip). The title-bar label is id-less, so the
+    // diff cannot carry it (the WIT identity note) — the view does.
     let mutations = app.call_changes(&mut store).expect("changes failed");
     assert_eq!(
         mutations.len(),
-        1,
-        "opening a window changes the count only"
+        8,
+        "the open's diff: the count, the tile, and the window's six id'd nodes"
     );
-    match &mutations[0] {
-        waui::ui::widget::Mutation::Changed(c) => {
-            assert_eq!(node_id(&c.node), Some(2), "the changed node is the count");
-        }
-        other => panic!("expected a changed count node, got {other:?}"),
+    let ids: Vec<Option<u32>> = mutations
+        .iter()
+        .map(|m| match m {
+            waui::ui::widget::Mutation::Changed(c) => node_id(&c.node),
+            waui::ui::widget::Mutation::Removed(_) => None,
+        })
+        .collect();
+    assert!(ids.contains(&Some(4)), "the count is in the diff");
+    assert!(ids.contains(&Some(100)), "the tile's ring is in the diff");
+    // The window's nodes, under the handle the host assigned (10_000).
+    for id in [10_000u32, 110_000, 210_000, 310_000, 410_000, 510_000] {
+        assert!(
+            ids.contains(&Some(id)),
+            "the diff is missing window node {id}"
+        );
     }
-    // And the full view agrees: "1 window" (singular).
+    // And the full view agrees: "1 window" (singular), and it carries the
+    // id-less label the diff could not (the title bar's child).
     let nodes = app.call_view(&mut store).expect("view failed");
     let summaries: Vec<String> = nodes.iter().map(node_summary).collect();
-    assert!(summaries.iter().any(|s| s == "text:Some(2):1 window"));
+    assert!(summaries.iter().any(|s| s == "text:Some(4):1 window"));
+    let has_label = nodes.iter().any(|n| {
+        matches!(
+            n,
+            waui::ui::widget::Node::Text(t)
+                if t.content == "Counter" && t.parent == Some(210_000)
+        )
+    });
+    assert!(has_label, "the view carries the id-less title-bar label");
 
     // Open a second window, then close the first: the count returns to 1.
     app.call_on_double_click(&mut store, 101)
         .expect("on-double-click failed");
-    app.call_on_window_close(&mut store, 0)
+    app.call_on_window_close(&mut store, 10_000)
         .expect("on-window-close failed");
     let nodes = app.call_view(&mut store).expect("view failed");
     let summaries: Vec<String> = nodes.iter().map(node_summary).collect();
-    assert!(summaries.iter().any(|s| s == "text:Some(2):1 window"));
+    assert!(summaries.iter().any(|s| s == "text:Some(4):1 window"));
 
     // A double-click on a non-tile id is a no-op (no window, no diff).
     app.call_on_double_click(&mut store, 999)

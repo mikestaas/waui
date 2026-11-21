@@ -5,15 +5,14 @@
 //! component load, and the interactive event loop.
 //!
 //! The host's behavior — the bootstrap, the component-requested refresh,
-//! the injected clicks, the desktop's panels, and the headless `--dump` —
+//! the injected clicks, the opened entries, and the headless `--dump` —
 //! is documented by the library.
 //!
-//! `--entry <name=path>` registers an entry the host can run; a non-empty
-//! registry makes this host a desktop. `--click <id>`, `--double-click
-//! <id>`, and `--close <handle>` inject events before the frame or the
-//! interactive loop; `--dump <file.png>` renders one frame to a PNG and
-//! exits, headless; `--now <base> <step>` fakes the host clock (each call
-//! advances `step` ms).
+//! `--entry <name=path>` registers an entry the host can run. `--click
+//! <id>`, `--double-click <id>`, and `--close <handle>` inject events before
+//! the frame or the interactive loop; `--dump <file.png>` renders one frame
+//! to a PNG and exits, headless; `--now <base> <step>` fakes the host clock
+//! (each call advances `step` ms).
 
 use wasmtime::component::Component;
 use wasmtime::Engine;

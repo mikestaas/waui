@@ -28,9 +28,32 @@ const [counterPath, stopwatchPath, todoPath] = [
   process.argv[4] ?? 'target/wasm32-unknown-unknown/release/demo_todo.wasm',
 ];
 
+// A container into the selftest's node string: `dir` and `align` always
+// (the contract's core layout), the other tokens only when non-default —
+// the format the e2e DOM serializer (e2e/helpers.mjs) produces, so the two
+// suites assert on one shared set of expectations (web/expect.mjs). The
+// demos set only `dir` and `align`, so their strings are unchanged by the
+// contract's geometry and chrome tokens.
 function node(n) {
-  if (n.kind === 'container')
-    return `container{id:${n.id},parent:${n.parent},dir:${n.direction},align:${n.align}}`;
+  if (n.kind === 'container') {
+    const parts = [`id:${n.id}`, `parent:${n.parent}`, `dir:${n.direction}`, `align:${n.align}`];
+    if (n.positioned) parts.push('pos:1');
+    if (n.x > 0) parts.push(`x:${n.x}`);
+    if (n.y > 0) parts.push(`y:${n.y}`);
+    if (n.w > 0) parts.push(`w:${n.w}`);
+    if (n.h > 0) parts.push(`h:${n.h}`);
+    if (n.z > 0) parts.push(`z:${n.z}`);
+    if (n.gap > 0) parts.push(`gap:${n.gap}`);
+    if (n.padding > 0) parts.push(`pad:${n.padding}`);
+    if (n.stretch !== 'none') parts.push(`stretch:${n.stretch}`);
+    if (n.overflow !== 'clip') parts.push(`overflow:${n.overflow}`);
+    if (n.background !== 'none') parts.push(`bg:${n.background}`);
+    if (n.border !== 'none') parts.push(`border:${n.border}`);
+    if (n.radius !== 'none') parts.push(`radius:${n.radius}`);
+    if (n.shadow !== 'none') parts.push(`shadow:${n.shadow}`);
+    if (n.cursor !== 'default') parts.push(`cursor:${n.cursor}`);
+    return `container{${parts.join(',')}}`;
+  }
   // An image has no style: the `src` and the size (a host default when 0).
   if (n.kind === 'image')
     return `image{id:${n.id},parent:${n.parent},src:"${n.src}",width:${n.width},height:${n.height}}`;
@@ -75,6 +98,16 @@ function mutation(m) {
   // An unknown widget id is the component's own no-op branch: no diff.
   app.click(99);
   assert.deepEqual(app.changes(), []);
+
+  // The pointer and key channels (the windowing side of the contract): a
+  // plain demo has no pointer-driven or key-driven UI, so the events are the
+  // component's no-op branches: no diff.
+  app.pointerDown(2, 10, 10);
+  app.pointerMove(12, 12);
+  app.pointerUp(13, 13);
+  app.key('Escape');
+  app.key('Tab');
+  assert.deepEqual(app.changes(), [], 'pointer and key events must be no-ops for a plain demo');
 
   // Two decrements: the number's content *and* color change (one
   // mutation), and view() is still the full truth.

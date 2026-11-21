@@ -45,6 +45,7 @@ pub enum Color {
     Positive,
     Negative,
     Warning,
+    Dim,
 }
 
 impl Default for Color {
@@ -94,6 +95,110 @@ pub enum Align {
 impl Default for Align {
     fn default() -> Self {
         Align::Center
+    }
+}
+
+/// How a container fills the space available to it, mirroring
+/// `waui:ui/widget`'s `stretch` enum (same case order). `main` is the
+/// `direction` axis, `cross` the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stretch {
+    None,
+    Main,
+    Cross,
+    Both,
+}
+
+impl Default for Stretch {
+    fn default() -> Self {
+        Stretch::None
+    }
+}
+
+/// How a container treats content past its bounds, mirroring the WIT's
+/// `overflow` enum (same case order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Overflow {
+    Clip,
+    Scroll,
+}
+
+impl Default for Overflow {
+    fn default() -> Self {
+        Overflow::Clip
+    }
+}
+
+/// A semantic background, mirroring the WIT's `background` enum (same case
+/// order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Background {
+    None,
+    Panel,
+    Bar,
+}
+
+impl Default for Background {
+    fn default() -> Self {
+        Background::None
+    }
+}
+
+/// A semantic border, mirroring the WIT's `border` enum (same case order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Border {
+    None,
+    Line,
+    Ring,
+}
+
+impl Default for Border {
+    fn default() -> Self {
+        Border::None
+    }
+}
+
+/// A corner-radius scale, mirroring the WIT's `radius` enum (same case
+/// order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Radius {
+    None,
+    Small,
+    Large,
+}
+
+impl Default for Radius {
+    fn default() -> Self {
+        Radius::None
+    }
+}
+
+/// A drop shadow, mirroring the WIT's `shadow` enum (same case order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shadow {
+    None,
+    Raised,
+}
+
+impl Default for Shadow {
+    fn default() -> Self {
+        Shadow::None
+    }
+}
+
+/// A cursor shape, mirroring the WIT's `cursor` enum (same case order).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cursor {
+    Default,
+    Pointer,
+    Grab,
+    Grabbing,
+    Resize,
+}
+
+impl Default for Cursor {
+    fn default() -> Self {
+        Cursor::Default
     }
 }
 
@@ -154,6 +259,14 @@ pub struct Image {
 }
 
 /// A horizontal or vertical container.
+///
+/// Geometry is in the host's units (pixels on the web host); `0` leaves a
+/// dimension to the host's default, as with the style tokens. `positioned`
+/// places the container at `(x, y)` relative to its parent instead of
+/// flowing with its siblings; `z` is its stacking order (`0` = none). The
+/// chrome tokens (`stretch`, `overflow`, `background`, `border`, `radius`,
+/// `shadow`, `cursor`) are semantic; a host that cannot express one renders
+/// without it.
 #[derive(Debug, Clone)]
 pub struct Container {
     /// This node's id (see the crate docs, *Identity*).
@@ -161,6 +274,30 @@ pub struct Container {
     pub direction: Direction,
     /// How the children are placed along the cross axis.
     pub align: Align,
+    /// `true` places the container at `(x, y)` relative to its parent.
+    pub positioned: bool,
+    /// The placement origin, in the host's units (valid when `positioned`).
+    pub x: u32,
+    pub y: u32,
+    /// The explicit size, in the host's units; `0` sizes to content.
+    pub w: u32,
+    pub h: u32,
+    /// The stacking order; `0` = none (a positioned container above
+    /// unpositioned siblings).
+    pub z: u32,
+    /// The space between children, in the host's units; `0` = the host's
+    /// default.
+    pub gap: u32,
+    /// The space around the children, in the host's units; `0` = the
+    /// host's default.
+    pub padding: u32,
+    pub stretch: Stretch,
+    pub overflow: Overflow,
+    pub background: Background,
+    pub border: Border,
+    pub radius: Radius,
+    pub shadow: Shadow,
+    pub cursor: Cursor,
     pub children: Vec<Tree>,
 }
 
@@ -225,6 +362,21 @@ impl Tree {
             id: None,
             direction: Direction::Row,
             align: Align::Center,
+            positioned: false,
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            z: 0,
+            gap: 0,
+            padding: 0,
+            stretch: Stretch::None,
+            overflow: Overflow::Clip,
+            background: Background::None,
+            border: Border::None,
+            radius: Radius::None,
+            shadow: Shadow::None,
+            cursor: Cursor::Default,
             children,
         })
     }
@@ -236,6 +388,21 @@ impl Tree {
             id: None,
             direction: Direction::Column,
             align: Align::Center,
+            positioned: false,
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            z: 0,
+            gap: 0,
+            padding: 0,
+            stretch: Stretch::None,
+            overflow: Overflow::Clip,
+            background: Background::None,
+            border: Border::None,
+            radius: Radius::None,
+            shadow: Shadow::None,
+            cursor: Cursor::Default,
             children,
         })
     }
@@ -247,6 +414,21 @@ impl Tree {
             id: None,
             direction,
             align: Align::Center,
+            positioned: false,
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            z: 0,
+            gap: 0,
+            padding: 0,
+            stretch: Stretch::None,
+            overflow: Overflow::Clip,
+            background: Background::None,
+            border: Border::None,
+            radius: Radius::None,
+            shadow: Shadow::None,
+            cursor: Cursor::Default,
             children,
         })
     }
@@ -269,17 +451,88 @@ impl Tree {
         self
     }
 
-    /// Replace an input's width, in characters (`0` = the host's default), or
-    /// an image's width. A no-op on other nodes.
+    /// Replace an input's width, in characters (`0` = the host's default),
+    /// an image's width, or a container's width. A no-op on other nodes.
     pub fn width(mut self, width: u32) -> Self {
         self.set_width(width);
         self
     }
 
     /// Replace an image's height, in the host's units (`0` = the host's
-    /// default). A no-op on other nodes.
+    /// default), or a container's height. A no-op on other nodes.
     pub fn height(mut self, height: u32) -> Self {
         self.set_height(height);
+        self
+    }
+
+    /// Place a container at `(x, y)` relative to its parent (a no-op on a
+    /// leaf; also marks it positioned).
+    pub fn at(mut self, x: u32, y: u32) -> Self {
+        self.set_x(x);
+        self.set_y(y);
+        self.set_positioned(true);
+        self
+    }
+
+    /// Replace a container's stacking order (`0` = none). A no-op on a leaf.
+    pub fn z(mut self, z: u32) -> Self {
+        self.set_z(z);
+        self
+    }
+
+    /// Replace a container's child gap, in the host's units (`0` = the
+    /// host's default). A no-op on a leaf.
+    pub fn gap(mut self, gap: u32) -> Self {
+        self.set_gap(gap);
+        self
+    }
+
+    /// Replace a container's padding, in the host's units (`0` = the host's
+    /// default). A no-op on a leaf.
+    pub fn padding(mut self, padding: u32) -> Self {
+        self.set_padding(padding);
+        self
+    }
+
+    /// Replace a container's fill behavior. A no-op on a leaf.
+    pub fn stretch(mut self, stretch: Stretch) -> Self {
+        self.set_stretch(stretch);
+        self
+    }
+
+    /// Replace a container's overflow behavior. A no-op on a leaf.
+    pub fn overflow(mut self, overflow: Overflow) -> Self {
+        self.set_overflow(overflow);
+        self
+    }
+
+    /// Replace a container's background. A no-op on a leaf.
+    pub fn background(mut self, background: Background) -> Self {
+        self.set_background(background);
+        self
+    }
+
+    /// Replace a container's border. A no-op on a leaf.
+    pub fn border(mut self, border: Border) -> Self {
+        self.set_border(border);
+        self
+    }
+
+    /// Replace a container's corner radius. A no-op on a leaf.
+    pub fn radius(mut self, radius: Radius) -> Self {
+        self.set_radius(radius);
+        self
+    }
+
+    /// Replace a container's shadow. A no-op on a leaf.
+    pub fn shadow(mut self, shadow: Shadow) -> Self {
+        self.set_shadow(shadow);
+        self
+    }
+
+    /// Replace a container's cursor. A no-op on a leaf.
+    pub fn cursor(mut self, cursor: Cursor) -> Self {
+        self.set_cursor(cursor);
         self
     }
 
@@ -313,20 +566,117 @@ impl Tree {
     }
 
     /// Replace an input's width, in characters (in place). Also an image's
-    /// width. Other nodes have none.
+    /// width and a container's width. Other nodes have none.
     pub fn set_width(&mut self, width: u32) {
         match self {
             Self::Input(i) => i.width = width,
             Self::Image(i) => i.width = width,
+            Self::Container(c) => c.w = width,
             _ => {}
         }
     }
 
-    /// Replace an image's height, in the host's units (in place). Other nodes
-    /// have none.
+    /// Replace an image's height, in the host's units (in place). Also a
+    /// container's height. Other nodes have none.
     pub fn set_height(&mut self, height: u32) {
-        if let Self::Image(i) = self {
-            i.height = height;
+        match self {
+            Self::Image(i) => i.height = height,
+            Self::Container(c) => c.h = height,
+            _ => {}
+        }
+    }
+
+    /// Place a container at `x` relative to its parent (in place). A
+    /// positioned container keeps its other dimensions.
+    pub fn set_x(&mut self, x: u32) {
+        if let Self::Container(c) = self {
+            c.x = x;
+            c.positioned = true;
+        }
+    }
+
+    /// Place a container at `y` relative to its parent (in place).
+    pub fn set_y(&mut self, y: u32) {
+        if let Self::Container(c) = self {
+            c.y = y;
+            c.positioned = true;
+        }
+    }
+
+    /// Set a container's positioned flag (in place).
+    pub fn set_positioned(&mut self, positioned: bool) {
+        if let Self::Container(c) = self {
+            c.positioned = positioned;
+        }
+    }
+
+    /// Replace a container's stacking order (in place).
+    pub fn set_z(&mut self, z: u32) {
+        if let Self::Container(c) = self {
+            c.z = z;
+        }
+    }
+
+    /// Replace a container's child gap (in place).
+    pub fn set_gap(&mut self, gap: u32) {
+        if let Self::Container(c) = self {
+            c.gap = gap;
+        }
+    }
+
+    /// Replace a container's padding (in place).
+    pub fn set_padding(&mut self, padding: u32) {
+        if let Self::Container(c) = self {
+            c.padding = padding;
+        }
+    }
+
+    /// Replace a container's fill behavior (in place).
+    pub fn set_stretch(&mut self, stretch: Stretch) {
+        if let Self::Container(c) = self {
+            c.stretch = stretch;
+        }
+    }
+
+    /// Replace a container's overflow behavior (in place).
+    pub fn set_overflow(&mut self, overflow: Overflow) {
+        if let Self::Container(c) = self {
+            c.overflow = overflow;
+        }
+    }
+
+    /// Replace a container's background (in place).
+    pub fn set_background(&mut self, background: Background) {
+        if let Self::Container(c) = self {
+            c.background = background;
+        }
+    }
+
+    /// Replace a container's border (in place).
+    pub fn set_border(&mut self, border: Border) {
+        if let Self::Container(c) = self {
+            c.border = border;
+        }
+    }
+
+    /// Replace a container's corner radius (in place).
+    pub fn set_radius(&mut self, radius: Radius) {
+        if let Self::Container(c) = self {
+            c.radius = radius;
+        }
+    }
+
+    /// Replace a container's shadow (in place).
+    pub fn set_shadow(&mut self, shadow: Shadow) {
+        if let Self::Container(c) = self {
+            c.shadow = shadow;
+        }
+    }
+
+    /// Replace a container's cursor (in place).
+    pub fn set_cursor(&mut self, cursor: Cursor) {
+        if let Self::Container(c) = self {
+            c.cursor = cursor;
         }
     }
 
@@ -385,6 +735,21 @@ pub enum Flat {
         parent: Option<u32>,
         direction: Direction,
         align: Align,
+        positioned: bool,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+        z: u32,
+        gap: u32,
+        padding: u32,
+        stretch: Stretch,
+        overflow: Overflow,
+        background: Background,
+        border: Border,
+        radius: Radius,
+        shadow: Shadow,
+        cursor: Cursor,
     },
 }
 
@@ -502,6 +867,21 @@ fn flat(node: &Tree, parent: Option<u32>) -> Flat {
             parent,
             direction: c.direction,
             align: c.align,
+            positioned: c.positioned,
+            x: c.x,
+            y: c.y,
+            w: c.w,
+            h: c.h,
+            z: c.z,
+            gap: c.gap,
+            padding: c.padding,
+            stretch: c.stretch,
+            overflow: c.overflow,
+            background: c.background,
+            border: c.border,
+            radius: c.radius,
+            shadow: c.shadow,
+            cursor: c.cursor,
         },
     }
 }
@@ -639,6 +1019,21 @@ mod tests {
                 parent,
                 direction: c.direction,
                 align: c.align,
+                positioned: c.positioned,
+                x: c.x,
+                y: c.y,
+                w: c.w,
+                h: c.h,
+                z: c.z,
+                gap: c.gap,
+                padding: c.padding,
+                stretch: c.stretch,
+                overflow: c.overflow,
+                background: c.background,
+                border: c.border,
+                radius: c.radius,
+                shadow: c.shadow,
+                cursor: c.cursor,
             },
         }
     }

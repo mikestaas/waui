@@ -59,6 +59,12 @@ impl AppImports for Host {
     ) -> Result<u32, Error> {
         Err(Error::NotFound)
     }
+    // This host runs no entries (see the header), so there is nothing to close.
+    fn close_entry(&mut self, _handle: u32) {}
+    // This host has no viewport: the unknown size (see the WIT note).
+    fn viewport(&mut self) -> ViewportSize {
+        ViewportSize { w: 0, h: 0 }
+    }
 }
 
 // The `widget` interface is pulled into the world, so the generated

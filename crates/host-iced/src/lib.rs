@@ -13,9 +13,11 @@
 //! A windowed host for waui components, rendered with [iced](https://iced.rs).
 //!
 //! The host bootstraps from `view()` (a full snapshot), then — on every
-//! event it forwards to the component — applies the component's `changes()`
-//! diff to its retained tree and rebuilds only when the diff is non-empty;
-//! a tick that changes nothing skips the rebuild.
+//! event it forwards to the component — checks the component's `changes()`
+//! diff: a content-only diff is applied in place, a structural one
+//! re-queries `view()` (the diff cannot carry id-less nodes, so the
+//! snapshot is the source of truth), and a rebuild follows either; a tick
+//! that changes nothing skips the rebuild.
 //!
 //! Time-based refresh is component-requested: `schedule` sets the period,
 //! and because iced's `time::every` takes a fixed period, the host keeps a
@@ -31,15 +33,19 @@
 //! source of truth for the buffer) lands through the diff.
 //!
 //! `--entry <name=path>` registers an entry the host can run; a non-empty
-//! registry makes this host a desktop. On a desktop, a container whose id
-//! is in the tile range is a double-clickable tile, and a double-click
-//! (native, or `--double-click <id>`) opens a floating panel running the
-//! entry's component in its own store: the host's own chrome (a title bar
-//! with the entry's name and a close button), a cascade placement, and the
-//! entry's default size. The close button drops the panel and reports
-//! `on-window-close`; a press on a panel raises it — drag, resize, and
-//! raise are host-internal (the WIT), and the panel's events never reach
-//! the desktop below.
+//! registry lets this host run multi-component apps. An opened entry runs
+//! in its own store, and its tree is seated in a slot of the launching
+//! component's tree (the slot's id is the entry's handle): the launching
+//! component draws the window's chrome and geometry with the contract's
+//! tokens and drives them through the pointer channel, and this host
+//! forwards presses and held-button movement (`on-pointer-down` /
+//! `on-pointer-move` / `on-pointer-up`) and double-activations
+//! (`on-double-click`).
+//!
+//! This host has no keyboard channel (iced has no raw key event), so it
+//! never emits `on-key`; windowing a component binds to keys (a close on
+//! Escape) is available only on hosts with a keyboard (the TUI, the web
+//! page).
 //!
 //! `--dump <file.png>` renders one frame to a PNG and exits, headless: the
 //! window's own render path with the surface replaced by iced's software
@@ -65,10 +71,14 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, waui, App, AppImports, Entry, Error, Retained, Tree};
+use host_shared::{build_tree, waui, App, AppImports, Entry, Error, Retained, Tree, ViewportSize};
 
 // The contract's style tokens, aliased to avoid clashing with `iced::Color`.
-use host_shared::waui::ui::widget::{Align as WAlign, Color as WColor, Size as WSize};
+use host_shared::waui::ui::widget::{
+    Align as WAlign, Background as WBackground, Border as WBorder, Color as WColor,
+    Cursor as WCursor, Radius as WRadius, Shadow as WShadow, Size as WSize, Stretch as WStretch,
+};
+use host_shared::ContainerStyle;
 
 // The `Widget` trait and the layout types for the panel's custom widget.
 use iced_runtime::core as iced_core;
@@ -98,14 +108,11 @@ pub struct EntrySpec {
 
 /// An open panel: the entry's component running in its own store (the
 /// world's imports take the store's data, not a store handle, so a panel
-/// gets its own), its retained tree, its cascade placement, and its size.
+/// gets its own) and its retained tree. The panel has no geometry of its
+/// own: the opening component draws the window's chrome and the host seats
+/// the panel's tree in the component's content slot (see [`content_rect`]).
 pub struct Panel {
     pub handle: u32,
-    pub title: String,
-    pub x: f32,
-    pub y: f32,
-    pub width: f32,
-    pub height: f32,
     pub store: Store<Host>,
     pub app: App,
     pub retained: Retained,
@@ -129,11 +136,14 @@ pub struct Host {
     pub fake_calls: u64,
     pub engine: Engine,
     pub linker: Linker<Host>,
-    /// The registry (`--entry`): a non-empty one makes this host a desktop.
+    /// The registry (`--entry`): a non-empty one lets the host run
+    /// multi-component apps.
     pub entries: Vec<EntrySpec>,
-    /// The open panels, in z-order (last = topmost).
+    /// The open panels, in the order they were opened.
     pub panels: Vec<Panel>,
-    /// The next panel handle (the host's flat id, from 1).
+    /// The next panel handle. The base is above the component's own id
+    /// space (a component's fixed ids stay low; its content slot takes the
+    /// handle as its id, so the two spaces never collide).
     pub next_handle: u32,
 }
 
@@ -152,6 +162,11 @@ fn engine_default() -> Engine {
     }
 }
 
+// The first panel handle: above the component's own ids (its fixed ids and
+// its tiles stay in the low range; its content slot takes a handle as its
+// id, so the host's handles and the component's ids never collide).
+pub const HANDLE_BASE: u32 = 10_000;
+
 impl Default for Host {
     fn default() -> Self {
         let engine = engine_default();
@@ -164,7 +179,7 @@ impl Default for Host {
             linker,
             entries: Vec::new(),
             panels: Vec::new(),
-            next_handle: 1,
+            next_handle: HANDLE_BASE,
         }
     }
 }
@@ -183,9 +198,9 @@ impl Host {
     }
 
     /// The store's data for a panel this host opens: the same engine,
-    /// linker, and clock, but an empty registry (a panel runs a demo, not
-    /// a desktop, so the tile rule never fires in it) and its own panel
-    /// list.
+    /// linker, and clock, but an empty registry (a panel runs a demo, not a
+    /// multi-component app, so the tile rule never fires in it) and its own
+    /// panel list.
     fn window_host(&self) -> Host {
         Host {
             wake: Arc::new(Mutex::new(Wake::default())),
@@ -195,7 +210,7 @@ impl Host {
             linker: self.linker.clone(),
             entries: Vec::new(),
             panels: Vec::new(),
-            next_handle: 1,
+            next_handle: HANDLE_BASE,
         }
     }
 }
@@ -210,6 +225,15 @@ impl AppImports for Host {
             last_wake_ms: self.clock(),
         };
     }
+    // The host's viewport: its canvas, in the host's units (pixels). A
+    // component's viewport-dependent math (a drag clamp) uses it.
+    fn viewport(&mut self) -> ViewportSize {
+        let size = canvas_size(!self.entries.is_empty());
+        ViewportSize {
+            w: size.width as u32,
+            h: size.height as u32,
+        }
+    }
     fn list_entries(&mut self) -> Vec<Entry> {
         self.entries
             .iter()
@@ -219,7 +243,14 @@ impl AppImports for Host {
             })
             .collect()
     }
-    fn open_entry(&mut self, name: String, x: u32, y: u32, w: u32, h: u32) -> Result<u32, Error> {
+    fn open_entry(
+        &mut self,
+        name: String,
+        _x: u32,
+        _y: u32,
+        _w: u32,
+        _h: u32,
+    ) -> Result<u32, Error> {
         let Some(spec) = self.entries.iter().find(|e| e.name == name).cloned() else {
             return Err(Error::NotFound);
         };
@@ -248,26 +279,10 @@ impl AppImports for Host {
         let retained = Retained::from_view(nodes);
         let tree = build_tree(retained.nodes());
         let wake = store.data().wake.clone();
-        let n = self.panels.len();
-        // A 0 placement cascades (down-right, wrapping); a 0 size takes
-        // the host's default.
-        let (x, y) = if x == 0 && y == 0 {
-            let o = (n % 9) as f32 * CASCADE_STEP;
-            (CASCADE_X + o, CASCADE_Y + o)
-        } else {
-            (x as f32, y as f32)
-        };
-        let width = if w > 0 { w as f32 } else { DEFAULT_W };
-        let height = if h > 0 { h as f32 } else { DEFAULT_H };
         let handle = self.next_handle;
         self.next_handle = self.next_handle.saturating_add(1);
         self.panels.push(Panel {
             handle,
-            title: spec.name,
-            x,
-            y,
-            width,
-            height,
             store,
             app,
             retained,
@@ -276,6 +291,11 @@ impl AppImports for Host {
             pending: false,
         });
         Ok(handle)
+    }
+    /// Drop the panel with `handle` (the component closed it): the host frees
+    /// the entry's store. Idempotent — an unknown handle is a no-op.
+    fn close_entry(&mut self, handle: u32) {
+        self.panels.retain(|p| p.handle != handle);
     }
 }
 
@@ -317,30 +337,40 @@ pub struct State {
     /// Events from `--click`, `--double-click`, and `--close`, in argument
     /// order, applied on the first tick after startup.
     pub pending: Vec<Injected>,
+    /// The pointer's last known position, in canvas coordinates (a
+    /// full-canvas area reports it on every move; `on_press` carries none).
+    pub pointer_pos: (f32, f32),
+    /// The press in progress: the surface and node the pointer was pressed
+    /// over, and the press position (a release within a few pixels of it is
+    /// a click; the held movement drives `on-pointer-move`).
+    pub press: Option<(Surface, u32, f32, f32)>,
 }
 
-/// Which surface an event landed on: the desktop, or a panel (by handle).
-/// The desktop's and a panel's trees are separate components with separate
-/// id spaces, so a button id alone does not name its target.
-#[derive(Debug, Clone, Copy)]
+/// Which surface an event landed on: the main app, or a panel (by handle).
+/// The main app's and a panel's trees are separate components with
+/// separate id spaces, so a node id alone does not name its target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Surface {
-    Desktop,
+    Main,
     Panel(u32),
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    /// A button with `id` was activated (a press released over it).
     Click(Surface, u32),
     /// The input with `id` now holds `text`: the field's whole buffer,
     /// after the user's latest edit.
     Text(Surface, u32, String),
-    /// A desktop tile was double-clicked (native double-click, or
-    /// `--double-click`): the desktop opens the entry's panel.
+    /// A node of the main app was double-activated (a native double-click,
+    /// or `--double-click`).
     DoubleClick(u32),
-    /// A panel's close button was pressed.
-    ClosePanel(u32),
-    /// A press on a panel (outside its buttons): raise it to the top.
-    RaisePanel(u32),
+    /// The pointer was pressed over the node with `id`.
+    PointerDown(Surface, u32),
+    /// The pointer was released.
+    PointerUp,
+    /// The pointer moved to `(x, y)`, in canvas coordinates.
+    PointerMove(f32, f32),
     Tick,
 }
 
@@ -358,42 +388,44 @@ pub enum Injected {
 pub const WINDOW_WIDTH: f32 = 360.0;
 pub const WINDOW_HEIGHT: f32 = 340.0;
 
-// The desktop's canvas: the window and the dump render the same size, so a
-// `--dump` frame is the window's frame.
-pub const DESKTOP_WIDTH: f32 = 960.0;
-pub const DESKTOP_HEIGHT: f32 = 600.0;
+// The app canvas, for a host that runs entries (a multi-component app):
+// the window and the dump render the same size, so a `--dump` frame is the
+// window's frame.
+pub const APP_WIDTH: f32 = 960.0;
+pub const APP_HEIGHT: f32 = 600.0;
 
-/// The window and dump canvas: the desktop's when the host runs entries,
-/// else the standalone default (the existing goldens' size).
+/// The window and dump canvas: the app's when the host runs entries, else
+/// the standalone default (the existing goldens' size).
 pub fn canvas_size(has_registry: bool) -> iced::Size {
     if has_registry {
-        iced::Size::new(DESKTOP_WIDTH, DESKTOP_HEIGHT)
+        iced::Size::new(APP_WIDTH, APP_HEIGHT)
     } else {
         iced::Size::new(WINDOW_WIDTH, WINDOW_HEIGHT)
     }
 }
 
-// A panel the component did not size: the host's default.
-const DEFAULT_W: f32 = 300.0;
-const DEFAULT_H: f32 = 380.0;
+/// A container the host makes double-clickable: one the component marked
+/// `cursor: pointer` (the WIT's double-clickable marker, replacing the old
+/// id-range hack). The rule applies only when the host runs entries (a
+/// non-empty registry): a standalone app's containers are not tiles.
+fn is_tile(style: &ContainerStyle) -> bool {
+    style.cursor == WCursor::Pointer
+}
 
-// New panels cascade down-right (the web host's geometry), wrapping after
-// nine.
-const CASCADE_X: f32 = 24.0;
-const CASCADE_Y: f32 = 48.0;
-const CASCADE_STEP: f32 = 28.0;
+/// Whether a node is a positioned container (a window).
+fn is_positioned(node: &Tree) -> bool {
+    matches!(
+        node,
+        Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) if s.positioned
+    )
+}
 
-/// The tile range: the web host marks a node `.tile` when its id is at
-/// least this (the desktop's tile base); a container in the range is a
-/// double-clickable tile.
-const TILE_BASE: u32 = 100;
-
-/// A container the desktop makes double-clickable: an id in the tile range.
-/// The rule is host-local (the WIT has no double-clickable marker), and it
-/// applies only on a desktop (a non-empty registry): a standalone demo's
-/// id'd containers (the todo's rows) are not tiles.
-fn is_tile(id: Option<u32>) -> bool {
-    id.is_some_and(|i| i >= TILE_BASE)
+/// A node's stacking order (a positioned container's `z`; `0` for the rest).
+fn z_of(node: &Tree) -> u32 {
+    match node {
+        Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) => s.z,
+        _ => 0,
+    }
 }
 
 /// Instantiate the component and build the initial retained node list and
@@ -420,7 +452,7 @@ pub fn new_state(
             linker: linker.clone(),
             entries,
             panels: Vec::new(),
-            next_handle: 1,
+            next_handle: HANDLE_BASE,
         },
     );
     let app =
@@ -439,6 +471,8 @@ pub fn new_state(
         tree,
         wake,
         pending: injected,
+        pointer_pos: (0.0, 0.0),
+        press: None,
     }
 }
 
@@ -446,8 +480,8 @@ pub fn new_state(
 /// argument order, and the components' resulting diffs, rebuilding the
 /// trees that changed. The windowed host does this on the first tick; the
 /// dump path does it before rendering. The startup snapshot precedes it
-/// (the desktop fetches its registry on first view, so a double-click
-/// looks up the registry that view fetched).
+/// (a multi-component app fetches its registry on first view, so a
+/// double-click looks up the registry that view fetched).
 pub fn apply_pending(state: &mut State) {
     if state.pending.is_empty() {
         return;
@@ -475,23 +509,40 @@ pub fn apply_pending(state: &mut State) {
             }
         }
     }
-    diff_desktop(state);
+    diff_main(state);
     diff_panels(state);
 }
 
-/// The desktop's diff: rebuild its tree when the component reports a
+/// The main app's refresh: rebuild its tree when the component reports a
 /// change (an empty diff skips the rebuild).
-fn diff_desktop(state: &mut State) {
+///
+/// A content-only diff is applied in place; a structural diff re-queries
+/// `view`. The split follows the WIT identity note: a diff cannot carry
+/// id-less nodes, so a structural change (which may add or move one — a
+/// window's title-bar label) must come from the snapshot, which is always
+/// the full tree (the WIT's re-query fallback).
+fn diff_main(state: &mut State) {
     let mutations = state
         .app
         .call_changes(&mut state.store)
         .expect("changes() failed");
-    if state.retained.apply(&mutations) {
-        state.tree = build_tree(state.retained.nodes());
+    if mutations.is_empty() {
+        return;
     }
+    if state.retained.is_content_only(&mutations) {
+        state.retained.apply(&mutations);
+    } else {
+        let nodes = state
+            .app
+            .call_view(&mut state.store)
+            .expect("view() failed");
+        state.retained = Retained::from_view(nodes);
+    }
+    state.tree = build_tree(state.retained.nodes());
 }
 
-/// The panels' diffs: rebuild each panel that was driven.
+/// The panels' refresh: rebuild each panel that was driven, with the same
+/// content-only/structural split as [`diff_main`].
 fn diff_panels(state: &mut State) {
     let driven = state
         .store
@@ -508,20 +559,17 @@ fn diff_panels(state: &mut State) {
             }
             p.pending = false;
             let mutations = p.app.call_changes(&mut p.store).expect("changes() failed");
-            if p.retained.apply(&mutations) {
-                p.tree = build_tree(p.retained.nodes());
+            if mutations.is_empty() {
+                continue;
             }
+            if p.retained.is_content_only(&mutations) {
+                p.retained.apply(&mutations);
+            } else {
+                let nodes = p.app.call_view(&mut p.store).expect("view() failed");
+                p.retained = Retained::from_view(nodes);
+            }
+            p.tree = build_tree(p.retained.nodes());
         }
-    }
-}
-
-/// Drive the panel with `handle` (a click or a text edit) and mark it for
-/// a diff.
-fn wake_panel(state: &mut State, handle: u32, drive: impl Fn(&mut Panel)) {
-    let panels = &mut state.store.data_mut().panels;
-    if let Some(p) = panels.iter_mut().find(|p| p.handle == handle) {
-        drive(p);
-        p.pending = true;
     }
 }
 
@@ -650,73 +698,106 @@ pub fn render_png(state: &State) -> (u32, u32, Vec<u8>) {
     (width, height, png)
 }
 
+/// Drive the component of `surface` (the main app, or the panel with
+/// `handle`); a panel it drives is marked for a diff.
+fn drive_app(state: &mut State, surface: Surface, drive: impl Fn(&mut App, &mut Store<Host>)) {
+    match surface {
+        Surface::Main => drive(&mut state.app, &mut state.store),
+        Surface::Panel(handle) => {
+            let panels = &mut state.store.data_mut().panels;
+            if let Some(p) = panels.iter_mut().find(|p| p.handle == handle) {
+                drive(&mut p.app, &mut p.store);
+                p.pending = true;
+            }
+        }
+    }
+}
+
 pub fn update(state: &mut State, message: Message) {
     // `--click`, `--double-click`, and `--close` injections take the same
-    // path as the pointer and keyboard: applied on the first tick.
+    // path as the pointer: applied on the first tick.
     apply_pending(state);
 
-    // A click, a text edit, or a double-click always wakes the component it
-    // landed on. A tick wakes a component only when its requested period
-    // has elapsed (0 = never); iced's own clock is coarse (50ms), so the
-    // gate, not the timer, sets the cadence.
-    let mut desktop_woke = false;
+    // An event always wakes the component it landed on. A tick wakes a
+    // component only when its requested period has elapsed (0 = never);
+    // iced's own clock is coarse (50ms), so the gate, not the timer, sets
+    // the cadence.
+    let mut main_woke = false;
     match message {
-        Message::Click(Surface::Desktop, id) => {
-            state
-                .app
-                .call_on_click(&mut state.store, id)
-                .expect("on-click() failed");
-            desktop_woke = true;
-        }
-        Message::Click(Surface::Panel(handle), id) => {
-            wake_panel(state, handle, |p| {
-                p.app
-                    .call_on_click(&mut p.store, id)
-                    .expect("on-click() failed");
+        Message::Click(surface, id) => {
+            drive_app(state, surface, |app, store| {
+                app.call_on_click(store, id).expect("on-click() failed");
             });
+            main_woke |= surface == Surface::Main;
+            // A button captures its release, so the canvas never sees it:
+            // end any tracked press here, or the component's drag state
+            // outlives the button.
+            if let Some((s, _, _, _)) = state.press.take() {
+                let (x, y) = state.pointer_pos;
+                drive_app(state, s, |app, store| {
+                    app.call_on_pointer_up(store, x as u32, y as u32)
+                        .expect("on-pointer-up() failed");
+                });
+                main_woke |= s == Surface::Main;
+            }
         }
         // An edit always wakes the component: it re-derives the field's
         // content from the buffer it stores, and the diff carries it.
-        Message::Text(Surface::Desktop, id, text) => {
-            state
-                .app
-                .call_on_text(&mut state.store, id, &text)
-                .expect("on-text() failed");
-            desktop_woke = true;
-        }
-        Message::Text(Surface::Panel(handle), id, text) => {
-            wake_panel(state, handle, |p| {
-                p.app
-                    .call_on_text(&mut p.store, id, &text)
+        Message::Text(surface, id, text) => {
+            drive_app(state, surface, |app, store| {
+                app.call_on_text(store, id, &text)
                     .expect("on-text() failed");
             });
+            main_woke |= surface == Surface::Main;
         }
-        // A tile was double-clicked: the desktop opens the entry's panel
-        // through the open-entry import, and its menu bar counts it.
+        // A node of the main app was double-activated: the app opens the
+        // entry's panel through the open-entry import.
         Message::DoubleClick(id) => {
             state
                 .app
                 .call_on_double_click(&mut state.store, id)
                 .expect("on-double-click() failed");
-            desktop_woke = true;
+            main_woke = true;
         }
-        // The close button drops the panel and tells the desktop (it drops
-        // the handle from its open set and updates its count).
-        Message::ClosePanel(handle) => {
-            state.store.data_mut().panels.retain(|p| p.handle != handle);
-            state
-                .app
-                .call_on_window_close(&mut state.store, handle)
-                .expect("on-window-close() failed");
-            desktop_woke = true;
+        // A press over a node: report it (the component raises a window and
+        // starts a drag or resize) and track it for the release.
+        Message::PointerDown(surface, id) => {
+            let (x, y) = state.pointer_pos;
+            state.press = Some((surface, id, x, y));
+            drive_app(state, surface, |app, store| {
+                app.call_on_pointer_down(store, id, x as u32, y as u32)
+                    .expect("on-pointer-down() failed");
+            });
+            main_woke |= surface == Surface::Main;
         }
-        // Raise is host-internal (the WIT): z-order only, no component
-        // wake, no diff.
-        Message::RaisePanel(handle) => {
-            let panels = &mut state.store.data_mut().panels;
-            if let Some(i) = panels.iter().position(|p| p.handle == handle) {
-                let panel = panels.remove(i);
-                panels.push(panel);
+        // A held-button movement: the pointer's position, to the surface
+        // that owns the press (a window drag or resize).
+        Message::PointerMove(x, y) => {
+            state.pointer_pos = (x, y);
+            if let Some((surface, _, _, _)) = state.press {
+                drive_app(state, surface, |app, store| {
+                    app.call_on_pointer_move(store, x as u32, y as u32)
+                        .expect("on-pointer-move() failed");
+                });
+                main_woke |= surface == Surface::Main;
+            }
+        }
+        // A release: end the tracked press; a press released where it
+        // started (within a few pixels) is a click, a drag is not.
+        Message::PointerUp => {
+            if let Some((surface, id, px, py)) = state.press.take() {
+                let (x, y) = state.pointer_pos;
+                drive_app(state, surface, |app, store| {
+                    app.call_on_pointer_up(store, x as u32, y as u32)
+                        .expect("on-pointer-up() failed");
+                });
+                main_woke |= surface == Surface::Main;
+                if (x - px).abs() + (y - py).abs() <= 4.0 {
+                    drive_app(state, surface, |app, store| {
+                        app.call_on_click(store, id).expect("on-click() failed");
+                    });
+                    main_woke |= surface == Surface::Main;
+                }
             }
         }
         Message::Tick => {
@@ -731,7 +812,7 @@ pub fn update(state: &mut State, message: Message) {
                     .call_on_tick(&mut state.store)
                     .expect("on-tick() failed");
             }
-            desktop_woke |= due;
+            main_woke |= due;
             // Each panel: its component's own requested period (a running
             // stopwatch), gated the same way.
             for p in state.store.data_mut().panels.iter_mut() {
@@ -747,10 +828,21 @@ pub fn update(state: &mut State, message: Message) {
             }
         }
     }
-    if desktop_woke {
-        diff_desktop(state);
+    if main_woke {
+        diff_main(state);
     }
     diff_panels(state);
+}
+
+/// Whether the main app's tree has a content slot for `handle` (a container
+/// the app gave the id): the panel seats there when it does.
+fn slot_in_tree(node: &Tree, handle: u32) -> bool {
+    match node {
+        Tree::Row(id, _, _, children) | Tree::Column(id, _, _, children) => {
+            *id == Some(handle) || children.iter().any(|c| slot_in_tree(c, handle))
+        }
+        _ => false,
+    }
 }
 
 pub fn view(state: &State) -> iced::Element<'_, Message> {
@@ -759,92 +851,57 @@ pub fn view(state: &State) -> iced::Element<'_, Message> {
     use iced::Length;
     let host = state.store.data();
     let has_registry = !host.entries.is_empty();
-    // Like the page, fill the window and center the desktop, with the
-    // page's `#app` padding (2rem).
-    let mut layers = vec![
-        widget::container(map_tree(&state.tree, Surface::Desktop, has_registry))
+    // Fill the canvas and center the app. A standalone app (no registry)
+    // keeps the page's 2rem padding: a cosmetic margin, and the size the
+    // committed goldens were drawn at. A multi-component app has no padding:
+    // its canvas is the component's drawing area whole, so `viewport` (the
+    // canvas) is what the component's clamping math expects.
+    let mut main = widget::container(map_tree(
+        &state.tree,
+        Surface::Main,
+        has_registry,
+        &host.panels,
+    ))
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .align_x(alignment::Horizontal::Center)
+    .align_y(alignment::Vertical::Center);
+    if !has_registry {
+        main = main.padding(32.0);
+    }
+    // A full-canvas area: the pointer's position on every move (a press
+    // carries none), and the release that no node below reports (a button
+    // captures its own).
+    let main = widget::MouseArea::new(main)
+        .on_move(|p| Message::PointerMove(p.x, p.y))
+        .on_release(Message::PointerUp);
+    let mut layers = vec![main.into()];
+    // A panel the app did not seat (a host-chrome component, which leaves
+    // the window's chrome to the host): centered, without chrome.
+    for panel in &host.panels {
+        if !slot_in_tree(&state.tree, panel.handle) {
+            let content = widget::container(map_tree(
+                &panel.tree,
+                Surface::Panel(panel.handle),
+                false,
+                &EMPTY_PANELS,
+            ))
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(alignment::Horizontal::Center)
-            .align_y(alignment::Vertical::Center)
-            .padding(32.0)
-            .into(),
-    ];
-    // The open panels, in z-order (bottom to top): the stack draws them in
-    // that order, and its update runs them top-down, so a top panel's
-    // opaque bounds keep its press from reaching the desktop below.
-    for panel in &host.panels {
-        layers.push(panel_element(panel));
+            .align_y(alignment::Vertical::Center);
+            layers.push(widget::stack(vec![content.into()]).into());
+        }
     }
-    // A host with no panels is the standalone view of today: the stack
-    // with its single layer draws the layer alone, at the layer's size.
+    // A host with no panels is the standalone view of today: the stack with
+    // its single layer draws the layer alone.
     widget::stack(layers).into()
 }
 
-/// One panel's element: its chrome (a title bar with the entry's name and
-/// a close button, its content centered below) at its cascade position,
-/// opaque to the desktop below, raised by a press.
-fn panel_element(panel: &Panel) -> iced::Element<'_, Message> {
-    use iced::alignment;
-    use iced::widget;
-    use iced::Length;
-    let title = widget::text(&panel.title)
-        .size(13.0)
-        .color(iced::Color::from_rgb8(0xc0, 0xca, 0xf5));
-    let close = widget::button(widget::text("×").size(16.0))
-        .padding(iced::Padding {
-            top: 5.0,
-            right: 8.0,
-            bottom: 5.0,
-            left: 8.0,
-        })
-        .style(theme::close_style)
-        .on_press(Message::ClosePanel(panel.handle));
-    let bar = widget::container(
-        widget::row([
-            title.into(),
-            widget::space().width(Length::Fill).into(),
-            close.into(),
-        ])
-        .spacing(8.0)
-        .height(36.0)
-        .padding(iced::Padding {
-            top: 0.0,
-            right: 8.0,
-            bottom: 0.0,
-            left: 12.0,
-        })
-        .align_y(alignment::Vertical::Center),
-    )
-    .width(Length::Fill)
-    .style(theme::titlebar_style);
-    let content = widget::container(map_tree(&panel.tree, Surface::Panel(panel.handle), false))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .align_x(alignment::Horizontal::Center)
-        .align_y(alignment::Vertical::Center)
-        .padding(16.0);
-    let body = widget::container(
-        widget::column([bar.into(), content.into()])
-            .width(Length::Fixed(panel.width))
-            .height(Length::Fixed(panel.height)),
-    )
-    .style(theme::panel_style);
-    // A press on the panel (a button captures its own; the rest raises the
-    // panel), then the opaque wrapper: a press in the panel's bounds never
-    // reaches the desktop below, and its empty area levitates no hover.
-    let interactive = widget::MouseArea::new(body).on_press(Message::RaisePanel(panel.handle));
-    iced::Element::new(PanelWidget {
-        content: widget::opaque(interactive),
-        x: panel.x,
-        y: panel.y,
-    })
-}
-
-/// A panel at a fixed position on the canvas: its content laid out at
-/// (x, y), clamped to the canvas. The stack sizes to its base layer (the
-/// desktop), so the panel's size only places it; everything else
-/// delegates to the content.
+/// A positioned container at a fixed position on the canvas: its content
+/// laid out at `(x, y)`, clamped to the canvas. The stack sizes to its base
+/// layer (the app), so the positioned container's size only places it;
+/// everything else delegates to the content.
 struct PanelWidget<'a, Message> {
     content: iced::Element<'a, Message>,
     x: f32,
@@ -989,6 +1046,7 @@ fn iced_color(c: WColor) -> Option<iced::Color> {
         WColor::Positive => iced::Color::from_rgb8(0x9e, 0xce, 0x6a),
         WColor::Negative => iced::Color::from_rgb8(0xf7, 0x76, 0x8e),
         WColor::Warning => iced::Color::from_rgb8(0xe0, 0xaf, 0x68),
+        WColor::Dim => iced::Color::from_rgb8(0x56, 0x5f, 0x89),
     })
 }
 
@@ -998,6 +1056,94 @@ fn size_pt(s: WSize) -> f32 {
         WSize::Small => 13.0,
         WSize::Medium => 17.0,
         WSize::Large => 30.0,
+    }
+}
+
+/// A semantic background in this host's palette (the web page's values, from
+/// `theme.rs`). `none` maps to nothing: the host's own background shows
+/// through.
+fn iced_background(b: WBackground) -> Option<iced::Background> {
+    Some(match b {
+        WBackground::None => return None,
+        WBackground::Panel => iced::Background::Color(iced::Color::from_rgb8(0x24, 0x28, 0x3b)),
+        WBackground::Bar => iced::Background::Color(iced::Color::from_rgb8(0x1e, 0x21, 0x30)),
+    })
+}
+
+/// A corner radius in this host's pixels.
+fn iced_radius(r: WRadius) -> iced::border::Radius {
+    match r {
+        WRadius::None => iced::border::radius(0.0),
+        WRadius::Small => iced::border::radius(6.0),
+        WRadius::Large => iced::border::radius(10.0),
+    }
+}
+
+/// A semantic border in this host's palette; `none` is a zero-width
+/// (invisible) border.
+fn iced_border(b: WBorder, radius: WRadius) -> iced::Border {
+    match b {
+        WBorder::None => iced::Border {
+            color: iced::Color::TRANSPARENT,
+            width: 0.0,
+            radius: iced_radius(radius),
+        },
+        WBorder::Line => iced::Border {
+            color: iced::Color::from_rgb8(0x41, 0x48, 0x68),
+            width: 1.0,
+            radius: iced_radius(radius),
+        },
+        WBorder::Ring => iced::Border {
+            color: iced::Color::from_rgb8(0x7a, 0xa2, 0xf7),
+            width: 2.0,
+            radius: iced_radius(radius),
+        },
+    }
+}
+
+/// A semantic shadow; `none` is iced's default (no shadow).
+fn iced_shadow(s: WShadow) -> iced::Shadow {
+    match s {
+        WShadow::None => iced::Shadow::default(),
+        WShadow::Raised => iced::Shadow {
+            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5),
+            offset: iced::Vector::new(0.0, 18.0),
+            blur_radius: 50.0,
+        },
+    }
+}
+
+/// A cursor token as iced's cursor shape; `default` maps to nothing (the
+/// content's own shape shows through). Iced has no generic resize shape, so
+/// `resize` takes the corner-grip one (a drag that grows both axes).
+fn iced_cursor(c: WCursor) -> Option<iced::mouse::Interaction> {
+    Some(match c {
+        WCursor::Default => return None,
+        WCursor::Pointer => iced::mouse::Interaction::Pointer,
+        WCursor::Grab => iced::mouse::Interaction::Grab,
+        WCursor::Grabbing => iced::mouse::Interaction::Grabbing,
+        WCursor::Resize => iced::mouse::Interaction::ResizingDiagonallyDown,
+    })
+}
+
+/// Whether a container carries any visible chrome (a background, a border,
+/// or a shadow): a container with none of them is drawn as a plain
+/// row/column, as before.
+fn has_chrome(style: &ContainerStyle) -> bool {
+    style.background != WBackground::None
+        || style.border != WBorder::None
+        || style.shadow != WShadow::None
+}
+
+/// A container's chrome as a iced container style (its background, border,
+/// radius, and shadow).
+fn container_style(style: &ContainerStyle) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        text_color: None,
+        background: iced_background(style.background),
+        border: iced_border(style.border, style.radius),
+        shadow: iced_shadow(style.shadow),
+        snap: false,
     }
 }
 
@@ -1019,11 +1165,219 @@ fn row_align(a: WAlign) -> iced::alignment::Vertical {
     }
 }
 
-/// Map the tree onto iced widgets. `surface` names the component a button
-/// or field belongs to (the desktop's and a panel's id spaces overlap),
-/// and `has_registry` marks a desktop: its tiles are framed and
-/// double-clickable, its containers are not.
-fn map_tree(node: &Tree, surface: Surface, has_registry: bool) -> iced::Element<'_, Message> {
+/// A container's id (`None` for a container the component did not give one).
+/// `map_tree` threads the `surface` (the component a node belongs to — the
+/// main app's and a panel's id spaces overlap) and the `panels` (a content
+/// slot seats the panel its id names) through to the container.
+fn id_of(node: &Tree) -> Option<u32> {
+    match node {
+        Tree::Row(id, _, _, _) | Tree::Column(id, _, _, _) => *id,
+        _ => None,
+    }
+}
+
+/// Whether a node is a row container.
+fn is_row(node: &Tree) -> bool {
+    matches!(node, Tree::Row(..))
+}
+
+/// A container: its in-flow children in a row/column (the component's
+/// `gap`/`padding`/`align`/`stretch`), its chrome, and its positioned
+/// children (a window's grip) stacked on top at their `(x, y)`. A content
+/// slot (a container an opened entry's handle is the id of) seats the
+/// entry's tree. An id'd container is addressable (a press over it is a
+/// pointer event; a tile, `cursor: pointer`, is double-clickable). A
+/// container with all-default tokens (the demos) renders as a plain
+/// row/column, as before.
+///
+/// A positioned container (a window) is *not* wrapped here: [`map_tree`]
+/// wraps it in the host's fixed-position widget.
+fn map_container<'a>(
+    node: &'a Tree,
+    surface: Surface,
+    has_registry: bool,
+    row: bool,
+    panels: &'a [Panel],
+) -> iced::Element<'a, Message> {
+    use iced::widget;
+    use iced::Length;
+    let style = match node {
+        Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) => *s,
+        _ => unreachable!("a container is a row or a column"),
+    };
+    let align = match node {
+        Tree::Row(_, a, _, _) | Tree::Column(_, a, _, _) => *a,
+        _ => unreachable!(),
+    };
+    let children = match node {
+        Tree::Row(_, _, _, c) | Tree::Column(_, _, _, c) => c,
+        _ => unreachable!(),
+    };
+
+    // The content slot (a container the app gave an opened entry's handle as
+    // its id): the entry's tree seats there, in the slot's place.
+    let slot = id_of(node).and_then(|id| panels.iter().find(|p| p.handle == id));
+
+    // The in-flow children, in a row/column. The component's `gap` (its
+    // pixels, 1:1 on this host) or the host's default (8px) when it is `0`;
+    // its `padding` when set.
+    let in_flow: Vec<iced::Element<'_, Message>> = if let Some(panel) = slot {
+        vec![map_tree(
+            &panel.tree,
+            Surface::Panel(panel.handle),
+            false,
+            &EMPTY_PANELS,
+        )]
+    } else {
+        children
+            .iter()
+            .filter(|c| !is_positioned(c))
+            .map(|c| map_tree(c, surface, has_registry, panels))
+            .collect()
+    };
+    let spacing = if style.gap > 0 { style.gap as f32 } else { 8.0 };
+    let padding = if style.padding > 0 {
+        style.padding as f32
+    } else {
+        0.0
+    };
+    // For a row the main axis is the width, for a column the height.
+    // The row/column's size: the component's explicit `w`/`h` (its pixels,
+    // 1:1 on this host) when set, else the stretch (a `Fill` axis), else
+    // content. An explicit size wins on the same axis (a container that sets
+    // both is sized, not filled). For a row the main axis is the width, for
+    // a column the height; the explicit `w`/`h` are always width/height.
+    let (w_len, h_len) = if row {
+        let mut w = Length::Shrink;
+        let mut h = Length::Shrink;
+        if matches!(style.stretch, WStretch::Main | WStretch::Both) {
+            w = Length::Fill;
+        }
+        if matches!(style.stretch, WStretch::Cross | WStretch::Both) {
+            h = Length::Fill;
+        }
+        if style.w > 0 {
+            w = Length::Fixed(style.w as f32);
+        }
+        if style.h > 0 {
+            h = Length::Fixed(style.h as f32);
+        }
+        (w, h)
+    } else {
+        let mut w = Length::Shrink;
+        let mut h = Length::Shrink;
+        if matches!(style.stretch, WStretch::Main | WStretch::Both) {
+            h = Length::Fill;
+        }
+        if matches!(style.stretch, WStretch::Cross | WStretch::Both) {
+            w = Length::Fill;
+        }
+        if style.w > 0 {
+            w = Length::Fixed(style.w as f32);
+        }
+        if style.h > 0 {
+            h = Length::Fixed(style.h as f32);
+        }
+        (w, h)
+    };
+    let mut base: iced::Element<'_, Message> = if row {
+        let mut r = widget::row(in_flow)
+            .spacing(spacing)
+            .align_y(row_align(align));
+        if padding > 0.0 {
+            r = r.padding(padding);
+        }
+        r = r.width(w_len).height(h_len);
+        r.into()
+    } else {
+        let mut c = widget::column(in_flow)
+            .spacing(spacing)
+            .align_x(column_align(align));
+        if padding > 0.0 {
+            c = c.padding(padding);
+        }
+        c = c.width(w_len).height(h_len);
+        c.into()
+    };
+
+    // The chrome, when the container has any (a background, a border, or a
+    // shadow). A container with none of them is drawn as a plain row/column.
+    // The chrome sizes to its content (the row/column, which is already
+    // sized), so the background spans it.
+    if has_chrome(&style) {
+        base = widget::container(base)
+            .style(move |_: &iced::Theme| container_style(&style))
+            .into();
+    }
+
+    // A node with an id is addressable: a press over it is reported
+    // (`on-pointer-down`, the component raises a window and starts a drag or
+    // resize), a release ends the press (and, near the press, is a click),
+    // and a tile (`cursor: pointer`) is double-clickable. The cursor token
+    // sets the shape.
+    if let Some(id) = id_of(node) {
+        let mut area = widget::MouseArea::new(base)
+            .on_press(Message::PointerDown(surface, id))
+            .on_release(Message::PointerUp);
+        if has_registry && is_tile(&style) {
+            area = area.on_double_click(Message::DoubleClick(id));
+        }
+        if let Some(cursor) = iced_cursor(style.cursor) {
+            area = area.interaction(cursor);
+        }
+        base = area.into();
+    }
+
+    // The positioned children (a window, a grip): stacked on top at their
+    // `(x, y)`. The stack sizes to its base layer (the row/column, already
+    // sized), so the positioned children place without resizing it.
+    let positioned: Vec<&Tree> = children.iter().filter(|c| is_positioned(c)).collect();
+    if positioned.is_empty() {
+        return base;
+    }
+    let mut layers = vec![base];
+    let mut pos: Vec<(u32, &Tree)> = positioned.iter().map(|c| (z_of(c), *c)).collect();
+    pos.sort_by_key(|&(z, _)| z);
+    for (_, c) in pos {
+        layers.push(map_tree(c, surface, has_registry, panels));
+    }
+    widget::stack(layers).into()
+}
+
+/// A positioned container (a window): its content (its base and its own
+/// positioned children) at its `(x, y)`, clamped to the canvas — the host's
+/// fixed-position widget, reused for the component's own windows.
+fn positioned_element<'a>(
+    node: &'a Tree,
+    surface: Surface,
+    has_registry: bool,
+    panels: &'a [Panel],
+) -> iced::Element<'a, Message> {
+    let (x, y) = match node {
+        Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) => (s.x as f32, s.y as f32),
+        _ => (0.0, 0.0),
+    };
+    iced::Element::new(PanelWidget {
+        content: map_container(node, surface, has_registry, is_row(node), panels),
+        x,
+        y,
+    })
+}
+
+/// No panel: a panel's tree seats nothing (a panel runs a demo, not a
+/// multi-component app). A `static` so the empty slice outlives the element
+/// it feeds.
+static EMPTY_PANELS: [Panel; 0] = [];
+
+/// Map the tree onto iced widgets. `surface` names the component a node
+/// belongs to (the main app's and a panel's id spaces overlap), and `panels`
+/// seats a panel whose handle is a content slot's id.
+fn map_tree<'a>(
+    node: &'a Tree,
+    surface: Surface,
+    has_registry: bool,
+    panels: &'a [Panel],
+) -> iced::Element<'a, Message> {
     use iced::widget;
     match node {
         Tree::Text(content, style) => {
@@ -1112,49 +1466,15 @@ fn map_tree(node: &Tree, surface: Surface, has_registry: bool) -> iced::Element<
                 })
                 .into()
         }
-        // A tile on a desktop: a framed, double-clickable container (the
-        // web marks the same range `.tile`). A single click does nothing
-        // (the WIT: the double-click activates).
-        Tree::Row(id, align, children) | Tree::Column(id, align, children)
-            if has_registry && is_tile(*id) =>
-        {
-            let content: iced::Element<'_, Message> = match node {
-                Tree::Row(_, align, children) => {
-                    widget::row(children.iter().map(|c| map_tree(c, surface, has_registry)))
-                        .spacing(8)
-                        .align_y(row_align(*align))
-                        .into()
-                }
-                Tree::Column(_, align, children) => {
-                    widget::column(children.iter().map(|c| map_tree(c, surface, has_registry)))
-                        .spacing(8)
-                        .align_x(column_align(*align))
-                        .into()
-                }
-                _ => unreachable!("a tile is a row or a column"),
-            };
-            let id = id.unwrap();
-            widget::MouseArea::new(
-                widget::container(content)
-                    .padding(16.0)
-                    .style(theme::tile_style),
-            )
-            .on_double_click(Message::DoubleClick(id))
-            .into()
-        }
-        // The component's cross-axis token; a host default (start) would
-        // draw the contract's default (center) wrong.
-        Tree::Row(_, align, children) => {
-            widget::row(children.iter().map(|c| map_tree(c, surface, has_registry)))
-                .spacing(8)
-                .align_y(row_align(*align))
-                .into()
-        }
-        Tree::Column(_, align, children) => {
-            widget::column(children.iter().map(|c| map_tree(c, surface, has_registry)))
-                .spacing(8)
-                .align_x(column_align(*align))
-                .into()
+        // A container: its in-flow children, its chrome, and its positioned
+        // children (see `map_container`). A positioned one (a window) is the
+        // host's fixed-position widget at its `(x, y)`.
+        Tree::Row(..) | Tree::Column(..) => {
+            if is_positioned(node) {
+                positioned_element(node, surface, has_registry, panels)
+            } else {
+                map_container(node, surface, has_registry, is_row(node), panels)
+            }
         }
     }
 }

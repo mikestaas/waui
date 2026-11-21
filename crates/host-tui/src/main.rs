@@ -4,14 +4,16 @@
 //! the browser module); this binary is only the argument parsing, the
 //! component load, and the interactive event loop.
 //!
-//! With a registry (`--entry name=path`, repeatable) the host is a desktop:
-//! a multi-document interface of overlapping windows (see the library docs).
+//! With a registry (`--entry name=path`, repeatable) the host is a window
+//! manager: a multi-document interface of overlapping windows (see the
+//! library docs).
 //!
-//! Controls: up/down (or j/k) move the active surface's focus ring (the
-//! desktop, or the topmost window), enter/space activates the focused
-//! widget (enter on a tile opens its entry), printable keys type into the
-//! focused text input, tab raises and shift+tab lowers the active window,
-//! esc closes it, q quits.
+//! Controls: up/down (or j/k) move the app's focus ring (one ring spans the
+//! app and every open window), enter/space activates the focused widget
+//! (enter on a tile opens its entry), printable keys type into the focused
+//! text input, tab and shift+tab raise and lower the frontmost window, esc
+//! closes it (those three are forwarded to the app, the window manager), and
+//! esc with no windows, or q, quits.
 //! `--dump` renders one frame with ANSI color and prints it, for headless
 //! verification of the tree-to-UI mapping; `--width <n>` sizes the `--dump`
 //! buffer to n columns (the hint bar wraps, as on a narrow terminal);
@@ -32,8 +34,9 @@ use host_shared::{build_tree, App, Retained};
 // The renderer, focus ring, and `--dump` frame, shared with the browser
 // module.
 use host_tui::{
-    active_app, active_surface, active_target, active_tree, draw, dump_frame, input_content,
-    now_ms, report_input, reseat_active, EntrySpec, Host, Surface,
+    active_app, active_surface, active_target, active_tree, derive_active, draw, dump_frame,
+    focus_newest_window, input_content, now_ms, report_input, reseat_active, EntrySpec, Host,
+    Surface,
 };
 
 use crossterm::{
@@ -51,6 +54,37 @@ impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+    }
+}
+
+/// A key as the world's `on-key` takes it (the host's key name). An empty
+/// string for a key the host has no name for, which is not forwarded.
+fn key_name(code: KeyCode, shift: bool) -> String {
+    match code {
+        KeyCode::Esc => "Escape".to_string(),
+        KeyCode::Enter => "Enter".to_string(),
+        KeyCode::Backspace => "Backspace".to_string(),
+        KeyCode::Tab => "Tab".to_string(),
+        KeyCode::BackTab => "Shift+Tab".to_string(),
+        KeyCode::Up => "ArrowUp".to_string(),
+        KeyCode::Down => "ArrowDown".to_string(),
+        KeyCode::Left => "ArrowLeft".to_string(),
+        KeyCode::Right => "ArrowRight".to_string(),
+        KeyCode::Delete => "Delete".to_string(),
+        KeyCode::Insert => "Insert".to_string(),
+        KeyCode::Home => "Home".to_string(),
+        KeyCode::End => "End".to_string(),
+        KeyCode::PageUp => "PageUp".to_string(),
+        KeyCode::PageDown => "PageDown".to_string(),
+        KeyCode::Char(c) => {
+            let c = if shift && c.is_ascii() {
+                c.to_ascii_uppercase()
+            } else {
+                c
+            };
+            c.to_string()
+        }
+        _ => String::new(),
     }
 }
 
@@ -194,12 +228,12 @@ fn main() {
         App::instantiate(&mut store, &component, &linker).expect("failed to instantiate component");
     // The loop's handle on the component's refresh request.
     let wake = store.data().wake.clone();
-    // A non-empty registry makes this host a desktop: the tile rule and the
-    // windowing keys apply.
+    // A non-empty registry makes this host a multi-window host: the tile
+    // rule and the windowing keys apply.
     let has_registry = !store.data().entries.is_empty();
 
     // The startup snapshot (the WIT bootstrap): the host builds its
-    // retained tree from view. The desktop fetches its registry on first
+    // retained tree from view. The app fetches its registry on first
     // view, so this precedes the injected events — a double-click on a
     // tile looks up the registry the first view fetched.
     let nodes = app.call_view(&mut store).expect("view() failed");
@@ -240,10 +274,10 @@ fn main() {
     if dump {
         // Headless: render one frame into a memory buffer and print it.
         // `--width` sizes the buffer like a terminal of that width; by
-        // default it fits the desktop whole and the windows' cascade.
+        // default it fits the app whole and the windows' cascade.
         print!(
             "{}",
-            dump_frame(&tree, &mut store.data_mut().windows, width, has_registry)
+            dump_frame(&tree, &store.data().windows, width, has_registry)
         );
         return;
     }
@@ -257,12 +291,17 @@ fn main() {
         Terminal::new(CrosstermBackend::new(stdout)).expect("failed to create terminal");
 
     let poll = Duration::from_millis(50);
-    // `retained` and `tree` are the startup snapshot above, as the diff
-    // protocol maintains them: `changes` applied after each event.
-    // The active surface: 0 = the desktop, 1.. = a window's z-order index.
+    // `retained` and `tree` are the startup snapshot above, as the loop
+    // maintains them: content-only diffs applied in place, structural
+    // diffs re-queried from `view` (the diff cannot carry id-less nodes).
+    // The active surface: 0 = the app, 1.. = a window's z-order index,
+    // derived from the focused target's owner (the ring is unified).
     let mut active = 0usize;
-    let mut desktop_surf = Surface::default();
-    // Whether the desktop's component was driven (a click, a double-click,
+    let mut app_surf = Surface::default();
+    // A tile just opened a window: focus its first focusable (so it is the
+    // active surface) on the next re-seat, once its content is in the ring.
+    let mut focus_newest_pending = false;
+    // Whether the app's component was driven (a click, a double-click,
     // or a tick) since the last `changes` call.
     let mut pending = false;
     // The active surface's activation, fired after the targets re-seat.
@@ -281,76 +320,33 @@ fn main() {
                 match event::read().expect("failed to read event") {
                     Event::Key(key) if key.kind == KeyEventKind::Press => {
                         let shift = key.modifiers.intersects(KeyModifiers::SHIFT);
-                        // The active surface's ring target, from the last
-                        // re-seat: it decides what the key does (a 'q'
-                        // typed into the input types; only outside it
-                        // quits).
-                        let (t_id, t_is_input, t_is_tile) =
-                            active_target(&mut store, &mut desktop_surf, active);
+                        // The app's ring target (the ring is unified),
+                        // from the last re-seat: it decides what the key
+                        // does (a 'q' typed into the input types; only
+                        // outside it quits).
+                        let (t_id, t_is_input, t_is_tile, _t_owner) =
+                            active_target(&mut store, &mut app_surf, active);
                         match key.code {
-                            KeyCode::Esc => {
-                                if active > 0 {
-                                    // Close the active window: drop it and
-                                    // tell the desktop (it drops the
-                                    // handle and updates the count).
-                                    let w = store.data_mut();
-                                    let win = w.windows.remove(active - 1);
-                                    app.call_on_window_close(&mut store, win.handle)
-                                        .expect("on-window-close() failed");
-                                    pending = true;
-                                    active = (active - 1).min(store.data().windows.len());
-                                } else {
-                                    quit = true;
-                                }
-                                reseat_active(
-                                    &mut store,
-                                    &tree,
-                                    has_registry,
-                                    &mut active,
-                                    &mut desktop_surf,
-                                );
-                            }
-                            // Raise the next surface (wrapping to the
-                            // desktop); shift+tab lowers the active window
-                            // to the bottom, and the surface below it takes
-                            // its slot, so the active index holds.
-                            KeyCode::Tab => {
-                                if shift {
-                                    if active > 0 {
-                                        let w = store.data_mut();
-                                        let win = w.windows.remove(active - 1);
-                                        w.windows.insert(0, win);
-                                    }
-                                } else {
-                                    let n = store.data().windows.len();
-                                    if n > 0 {
-                                        active = (active + 1) % (n + 1);
-                                        if active > 0 {
-                                            let w = store.data_mut();
-                                            let win = w.windows.remove(active - 1);
-                                            w.windows.push(win);
-                                            active = store.data().windows.len();
-                                        }
-                                    }
-                                }
-                                reseat_active(
-                                    &mut store,
-                                    &tree,
-                                    has_registry,
-                                    &mut active,
-                                    &mut desktop_surf,
-                                );
+                            // Escape: the host quits only when there are no
+                            // windows; otherwise it is forwarded to the
+                            // app below (the window manager closes the
+                            // frontmost). There is no host-level window
+                            // close.
+                            KeyCode::Esc if store.data().windows.is_empty() => {
+                                quit = true;
                             }
                             // Move the focus ring to the previous/next
-                            // focusable widget (wrapping). The exact count
-                            // is applied after the tree rebuild below.
+                            // focusable widget (wrapping). The ring is
+                            // unified (the app's), so it spans the app and
+                            // every open window; `active` follows the
+                            // focused target's owner.
                             KeyCode::Up | KeyCode::Char('k') => {
-                                let surf = active_surface(&mut store, &mut desktop_surf, active);
-                                surf.focus_idx = surf.focus_idx.wrapping_sub(1);
+                                app_surf.focus_idx = app_surf.focus_idx.wrapping_sub(1);
+                                derive_active(&store, &app_surf, &mut active);
                             }
                             KeyCode::Down | KeyCode::Left | KeyCode::Right | KeyCode::Char('j') => {
-                                let surf = active_surface(&mut store, &mut desktop_surf, active);
-                                surf.focus_idx = surf.focus_idx.wrapping_add(1);
+                                app_surf.focus_idx = app_surf.focus_idx.wrapping_add(1);
+                                derive_active(&store, &app_surf, &mut active);
                             }
                             // Enter/space activates the focused widget: a
                             // tile opens its entry (a synthesized
@@ -384,7 +380,24 @@ fn main() {
                                     quit = true;
                                 }
                             }
+                            // Tab, shift+tab, and the rest: forwarded to the
+                            // component below (window management is the
+                            // app's job).
                             _ => {}
+                        }
+                        // Forward the key to the component (`on-key`), unless
+                        // a text input is focused (its keys go to `on-text`,
+                        // per the WIT) or the host is quitting. It always
+                        // routes to the main component: when it is a window
+                        // manager (tab raises, shift+tab lowers, escape
+                        // closes the frontmost); on a standalone demo it is
+                        // the demo itself. A component that manages no
+                        // key-driven UI ignores it.
+                        let name = key_name(key.code, shift);
+                        if !name.is_empty() && !t_is_input && !quit {
+                            let (a, s) = active_app(&mut store, &app, 0);
+                            a.call_on_key(s, &name).expect("on-key() failed");
+                            pending = true;
                         }
                     }
                     _ => {}
@@ -414,12 +427,20 @@ fn main() {
             }
         }
 
-        // Apply the diffs to the retained trees; rebuild only when one
-        // reported something (an empty diff skips the rebuild).
+        // Refresh the retained trees when the components report a change
+        // (an empty diff skips the rebuild). A content-only diff is applied
+        // in place; a structural one re-queries `view` (the diff cannot
+        // carry id-less nodes, so the snapshot is the source of truth).
         if pending {
             pending = false;
             let mutations = app.call_changes(&mut store).expect("changes() failed");
-            if retained.apply(&mutations) {
+            if !mutations.is_empty() {
+                if retained.is_content_only(&mutations) {
+                    retained.apply(&mutations);
+                } else {
+                    let nodes = app.call_view(&mut store).expect("view() failed");
+                    retained = Retained::from_view(nodes);
+                }
                 tree = build_tree(retained.nodes());
             }
         }
@@ -430,25 +451,37 @@ fn main() {
                     .app
                     .call_changes(&mut win.store)
                     .expect("changes() failed");
-                if win.retained.apply(&mutations) {
+                if !mutations.is_empty() {
+                    if win.retained.is_content_only(&mutations) {
+                        win.retained.apply(&mutations);
+                    } else {
+                        let nodes = win.app.call_view(&mut win.store).expect("view() failed");
+                        win.retained = Retained::from_view(nodes);
+                    }
                     win.tree = build_tree(win.retained.nodes());
                 }
             }
         }
 
-        // Re-seat the active surface's ring (a rebuilt tree moves its
-        // widgets), re-sync the focused input, and fire the pending
-        // activation.
-        reseat_active(
-            &mut store,
-            &tree,
-            has_registry,
-            &mut active,
-            &mut desktop_surf,
-        );
+        // Re-seat the app's ring (a rebuilt tree moves its widgets, and a
+        // window that just opened has its content inlined), and re-derive
+        // `active` from the focused target's owner.
+        reseat_active(&mut store, &tree, has_registry, &mut active, &mut app_surf);
+        // A tile opened a window this pass: now that its content is in the
+        // ring, focus its first focusable (so it is the active surface).
+        if focus_newest_pending {
+            focus_newest_pending = false;
+            let focused = {
+                let wins = &store.data().windows;
+                focus_newest_window(&mut app_surf, wins)
+            };
+            if focused {
+                derive_active(&store, &app_surf, &mut active);
+            }
+        }
         {
             let (n, t_id, t_is_input, t_is_tile) = {
-                let surf = active_surface(&mut store, &mut desktop_surf, active);
+                let surf = active_surface(&mut store, &mut app_surf, active);
                 (
                     surf.targets.len(),
                     surf.targets.get(surf.focus_idx).map(|t| t.id).unwrap_or(0),
@@ -487,10 +520,11 @@ fn main() {
                         app.call_on_double_click(&mut store, t_id)
                             .expect("on-double-click() failed");
                         pending = true;
-                        // The tile's entry opened a window: it is the new
-                        // active surface.
+                        // The tile's entry opened a window: focus it (so it
+                        // is the active surface) on the next re-seat, once
+                        // its content is in the ring.
                         if store.data().windows.len() > before {
-                            active = store.data().windows.len();
+                            focus_newest_pending = true;
                         }
                     }
                 }
@@ -502,7 +536,7 @@ fn main() {
                 draw(
                     f,
                     &tree,
-                    desktop_surf.focus,
+                    app_surf.focus,
                     &store.data().windows,
                     active,
                     has_registry,

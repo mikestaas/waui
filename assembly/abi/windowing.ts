@@ -1,12 +1,13 @@
 // The world's windowing imports, in raw canonical-ABI form — the
-// `list-entries` and `open-entry` of the `app` world (see `root.ts` for the
-// clock imports, `now` and `schedule`).
+// `list-entries`, `open-entry`, `close-entry`, and `viewport` of the `app`
+// world (see `root.ts` for the clock imports, `now` and `schedule`).
 //
 // A world-level import lives in the pseudo-module `$root`, so each is exactly
-// one `@external`. Only components that run *other* components (the desktop)
-// import this file; a demo that opens no windows never calls either, and the
-// unused import is tree-shaken, as rustc drops the Rust side's unused
-// generated import.
+// one `@external`. Only components that run *other* components (a window
+// manager) import this file; a demo that opens no windows never calls any of
+// them, and
+// the unused imports are tree-shaken, as rustc drops the Rust side's unused
+// generated imports.
 //
 // `list-entries() -> list<entry>`: the guest passes a return pointer (an
 // 8-byte {ptr, len} descriptor in the guest's memory); the host writes the
@@ -19,6 +20,14 @@
 // then a return pointer (8 bytes in the guest's memory). The result is an
 // 8-byte variant written to it: byte 0 is the case (0 = Ok, 1 = Err), and
 // the u32 at byte 4 is the handle (Ok) or the error tag (Err).
+//
+// `close-entry(handle)`: one u32. The host drops the sandbox it opened for
+// `handle`; idempotent, so a double close is a no-op.
+//
+// `viewport() -> viewport-size`: the guest passes a return pointer (8 bytes
+// in the guest's memory); the host writes the size there as two u32s (w at
+// byte 0, h at byte 4). A host with no viewport writes (0, 0), which the
+// guest treats as unknown.
 
 @external('$root', 'list-entries')
 declare function listEntries(retPtr: i32): void;
@@ -35,4 +44,12 @@ declare function openEntry(
   retPtr: i32,
 ): void;
 
-export { listEntries, openEntry };
+
+@external('$root', 'close-entry')
+declare function closeEntry(handle: i32): void;
+
+
+@external('$root', 'viewport')
+declare function viewport(retPtr: i32): void;
+
+export { listEntries, openEntry, closeEntry, viewport };

@@ -29,8 +29,9 @@ use wasmtime::component::*;
 use wasmtime::{Engine, Store};
 
 use crate::{
-    active_app, active_surface, active_target, active_tree, draw, dump_frame, input_content,
-    now_ms, report_input, reseat, reseat_active, Host, Surface, Wake,
+    active_app, active_surface, active_target, active_tree, derive_active, draw, dump_frame,
+    focus_newest_window, input_content, now_ms, report_input, reseat, reseat_active, Host, Surface,
+    Wake,
 };
 
 // --------------------------------------------------------------------------
@@ -298,10 +299,14 @@ struct WebHost {
     wake: Arc<Mutex<Wake>>,
     has_registry: bool,
     terminal: Option<Terminal<XtermBackend>>,
-    /// The active surface: 0 = the desktop, 1.. = a window's z-order index.
+    /// The active surface: 0 = the app, 1.. = a window's z-order index,
+    /// derived from the focused target's owner (the ring is unified).
     active: usize,
-    desktop_surf: Surface,
-    /// Whether the desktop's component was driven since the last `changes`.
+    app_surf: Surface,
+    /// A tile just opened a window: focus its first focusable (so it is the
+    /// active surface) on the next re-seat, once its content is in the ring.
+    focus_newest_pending: bool,
+    /// Whether the app's component was driven since the last `changes`.
     pending: bool,
     click_pending: bool,
     double_click_pending: bool,
@@ -405,62 +410,39 @@ impl WebHost {
         if self.quit {
             return;
         }
-        let (t_id, t_is_input, t_is_tile) =
-            active_target(&mut self.store, &mut self.desktop_surf, self.active);
+        // The app's ring target (the ring is unified), from the last
+        // re-seat: it decides what the key does (a 'q' typed into the input
+        // types; only outside it quits).
+        let (t_id, t_is_input, t_is_tile, _t_owner) =
+            active_target(&mut self.store, &mut self.app_surf, self.active);
         match key {
-            "Escape" => {
-                if self.active > 0 {
-                    let w = self.store.data_mut();
-                    let win = w.windows.remove(self.active - 1);
-                    self.app
-                        .call_on_window_close(&mut self.store, win.handle)
-                        .expect("on-window-close() failed");
-                    self.pending = true;
-                    self.active = (self.active - 1).min(self.store.data().windows.len());
+            // Escape: the host quits only when there are no windows (a page
+            // cannot exit, so this clears the terminal and stops redrawing);
+            // otherwise it is forwarded to the app below (the window
+            // manager closes the frontmost). There is no host-level window
+            // close.
+            "Escape" if self.store.data().windows.is_empty() => {
+                self.quit = true;
+                if let Some(term) = &mut self.terminal {
+                    let _ = term.clear();
                 }
-                reseat_active(
-                    &mut self.store,
-                    &self.tree,
-                    self.has_registry,
-                    &mut self.active,
-                    &mut self.desktop_surf,
-                );
             }
-            "Tab" => {
-                if shift {
-                    if self.active > 0 {
-                        let w = self.store.data_mut();
-                        let win = w.windows.remove(self.active - 1);
-                        w.windows.insert(0, win);
-                    }
-                } else {
-                    let n = self.store.data().windows.len();
-                    if n > 0 {
-                        self.active = (self.active + 1) % (n + 1);
-                        if self.active > 0 {
-                            let w = self.store.data_mut();
-                            let win = w.windows.remove(self.active - 1);
-                            w.windows.push(win);
-                            self.active = self.store.data().windows.len();
-                        }
-                    }
-                }
-                reseat_active(
-                    &mut self.store,
-                    &self.tree,
-                    self.has_registry,
-                    &mut self.active,
-                    &mut self.desktop_surf,
-                );
-            }
+            // Move the focus ring to the previous/next focusable widget
+            // (wrapping). The ring is unified (the app's), so it spans the
+            // app and every open window; `active` follows the focused
+            // target's owner.
             "ArrowUp" | "k" => {
-                let surf = active_surface(&mut self.store, &mut self.desktop_surf, self.active);
-                surf.focus_idx = surf.focus_idx.wrapping_sub(1);
+                self.app_surf.focus_idx = self.app_surf.focus_idx.wrapping_sub(1);
+                derive_active(&self.store, &self.app_surf, &mut self.active);
             }
             "ArrowDown" | "ArrowLeft" | "ArrowRight" | "j" => {
-                let surf = active_surface(&mut self.store, &mut self.desktop_surf, self.active);
-                surf.focus_idx = surf.focus_idx.wrapping_add(1);
+                self.app_surf.focus_idx = self.app_surf.focus_idx.wrapping_add(1);
+                derive_active(&self.store, &self.app_surf, &mut self.active);
             }
+            // Enter/space activates the focused widget: a tile opens its
+            // entry (a synthesized double-activation, the host's input model
+            // has no double-click), a button is clicked; an input has no
+            // activation.
             "Enter" | " " => {
                 if t_is_tile {
                     self.double_click_pending = true;
@@ -468,6 +450,9 @@ impl WebHost {
                     self.click_pending = true;
                 }
             }
+            // The focused input's buffer: edited here, reported whole through
+            // `on-text`, and re-synced from the tree after the component
+            // answers.
             "Backspace" => {
                 if t_is_input {
                     self.input_buf.pop();
@@ -475,6 +460,7 @@ impl WebHost {
                     report_input(a, s, t_id, &self.input_buf, &mut self.pending);
                 }
             }
+            // A printable key: typed into the focused input, or 'q' quits.
             _ if key.len() == 1 => {
                 if t_is_input {
                     if let Some(c) = key.chars().next() {
@@ -491,7 +477,24 @@ impl WebHost {
                     }
                 }
             }
+            // Tab, shift+tab, and the rest: forwarded to the component below
+            // (window management is the app's job).
             _ => {}
+        }
+        // Forward the key to the component (`on-key`), unless a text input is
+        // focused (its keys go to `on-text`, per the WIT) or the host is
+        // quitting. It always routes to the main component: the window
+        // manager on a multi-window host, the demo itself standalone. A
+        // component that manages no key-driven UI ignores it.
+        if !self.quit && !t_is_input {
+            let name = if key == "Tab" && shift {
+                "Shift+Tab"
+            } else {
+                key
+            };
+            let (a, s) = active_app(&mut self.store, &self.app, 0);
+            a.call_on_key(s, name).expect("on-key() failed");
+            self.pending = true;
         }
         if !self.quit {
             self.run_pipeline();
@@ -501,15 +504,23 @@ impl WebHost {
     /// Apply the diffs, re-seat the active ring, re-sync the focused input,
     /// fire the pending activation, and redraw.
     fn run_pipeline(&mut self) {
-        // Apply the diffs to the retained trees; rebuild only when one
-        // reported something (an empty diff skips the rebuild).
+        // Refresh the retained trees when the components report a change
+        // (an empty diff skips the rebuild). A content-only diff is applied
+        // in place; a structural one re-queries `view` (the diff cannot
+        // carry id-less nodes, so the snapshot is the source of truth).
         if self.pending {
             self.pending = false;
             let mutations = self
                 .app
                 .call_changes(&mut self.store)
                 .expect("changes() failed");
-            if self.retained.apply(&mutations) {
+            if !mutations.is_empty() {
+                if self.retained.is_content_only(&mutations) {
+                    self.retained.apply(&mutations);
+                } else {
+                    let nodes = self.app.call_view(&mut self.store).expect("view() failed");
+                    self.retained = Retained::from_view(nodes);
+                }
                 self.tree = build_tree(self.retained.nodes());
             }
         }
@@ -520,25 +531,43 @@ impl WebHost {
                     .app
                     .call_changes(&mut win.store)
                     .expect("changes() failed");
-                if win.retained.apply(&mutations) {
+                if !mutations.is_empty() {
+                    if win.retained.is_content_only(&mutations) {
+                        win.retained.apply(&mutations);
+                    } else {
+                        let nodes = win.app.call_view(&mut win.store).expect("view() failed");
+                        win.retained = Retained::from_view(nodes);
+                    }
                     win.tree = build_tree(win.retained.nodes());
                 }
             }
         }
 
-        // Re-seat the active surface's ring (a rebuilt tree moves its
-        // widgets), re-sync the focused input, and fire the pending
-        // activation.
+        // Re-seat the app's ring (a rebuilt tree moves its widgets, and a
+        // window that just opened has its content inlined), and re-derive
+        // `active` from the focused target's owner.
         reseat_active(
             &mut self.store,
             &self.tree,
             self.has_registry,
             &mut self.active,
-            &mut self.desktop_surf,
+            &mut self.app_surf,
         );
+        // A tile opened a window this pass: now that its content is in the
+        // ring, focus its first focusable (so it is the active surface).
+        if self.focus_newest_pending {
+            self.focus_newest_pending = false;
+            let focused = {
+                let wins = &self.store.data().windows;
+                focus_newest_window(&mut self.app_surf, wins)
+            };
+            if focused {
+                derive_active(&self.store, &self.app_surf, &mut self.active);
+            }
+        }
         {
             let (n, t_id, t_is_input, t_is_tile) = {
-                let surf = active_surface(&mut self.store, &mut self.desktop_surf, self.active);
+                let surf = active_surface(&mut self.store, &mut self.app_surf, self.active);
                 (
                     surf.targets.len(),
                     surf.targets.get(surf.focus_idx).map(|t| t.id).unwrap_or(0),
@@ -580,10 +609,11 @@ impl WebHost {
                             .call_on_double_click(&mut self.store, t_id)
                             .expect("on-double-click() failed");
                         self.pending = true;
-                        // The tile's entry opened a window: it is the new
-                        // active surface.
+                        // The tile's entry opened a window: focus it (so it
+                        // is the active surface) on the next re-seat, once
+                        // its content is in the ring.
                         if self.store.data().windows.len() > before {
-                            self.active = self.store.data().windows.len();
+                            self.focus_newest_pending = true;
                         }
                     }
                 }
@@ -599,7 +629,7 @@ impl WebHost {
             return;
         };
         let tree = &self.tree;
-        let focus = self.desktop_surf.focus;
+        let focus = self.app_surf.focus;
         let windows = &self.store.data().windows;
         let active = self.active;
         let has_registry = self.has_registry;
@@ -649,18 +679,20 @@ pub fn run(bytes: &[u8]) -> Result<(), JsValue> {
         has_registry,
         terminal: Some(terminal),
         active: 0,
-        desktop_surf: Surface::default(),
+        app_surf: Surface::default(),
+        focus_newest_pending: false,
         pending: false,
         click_pending: false,
         double_click_pending: false,
         input_buf: String::new(),
         quit: false,
     };
-    // The first frame: the desktop's ring on its first focusable.
+    // The first frame: the app's ring on its first focusable.
     reseat(
         &web_host.tree,
         web_host.has_registry,
-        &mut web_host.desktop_surf,
+        &web_host.store.data().windows,
+        &mut web_host.app_surf,
     );
     web_host.redraw();
     HOST.with(|h| *h.borrow_mut() = Some(web_host));
@@ -781,7 +813,7 @@ pub fn dump(
     }
     Ok(dump_frame(
         &tree,
-        &mut store.data_mut().windows,
+        &store.data().windows,
         width,
         has_registry,
     ))

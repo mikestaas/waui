@@ -38,11 +38,12 @@ if (code !== 0) {
     'input-width',
     'image',
     'idless-arena-label',
+    'container-z',
   ];
   console.error(`tree.test: scenario ${code} (${names[code - 1]}) failed`);
   process.exit(1);
 }
 
 console.log(
-  'tree.test: all scenarios passed (bootstrap, unchanged, value, add, remove, reparent, idless, spliced, input, align, width, image, idless-arena)',
+  'tree.test: all scenarios passed (bootstrap, unchanged, value, add, remove, reparent, idless, spliced, input, align, width, image, idless-arena, z)',
 );

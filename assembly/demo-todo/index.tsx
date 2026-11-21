@@ -304,3 +304,14 @@ export function ontick(): void {}
 // opens no windows, so both are ignored.
 export function ondoubleclick(_id: i32): void {}
 export function onwindowclose(_window: i32): void {}
+
+// → `on-pointer-down`/`on-pointer-move`/`on-pointer-up`/`on-key` after the
+// export rename. This demo manages no pointer-driven or key-driven UI, so all
+// four are ignored. `on-key` takes a string in the module's memory (the host
+// allocates it), so the buffer is freed (../abi/arena).
+export function onpointerdown(_id: i32, _x: i32, _y: i32): void {}
+export function onpointermove(_x: i32, _y: i32): void {}
+export function onpointerup(_x: i32, _y: i32): void {}
+export function onkey(_ptr: i32, _len: i32): void {
+  cabi_realloc(_ptr, _len, 1, 0);
+}

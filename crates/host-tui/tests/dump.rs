@@ -8,9 +8,10 @@
 //! hand-rolled ABI), and its hand-rolled WAT one. The assertions are shared.
 //!
 //! The desktop scenario (`--entry` registry, `--double-click` tiles,
-//! `--close` windows) exercises the host's multi-document interface: the
-//! framed tiles, the window's title bar and border, the menu bar's window
-//! count, and the cascade.
+//! `--click` a window's close button) runs the desktop app, which draws the
+//! whole desktop — the menu bar, the icon grid, and each window's chrome and
+//! placement — as its own tree. The host seats each opened entry's content in
+//! the window's content slot and routes the events to the app.
 //!
 //! The goldens in `tests/goldens/` are the visual regression layer: the
 //! whole frame, byte-exact, shared by the three producers (they must render
@@ -125,6 +126,10 @@ fn find_containing<'a>(lines: &'a [Line], want: &str) -> &'a Line {
 
 // The semantic colors, as the host's SGR codes: the focused override (cyan
 // bold), the neutral readout (white bold), and the rest of the palette.
+/// The window's close marker, as the app draws it (its own title bar, not
+/// the host's).
+const CLOSE_MARK: char = '\u{2715}';
+
 const SGR_CYAN_BOLD: &str = "\x1b[36m\x1b[1m";
 const SGR_WHITE_BOLD: &str = "\x1b[97m\x1b[1m";
 const SGR_WHITE: &str = "\x1b[97m";
@@ -536,10 +541,10 @@ fn entries(producer: &str) -> Vec<String> {
     out
 }
 
-/// The desktop's frames: the framed tiles, the window's title bar and
-/// border, the menu bar's window count, and the whole frame against the
-/// golden. The window's content is the entry's demo (the counter's readout
-/// and buttons; the stopwatch's, paused, a fixed 0 ms).
+/// The app's frames: the framed tiles, the window's title bar and border, the
+/// menu bar's window count, and the whole frame against the golden. The
+/// window's content is the entry's demo (the counter's readout and buttons;
+/// the stopwatch's, paused, a fixed 0 ms).
 fn assert_desktop_frame(path: &Path, producer: &str) {
     // One window: the counter, opened by a double-click on its tile.
     let mut args = entries(producer);
@@ -563,16 +568,32 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
         "the menu bar should count one window: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
+    // The title bar shows the entry's name and the close marker. The tui
+    // renders a button as a bordered box, so the marker sits on its own row
+    // (the title bar's height is the component's); the two are checked
+    // separately, not on one line.
     assert!(
-        ls.iter()
-            .any(|l| l.plain.contains("counter") && l.plain.contains('×')),
+        ls.iter().any(|l| l.plain.contains("counter")),
         "the window's title bar should show the entry's name: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     assert!(
-        ls.iter()
-            .any(|l| l.plain.contains("stopwatch") && l.plain.contains("todo")),
-        "the tiles' labels should be visible: {:?}",
+        ls.iter().any(|l| l.plain.contains(CLOSE_MARK)),
+        "the window's title bar should show the close marker: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    // The window covers the grid behind it (its interior is cleared, so a
+    // terminal cell keeps no earlier drawing): the counter tile is hidden
+    // whole, the stopwatch tile shows only the sliver past the window's
+    // edge, and the todo tile (right of the window) is visible.
+    assert!(
+        ls.iter().any(|l| l.plain.contains("todo")),
+        "the uncovered tile's label should be visible: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        !ls.iter().any(|l| l.plain.contains("stopwatch")),
+        "the covered tile's label should be hidden behind the window: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     assert_frame_golden(&frame, "desktop-1.txt");
@@ -591,23 +612,33 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
         "the menu bar should count two windows: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
+    // The cascade (28 px, a few cells on this host) puts the second
+    // window's top edge on the first's title bar, so only the top window's
+    // title bar (and close button) is visible; the lower window shows its
+    // border and a sliver of its title.
     assert!(
-        ls.iter().filter(|l| l.plain.contains('×')).count() >= 2,
-        "both windows' title bars should be visible: {:?}",
+        ls.iter().any(|l| l.plain.contains("stopwatch")),
+        "the top window's title bar should be visible: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        ls.iter().filter(|l| l.plain.contains(CLOSE_MARK)).count() == 1,
+        "only the top window's close button should be visible (the cascade covers the lower one): {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     assert_frame_golden(&frame, "desktop-2.txt");
     save_producer_golden(&frame, producer, "desktop-2.txt");
 
-    // Close the first: the count drops back to one, the second window stays
-    // at its cascade position.
+    // Close the first window: click its close button (the app's own, id =
+    // handle + the close offset). The count drops back to one, and the
+    // surviving window stays at its cascade position.
     let mut args = entries(producer);
     args.push("--double-click".to_string());
     args.push("100".to_string());
     args.push("--double-click".to_string());
     args.push("101".to_string());
-    args.push("--close".to_string());
-    args.push("1".to_string());
+    args.push("--click".to_string());
+    args.push("410000".to_string());
     let frame = run_dump(path, &args, None, None);
     let ls = lines(&frame);
     assert!(
@@ -616,7 +647,7 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     assert!(
-        ls.iter().filter(|l| l.plain.contains('×')).count() == 1,
+        ls.iter().filter(|l| l.plain.contains(CLOSE_MARK)).count() == 1,
         "only the surviving window's title bar should be visible: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );

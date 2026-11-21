@@ -1,42 +1,78 @@
-//! The desktop: the icon grid, the menu bar, and the set of open windows.
+//! The desktop: a just-an-app window manager.
 //!
-//! The multi-component host's component, on the `app` world. It owns the
-//! *logical* state — the grid (built from the host's `list-entries`
-//! registry), the menu bar's window count, and which windows are open — and
-//! exports it via `view`/`changes`, as any component does. It *requests* a
-//! window through the `open-entry` import when a tile is double-clicked, and
-//! drops a window from its open set when the host reports a close. The
-//! windows themselves (their chrome, geometry, and the embedded demo running
-//! in each) are host-drawn, not part of this tree.
+//! The whole interface is this component's tree: the menu bar, the icon grid,
+//! and the set of open windows (their chrome — title bar, close, grip, panel,
+//! border, shadow — and their geometry). It draws the windows itself, with the
+//! contract's geometry tokens, and drives them through the pointer and key
+//! channels: a title-bar drag moves a window, a grip drag resizes it, a press
+//! raises it, the close button (and Escape) closes it, and a double-clicked
+//! tile opens its entry.
 //!
-//! The tile is a container (an icon, a label, and a caption) with an id: the
-//! host makes id'd nodes double-clickable on the desktop, and the component
-//! opens the entry a tile represents in response. The tile's presentation
-//! comes from the entry's `data` blob (a JSON object, host-defined): the
-//! label, the caption, the icon, and the window's default size. A field the
-//! blob lacks is rendered without, and a blob that will not parse renders
-//! the name only.
+//! The *content* of an opened window is not this component's: it is a separate
+//! component the host runs in its own sandbox. On a double-click this
+//! component calls `open-entry` (the host instantiates the entry's component
+//! and returns a handle) and draws a window whose content slot is that handle:
+//! the host seats the opened component's tree in the slot. Closing a window
+//! calls `close-entry`, so the host drops the sandbox. This component only ever
+//! sees its own tree; the opened component's tree is the host's to render.
+//!
+//! The tile's presentation comes from the entry's `data` blob (a JSON object,
+//! host-defined): the label, the caption, the icon, and the window's default
+//! size. A field the blob lacks is rendered without, and a blob that will not
+//! parse renders the name only.
 
 wit_bindgen::generate!({
     world: "app",
     path: "../../wit",
 });
 
-use component_ui::{Color, Size, Style, Tree};
+use component_ui::{
+    Align, Background, Border, Color, Cursor, Overflow, Radius, Shadow, Size, Stretch, Style, Tree,
+};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use waui::ui::widget as wit;
 
 // Project the ergonomic tree onto this crate's generated types.
 component_ui::to_node!(wit);
 
+// --------------------------------------------------------------------------
+// Layout constants, in the host's units (pixels on the web host).
+
+/// The menu bar's height.
+const MENUBAR_H: u32 = 34;
+/// The title bar's height.
+const TITLEBAR_H: u32 = 36;
+/// A window's minimum size.
+const MIN_W: u32 = 220;
+const MIN_H: u32 = 260;
+/// A window's default size, for a dimension the entry's blob does not set.
+const DEFAULT_W: u32 = 300;
+const DEFAULT_H: u32 = 380;
+/// The new-window cascade step.
+const CASCADE_STEP: u32 = 28;
+/// The first z to assign; a raised window takes the next.
+const Z_BASE: u32 = 10;
 /// The first tile's id; tile `i` is `TILE_BASE + i`.
 const TILE_BASE: u32 = 100;
 /// Tiles per row of the grid.
 const COLS: usize = 3;
 
-/// An entry's parsed `data`: the tile's presentation and the window's
-/// default size. The fields this host's registry supplies; a field the blob
-/// lacks keeps its fallback.
+// The window node ids, derived from the host handle. The content slot's id is
+// the handle itself (the host seats the opened component's tree there); the
+// chrome's ids are offset by a wide stride so they never collide across
+// handles (the host assigns handles above the fixed ids' range).
+const OFF_WINDOW: u32 = 100_000;
+const OFF_TITLEBAR: u32 = 200_000;
+const OFF_SPACER: u32 = 300_000;
+const OFF_CLOSE: u32 = 400_000;
+const OFF_GRIP: u32 = 500_000;
+
+// --------------------------------------------------------------------------
+// State.
+
+/// An entry's parsed `data`: the tile's presentation and the window's default
+/// size. A field the blob lacks keeps its fallback.
 #[derive(Clone)]
 struct EntryMeta {
     /// The entry's name: the open's identifier and the label's fallback.
@@ -45,20 +81,60 @@ struct EntryMeta {
     label: String,
     /// The tile's caption.
     lang: Option<String>,
-    /// The tile's icon (the host resolves it to pixels, as an image's src).
+    /// The tile's and title bar's icon (the host resolves it to pixels).
     icon: Option<String>,
     /// The window's default size; 0 leaves it to the host's default.
     width: u32,
     height: u32,
 }
 
-/// The entries the host can run, fetched once from the `list-entries`
-/// registry: each entry's name plus its parsed `data`.
+/// The registry, fetched once from `list-entries`.
 static ENTRIES: Mutex<Option<Vec<EntryMeta>>> = Mutex::new(None);
-/// The open windows' handles, as the host assigns them.
-static OPEN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 
-/// The current tree: the menu bar (with the window count) and the grid.
+/// An open window: the host handle (also the content slot's id), the entry's
+/// presentation, and the window's geometry and stacking order.
+#[derive(Clone)]
+struct Window {
+    handle: u32,
+    label: String,
+    icon: Option<String>,
+    x: u32,
+    y: u32,
+    w: u32,
+    h: u32,
+    z: u32,
+}
+
+/// The open windows, in the order they were opened.
+static WINDOWS: Mutex<Vec<Window>> = Mutex::new(Vec::new());
+/// The next z to assign.
+static NEXT_Z: AtomicU32 = AtomicU32::new(Z_BASE);
+/// The new-window placement counter (wraps after 9).
+static CASCADE: AtomicU32 = AtomicU32::new(0);
+/// The selected tile's index (its ring); `None` if none.
+static SELECTED: Mutex<Option<usize>> = Mutex::new(None);
+
+/// The window being dragged or resized, and the grab offset.
+#[derive(Clone, Copy)]
+enum Drag {
+    /// A title-bar drag: move the window, keeping the grab offset.
+    Move { handle: u32, dx: i32, dy: i32 },
+    /// A grip resize: grow the window from its origin.
+    Resize {
+        handle: u32,
+        start_x: i32,
+        start_y: i32,
+        start_w: u32,
+        start_h: u32,
+    },
+}
+/// The in-progress drag or resize; `None` when the pointer is idle.
+static DRAG: Mutex<Option<Drag>> = Mutex::new(None);
+
+// --------------------------------------------------------------------------
+// The registry and its `data` blobs.
+
+/// The current tree: the menu bar, the grid, and the open windows.
 fn current_tree() -> Tree {
     {
         let mut entries = ENTRIES.lock().unwrap();
@@ -67,8 +143,8 @@ fn current_tree() -> Tree {
         }
     }
     let entries = ENTRIES.lock().unwrap().clone().unwrap_or_default();
-    let n_open = OPEN.lock().unwrap().len();
-    tree(&entries, n_open)
+    let windows = WINDOWS.lock().unwrap().clone();
+    tree(&entries, &windows)
 }
 
 /// The registry, fetched once: each entry's name plus its parsed `data`.
@@ -79,11 +155,11 @@ fn fetch_entries() -> Vec<EntryMeta> {
         .collect()
 }
 
-/// Parse an entry's `data` blob into its metadata. The blob is a JSON
-/// object, host-defined; the fields this host supplies are `label` (the
-/// tile's display label), `lang` (its caption), `icon` (its icon), and
-/// `width`/`height` (the window's default size). A field the blob lacks
-/// keeps its fallback; a blob that will not parse yields all fallbacks.
+/// Parse an entry's `data` blob into its metadata. The blob is a JSON object,
+/// host-defined; the fields this host supplies are `label` (the display
+/// label), `lang` (the caption), `icon` (the icon), and `width`/`height` (the
+/// window's default size). A field the blob lacks keeps its fallback; a blob
+/// that will not parse yields all fallbacks.
 fn meta(name: &str, data: &str) -> EntryMeta {
     let mut m = EntryMeta {
         name: name.to_string(),
@@ -112,11 +188,11 @@ enum Value {
     Num(f64),
 }
 
-/// A minimal JSON parser for the flat object the `data` blob is: an object
-/// of string/number values. A real component would use a full parser; this
-/// one reads the shape this host's registry emits, and anything else
-/// (nesting, arrays, a malformed blob) yields an empty object, so the
-/// caller's fallbacks apply.
+/// A minimal JSON parser for the flat object the `data` blob is: an object of
+/// string/number values. A real component would use a full parser; this one
+/// reads the shape this host's registry emits, and anything else (nesting,
+/// arrays, a malformed blob) yields an empty object, so the caller's fallbacks
+/// apply.
 fn parse_object(data: &str) -> Vec<(String, Value)> {
     let mut p = Parser::new(data);
     let mut out = Vec::new();
@@ -255,20 +331,47 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// The desktop's whole UI, nested.
-fn tree(entries: &[EntryMeta], n_open: usize) -> Tree {
+// --------------------------------------------------------------------------
+// The tree.
+
+/// The whole UI, nested: the menu bar, the grid, and the open windows.
+fn tree(entries: &[EntryMeta], windows: &[Window]) -> Tree {
+    let mut children = vec![menubar(windows.len()), grid_area(entries)];
+    for w in windows {
+        children.push(window(w));
+    }
+    Tree::column(children)
+        .id(1)
+        .align(Align::Start)
+        .stretch(Stretch::Both)
+        .background(Background::None)
+}
+
+/// The menu bar: the name, a spacer, and the window count.
+fn menubar(n_open: usize) -> Tree {
     let (count, plural) = (n_open.to_string(), if n_open == 1 { "" } else { "s" });
-    let menu = Tree::row(vec![
+    Tree::row(vec![
         Tree::text("waui", Style::new(Color::Accent, Size::Large)),
+        Tree::row(Vec::new()).id(3).stretch(Stretch::Main),
         Tree::text(
             format!("{count} window{plural}"),
             Style::new(Color::Neutral, Size::Small),
         )
-        .id(2),
+        .id(4),
     ])
-    .id(1);
+    .id(2)
+    .align(Align::Center)
+    .stretch(Stretch::Main)
+    .height(MENUBAR_H)
+    .z(1000)
+    .background(Background::Bar)
+    .border(Border::Line)
+    .gap(12)
+    .padding(16)
+}
 
-    // The grid: a column of rows of `COLS` tiles each, in registry order.
+/// The grid's area: it fills the space below the menu bar and centers the grid.
+fn grid_area(entries: &[EntryMeta]) -> Tree {
     let rows: Vec<Tree> = entries
         .chunks(COLS)
         .enumerate()
@@ -278,17 +381,29 @@ fn tree(entries: &[EntryMeta], n_open: usize) -> Tree {
                 .enumerate()
                 .map(|(c, e)| tile(e, r * COLS + c))
                 .collect();
-            Tree::row(tiles).id(10 + r as u32)
+            Tree::row(tiles)
+                .id(8 + r as u32)
+                .align(Align::Center)
+                .gap(44)
         })
         .collect();
-    let grid = Tree::column(rows).id(3);
-
-    Tree::column(vec![menu, grid])
+    // A `cross` stretch, not `main`: with `main` the column fills the area's
+    // height, and the contract has no main-axis placement token to center its
+    // width, so the grid packs top-left, under the first window.
+    let grid = Tree::column(rows)
+        .id(7)
+        .align(Align::Center)
+        .stretch(Stretch::Cross)
+        .gap(28);
+    Tree::row(vec![grid])
+        .id(6)
+        .align(Align::Center)
+        .stretch(Stretch::Both)
+        .overflow(Overflow::Clip)
 }
 
 /// One tile: an icon, a label, and a caption, in a double-clickable column.
-/// The icon is 112px, the web desktop's tile size (see `site/desktop.css`).
-/// A field the entry's blob lacks is rendered without.
+/// The selected tile takes the ring.
 fn tile(e: &EntryMeta, i: usize) -> Tree {
     let mut children = Vec::new();
     if let Some(icon) = &e.icon {
@@ -304,8 +419,197 @@ fn tile(e: &EntryMeta, i: usize) -> Tree {
             Style::new(Color::Neutral, Size::Small),
         ));
     }
-    Tree::column(children).id(TILE_BASE + i as u32)
+    let selected = *SELECTED.lock().unwrap() == Some(i);
+    let mut t = Tree::column(children)
+        .id(TILE_BASE + i as u32)
+        .align(Align::Center)
+        .gap(7)
+        .padding(10)
+        .radius(Radius::Large)
+        .cursor(Cursor::Pointer);
+    if selected {
+        t = t.border(Border::Ring);
+    }
+    t
 }
+
+/// One window: the title bar, the content slot, and the grip.
+fn window(w: &Window) -> Tree {
+    let base = w.handle;
+    let mut bar = Vec::new();
+    if let Some(icon) = &w.icon {
+        bar.push(Tree::image(icon.clone()).width(18).height(18));
+    }
+    bar.push(Tree::text(
+        w.label.clone(),
+        Style::new(Color::Neutral, Size::Medium),
+    ));
+    bar.push(
+        Tree::row(Vec::new())
+            .id(base + OFF_SPACER)
+            .stretch(Stretch::Main),
+    );
+    bar.push(
+        Tree::button("\u{2715}", Style::new(Color::Neutral, Size::Medium)).id(base + OFF_CLOSE),
+    );
+    let titlebar = Tree::row(bar)
+        .id(base + OFF_TITLEBAR)
+        .align(Align::Center)
+        .stretch(Stretch::Main)
+        .height(TITLEBAR_H)
+        .background(Background::Bar)
+        .border(Border::Line)
+        .cursor(Cursor::Grab);
+
+    // The content slot: its id is the handle (the host seats the opened
+    // component's tree there). It is empty in this tree.
+    let content = Tree::row(Vec::new())
+        .id(base)
+        .align(Align::Center)
+        .stretch(Stretch::Both);
+
+    // The grip, at the window's bottom-right corner.
+    let grip = Tree::row(Vec::new())
+        .id(base + OFF_GRIP)
+        .at(w.w.saturating_sub(17), w.h.saturating_sub(17))
+        .width(14)
+        .height(14)
+        .cursor(Cursor::Resize);
+
+    Tree::column(vec![titlebar, content, grip])
+        .id(base + OFF_WINDOW)
+        .at(w.x, w.y)
+        .width(w.w)
+        .height(w.h)
+        .z(w.z)
+        .align(Align::Start)
+        .background(Background::Panel)
+        .border(Border::Line)
+        .radius(Radius::Large)
+        .shadow(Shadow::Raised)
+        .overflow(Overflow::Clip)
+}
+
+// --------------------------------------------------------------------------
+// Window management.
+
+/// The window (handle) and the kind of node with `id`, if it is a window node.
+fn window_for_id(windows: &[Window], id: u32) -> Option<(u32, NodeKind)> {
+    for w in windows {
+        let h = w.handle;
+        if id == h {
+            return Some((h, NodeKind::Content));
+        }
+        if id == h + OFF_WINDOW {
+            return Some((h, NodeKind::Window));
+        }
+        if id == h + OFF_TITLEBAR || id == h + OFF_SPACER {
+            return Some((h, NodeKind::Titlebar));
+        }
+        if id == h + OFF_CLOSE {
+            return Some((h, NodeKind::Close));
+        }
+        if id == h + OFF_GRIP {
+            return Some((h, NodeKind::Grip));
+        }
+    }
+    None
+}
+
+/// Which part of a window a node is.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum NodeKind {
+    Window,
+    Titlebar,
+    Close,
+    Content,
+    Grip,
+}
+
+/// Open the entry with `index`: request a window from the host (a cascade
+/// placement, the entry's default size), and record it. A window the host
+/// cannot open is dropped.
+fn open_entry_at(index: usize) {
+    let entry = ENTRIES
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|e| e.get(index))
+        .cloned();
+    let Some(entry) = entry else { return };
+    let w = if entry.width > 0 {
+        entry.width
+    } else {
+        DEFAULT_W
+    };
+    let h = if entry.height > 0 {
+        entry.height
+    } else {
+        DEFAULT_H
+    };
+    let (x, y) = cascade_placement(w, h);
+    match open_entry(&entry.name, x, y, w, h) {
+        Ok(handle) => {
+            let z = NEXT_Z.fetch_add(1, Ordering::SeqCst);
+            WINDOWS.lock().unwrap().push(Window {
+                handle,
+                label: entry.label.clone(),
+                icon: entry.icon.clone(),
+                x,
+                y,
+                w,
+                h,
+                z,
+            });
+        }
+        Err(_) => {}
+    }
+}
+
+/// A new window's placement: cascade down-right, wrapping after 9, clamped to
+/// the viewport. Skipped when the viewport is unknown (`(0, 0)`).
+fn cascade_placement(w: u32, h: u32) -> (u32, u32) {
+    let n = CASCADE.fetch_add(1, Ordering::SeqCst) % 9;
+    let vp = viewport();
+    let (vw, vh) = (vp.w, vp.h);
+    if vw == 0 && vh == 0 {
+        return (24 + n * CASCADE_STEP, 48 + n * CASCADE_STEP);
+    }
+    let left = clamp_u(
+        24 + n * CASCADE_STEP,
+        8,
+        vw.saturating_sub(w).saturating_sub(8),
+    );
+    let top = clamp_u(
+        48 + n * CASCADE_STEP,
+        MENUBAR_H + 4,
+        vh.saturating_sub(h).saturating_sub(8),
+    );
+    (left, top)
+}
+
+/// Close the window with `handle`: drop it and tell the host to free the
+/// sandbox.
+fn close_window(handle: u32) {
+    WINDOWS.lock().unwrap().retain(|w| w.handle != handle);
+    close_entry(handle);
+}
+
+/// Clamp `v` to `[lo, hi]`, tolerating a degenerate range (a window larger than
+/// the viewport) by returning the lower bound.
+fn clamp_i(v: i32, lo: i32, hi: i32) -> i32 {
+    if lo > hi {
+        return lo;
+    }
+    v.clamp(lo, hi)
+}
+
+fn clamp_u(v: u32, lo: u32, hi: u32) -> u32 {
+    clamp_i(v as i32, lo as i32, hi as i32) as u32
+}
+
+// --------------------------------------------------------------------------
+// The component.
 
 struct Desktop;
 
@@ -328,37 +632,163 @@ impl Guest for Desktop {
         })
     }
 
-    /// A tile was double-clicked: open the entry it represents. The
-    /// placement is left to the host (0,0 = its default cascade); the size
-    /// is the entry's default. A window the host cannot open is dropped.
-    fn on_double_click(id: u32) {
+    // A single click: a close button closes its window; a tile selects it
+    // (its ring).
+    fn on_click(id: u32) {
+        let handle = {
+            let windows = WINDOWS.lock().unwrap();
+            window_for_id(&windows, id)
+                .filter(|(_, kind)| *kind == NodeKind::Close)
+                .map(|(h, _)| h)
+        };
+        if let Some(handle) = handle {
+            close_window(handle);
+            return;
+        }
         let i = (id - TILE_BASE) as usize;
-        let entry = ENTRIES
-            .lock()
-            .unwrap()
-            .as_ref()
-            .and_then(|e| e.get(i))
-            .cloned();
-        let Some(entry) = entry else { return }; // not a tile (or out of range)
-        match open_entry(&entry.name, 0, 0, entry.width, entry.height) {
-            Ok(handle) => OPEN.lock().unwrap().push(handle),
-            Err(_) => {}
+        let entries = ENTRIES.lock().unwrap();
+        let is_tile = entries.as_ref().is_some_and(|e| i < e.len());
+        drop(entries);
+        if is_tile {
+            *SELECTED.lock().unwrap() = Some(i);
         }
     }
 
-    /// A window was closed by the user: drop it from the open set.
-    fn on_window_close(window: u32) {
-        OPEN.lock().unwrap().retain(|&h| h != window);
+    // A double-clicked tile opens its entry.
+    fn on_double_click(id: u32) {
+        let i = (id - TILE_BASE) as usize;
+        let entries = ENTRIES.lock().unwrap();
+        let is_tile = entries.as_ref().is_some_and(|e| i < e.len());
+        drop(entries);
+        if is_tile {
+            *SELECTED.lock().unwrap() = Some(i);
+            open_entry_at(i);
+        }
     }
 
-    // The plain-app events (see the `app` world): the desktop has no
-    // editable input and no clock, and a single click on a tile does nothing
-    // (the double-click opens), so all three are ignored.
-    fn on_click(_id: u32) {}
+    // The pointer was pressed over a window node: raise it, and start a drag
+    // (title bar) or resize (grip).
+    fn on_pointer_down(id: u32, x: u32, y: u32) {
+        let mut windows = WINDOWS.lock().unwrap();
+        let Some((handle, kind)) = window_for_id(&windows, id) else {
+            return;
+        };
+        let Some(w) = windows.iter_mut().find(|w| w.handle == handle) else {
+            return;
+        };
+        w.z = NEXT_Z.fetch_add(1, Ordering::SeqCst);
+        *DRAG.lock().unwrap() = match kind {
+            NodeKind::Titlebar => Some(Drag::Move {
+                handle,
+                dx: x as i32 - w.x as i32,
+                dy: y as i32 - w.y as i32,
+            }),
+            NodeKind::Grip => Some(Drag::Resize {
+                handle,
+                start_x: x as i32,
+                start_y: y as i32,
+                start_w: w.w,
+                start_h: w.h,
+            }),
+            // A press on the window, its content, or the close button only
+            // raises (the close is a click, not a drag).
+            _ => None,
+        };
+    }
 
+    // The pointer moved while a button is held: continue the drag or resize.
+    fn on_pointer_move(x: u32, y: u32) {
+        let drag = DRAG.lock().unwrap().clone();
+        let Some(drag) = drag else { return };
+        let handle = match &drag {
+            Drag::Move { handle, .. } => *handle,
+            Drag::Resize { handle, .. } => *handle,
+        };
+        let (vw, vh) = {
+            let vp = viewport();
+            (vp.w, vp.h)
+        };
+        let mut windows = WINDOWS.lock().unwrap();
+        let Some(w) = windows.iter_mut().find(|w| w.handle == handle) else {
+            return;
+        };
+        match drag {
+            Drag::Move { dx, dy, .. } => {
+                let raw_x = x as i32 - dx;
+                let raw_y = y as i32 - dy;
+                if vw == 0 && vh == 0 {
+                    // Unknown viewport: no clamping.
+                    w.x = raw_x.max(0) as u32;
+                    w.y = raw_y.max(0) as u32;
+                } else {
+                    w.x = clamp_i(raw_x, 8 - w.w as i32 + 64, vw as i32 - 64).max(0) as u32;
+                    w.y = clamp_i(raw_y, MENUBAR_H as i32, vh as i32 - TITLEBAR_H as i32).max(0)
+                        as u32;
+                }
+            }
+            Drag::Resize {
+                start_x,
+                start_y,
+                start_w,
+                start_h,
+                ..
+            } => {
+                let nw = (start_w as i32 + (x as i32 - start_x)).max(MIN_W as i32) as u32;
+                let nh = (start_h as i32 + (y as i32 - start_y)).max(MIN_H as i32) as u32;
+                if vw == 0 || vh == 0 {
+                    w.w = nw;
+                    w.h = nh;
+                } else {
+                    w.w = nw.min(vw.saturating_sub(w.x).saturating_sub(8).max(MIN_W));
+                    w.h = nh.min(vh.saturating_sub(w.y).saturating_sub(8).max(MIN_H));
+                }
+            }
+        }
+    }
+
+    // The pointer was released: end the drag or resize.
+    fn on_pointer_up(_x: u32, _y: u32) {
+        *DRAG.lock().unwrap() = None;
+    }
+
+    // A key: Escape closes the frontmost window (the highest z), tab raises
+    // it, shift+tab lowers it below the rest (a keyboard host's windowing).
+    fn on_key(key: String) {
+        let handle = {
+            let mut windows = WINDOWS.lock().unwrap();
+            let min_z = windows.iter().map(|w| w.z).min().unwrap_or(Z_BASE);
+            let Some(top) = windows.iter_mut().max_by_key(|w| w.z) else {
+                return;
+            };
+            let h = top.handle;
+            match key.as_str() {
+                "Escape" => Some(h),
+                "Tab" => {
+                    top.z = NEXT_Z.fetch_add(1, Ordering::SeqCst);
+                    None
+                }
+                "Shift+Tab" => {
+                    top.z = min_z.saturating_sub(1);
+                    None
+                }
+                _ => None,
+            }
+        };
+        if let Some(handle) = handle {
+            close_window(handle);
+        }
+    }
+
+    // The desktop has no editable input and no clock of its own.
     fn on_text(_id: u32, _text: String) {}
-
     fn on_tick() {}
+
+    // A host-side close (a host-drawn chrome): drop the window. The just-an-app
+    // desktop closes via its own button, so this is a no-op for it, but a
+    // host-chrome component would use it.
+    fn on_window_close(window: u32) {
+        WINDOWS.lock().unwrap().retain(|w| w.handle != window);
+    }
 }
 
 export!(Desktop);

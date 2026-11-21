@@ -3,7 +3,8 @@
 // (`make ui-test`); `run()` drives `viewOf`/`diffOf` through the structural
 // cases (bootstrap, value change, add, remove, re-parent, id-less, a
 // spliced list child, an input, a container align, an input width, an image,
-// an id-less label on the arena path), decodes the diff from the arena, and
+// an id-less label on the arena path, a container z), decodes the diff from
+// the arena, and
 // returns 0 on success (the first failing scenario's index otherwise).
 //
 // It is import-free after `../patch-env-abort.mjs`, so Node instantiates it
@@ -112,6 +113,20 @@ function boxAlign(align: i32): Widget {
   );
 }
 
+// A box (1) with one child (2), its z the only thing that varies — the
+// stacking order is part of the container's record, so a raise is a
+// `changed` for the box. The builder sets the z; the JSX cannot (the `Props`
+// bag has no container geometry).
+function boxZ(z: i32): Widget {
+  const box = (
+    <column id={1}>
+      <text id={2} label="x" color={COLOR_NEUTRAL} size={SIZE_LARGE} />
+    </column>
+  );
+  box.z(z);
+  return box;
+}
+
 // A column (1) with an image (3): the fifth node kind, a `src` (its label)
 // plus a width and a height, and no style.
 function withImage(src: string, width: i32, height: i32): Widget {
@@ -146,13 +161,14 @@ class Mut {
   size: i32 = -1;
   direction: i32 = -1;
   align: i32 = -1;
+  z: i32 = -1; // containers (`changed` only)
   width: i32 = -1; // inputs and images (`changed` only)
   height: i32 = -1; // images only (`changed` only)
   label: string = ''; // the content, or an image's `src`
   index: i32 = -1; // sibling index (`changed` only)
 }
 
-/// Decode one 36-byte node record at `n` (the payload of a `changed`
+/// Decode one 60-byte node record at `n` (the payload of a `changed`
 /// mutation, or a `view` node). Fills `m`'s node fields.
 function decodeNodeFields(n: i32, m: Mut): void {
   m.kind = load<i8>(n + 0);
@@ -161,6 +177,7 @@ function decodeNodeFields(n: i32, m: Mut): void {
   if (m.kind == TAG_CONTAINER) {
     m.direction = load<i8>(n + 20);
     m.align = load<i8>(n + 21);
+    m.z = load<i32>(n + 40);
   } else if (m.kind == TAG_IMAGE) {
     // An image carries no style: its [28..36) is the width and the height.
     const str = load<i32>(n + 20);
@@ -178,7 +195,7 @@ function decodeNodeFields(n: i32, m: Mut): void {
   }
 }
 
-/// Decode one 44-byte mutation record at `rec`.
+/// Decode one 68-byte mutation record at `rec`.
 function decodeMut(rec: i32): Mut {
   const m = new Mut();
   m.tag = load<i32>(rec + 0);
@@ -188,16 +205,16 @@ function decodeMut(rec: i32): Mut {
   }
   // A `changed` mutation carries the node one word in (after the tag word).
   decodeNodeFields(rec + 4, m);
-  // The index sits after the 36-byte node.
-  m.index = load<i32>(rec + 40);
+  // The index sits after the 60-byte node.
+  m.index = load<i32>(rec + 64);
   return m;
 }
 
-/// Decode one `view` node (a 36-byte record) at `ptr + i * 36`.
+/// Decode one `view` node (a 60-byte record) at `ptr + i * 60`.
 function decodeViewNode(ptr: i32, i: i32): Mut {
   const m = new Mut();
   m.tag = MUT_CHANGED; // a view node is not a mutation; the tag is unused
-  decodeNodeFields(ptr + i * 36, m);
+  decodeNodeFields(ptr + i * 60, m);
   return m;
 }
 
@@ -207,7 +224,7 @@ function decodeList(desc: i32): Mut[] {
   const ptr = load<i32>(desc + 0);
   const len = load<i32>(desc + 4);
   for (let i = 0; i < len; i++) {
-    out.push(decodeMut(ptr + i * 44));
+    out.push(decodeMut(ptr + i * 68));
   }
   return out;
 }
@@ -421,6 +438,19 @@ export function run(): i32 {
     const v2 = decodeViewList(viewOf(withIdlessArena('beta')));
     arenaReset();
     if (v2.length != 3 || v2[2].label != 'beta' || v2[1].label != 'fixed') return 13;
+  }
+
+  // 14. Container z: the stacking order is part of the container's record;
+  // a raise is a `changed` for the box, and only the box.
+  viewOf(boxZ(10)); // the reference: the box (z 10), the text
+  arenaReset();
+  {
+    const r = scenario(boxZ(20), (m) => {
+      if (m.length != 1) return 14;
+      const c = changed(m, 1);
+      return c != null && c.kind == TAG_CONTAINER && c.z == 20 ? 0 : 14;
+    });
+    if (r != 0) return 14;
   }
 
   return 0;

@@ -268,6 +268,16 @@ impl Guest for TodoList {
     fn on_double_click(_id: u32) {}
 
     fn on_window_close(_window: u32) {}
+
+    // The pointer and key channels (see the `app` world): this demo has no
+    // pointer-driven UI and no keys, so all four are ignored.
+    fn on_pointer_down(_id: u32, _x: u32, _y: u32) {}
+
+    fn on_pointer_move(_x: u32, _y: u32) {}
+
+    fn on_pointer_up(_x: u32, _y: u32) {}
+
+    fn on_key(_key: String) {}
 }
 
 export!(TodoList);

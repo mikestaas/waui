@@ -28,16 +28,40 @@ export const sizes = {
 // The token tables, in the WIT case order of waui:ui/widget (the same
 // tables as web/glue.js). Unknown values degrade to the middle entry, as
 // the host does.
-const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning'];
+const COLORS = ['neutral', 'accent', 'positive', 'negative', 'warning', 'dim'];
 const SIZES = ['small', 'medium', 'large'];
 const ALIGNS = ['start', 'center', 'end'];
+const STRETCHES = ['none', 'main', 'cross', 'both'];
+const OVERFLOWS = ['clip', 'scroll'];
+const BACKGROUNDS = ['none', 'panel', 'bar'];
+const BORDERS = ['none', 'line', 'ring'];
+const RADII = ['none', 'small', 'large'];
+const SHADOWS = ['none', 'raised'];
+const CURSORS = ['default', 'pointer', 'grab', 'grabbing', 'resize'];
 
 // The rendered widget tree as the selftest's node strings (pre-order). The
 // serializer runs in the page — the token tables are passed in, because an
 // evaluate callback is serialized without its module scope.
-export async function domTree(page) {
+//
+// `panelHandles` names the content slots of open panels (the windowing host
+// seats a panel's tree in the slot whose id is the handle): such a slot
+// serializes childless, because the panel's nodes belong to the panel, not
+// to this tree.
+export async function domTree(page, { panelHandles = [] } = {}) {
   return page.evaluate(
-    ({ colors, sizes, aligns }) => {
+    ({
+      colors,
+      sizes,
+      aligns,
+      stretches,
+      overflows,
+      backgrounds,
+      borders,
+      radii,
+      shadows,
+      cursors,
+      panelHandles,
+    }) => {
       // The token class for one table: the first class present, or the
       // fallback (the host degrades unknown values the same way).
       const token = (classes, prefix, table, fallback) => {
@@ -79,11 +103,40 @@ export async function domTree(page) {
           const width = kind === 'input' ? `,width:${Number(el.dataset.width ?? 0)}` : '';
           s = `${kind}{id:${id},parent:${parentId},${field}:"${value}",${style}${width}}`;
         } else {
+          // dir and align are always present; the other fields only when
+          // non-default (web/selftest.mjs's node(), the same split).
           const dir = c.contains('waui-column') ? 'column' : 'row';
           const align = token(c, 'waui-align-', aligns, 'center');
-          s = `container{id:${id},parent:${parentId},dir:${dir},align:${align}}`;
+          const d = el.dataset;
+          const parts = [`id:${id}`, `parent:${parentId}`, `dir:${dir}`, `align:${align}`];
+          if (c.contains('waui-positioned')) parts.push('pos:1');
+          if (Number(d.x ?? 0) > 0) parts.push(`x:${d.x}`);
+          if (Number(d.y ?? 0) > 0) parts.push(`y:${d.y}`);
+          if (Number(d.w ?? 0) > 0) parts.push(`w:${d.w}`);
+          if (Number(d.h ?? 0) > 0) parts.push(`h:${d.h}`);
+          if (Number(d.z ?? 0) > 0) parts.push(`z:${d.z}`);
+          if (Number(d.gap ?? 0) > 0) parts.push(`gap:${d.gap}`);
+          if (Number(d.padding ?? 0) > 0) parts.push(`pad:${d.padding}`);
+          const stretch = token(c, 'waui-stretch-', stretches, 'none');
+          if (stretch !== 'none') parts.push(`stretch:${stretch}`);
+          const overflow = token(c, 'waui-overflow-', overflows, 'clip');
+          if (overflow !== 'clip') parts.push(`overflow:${overflow}`);
+          const bg = token(c, 'waui-bg-', backgrounds, 'none');
+          if (bg !== 'none') parts.push(`bg:${bg}`);
+          const border = token(c, 'waui-border-', borders, 'none');
+          if (border !== 'none') parts.push(`border:${border}`);
+          const radius = token(c, 'waui-radius-', radii, 'none');
+          if (radius !== 'none') parts.push(`radius:${radius}`);
+          const shadow = token(c, 'waui-shadow-', shadows, 'none');
+          if (shadow !== 'none') parts.push(`shadow:${shadow}`);
+          const cursor = token(c, 'waui-cursor-', cursors, 'default');
+          if (cursor !== 'default') parts.push(`cursor:${cursor}`);
+          s = `container{${parts.join(',')}}`;
         }
-        return [s, ...[...el.children].flatMap((child) => node(child, id))];
+        // A content slot with a seated panel serializes childless (the
+        // panel's nodes are the panel's tree, not this one's).
+        const kids = panelHandles.includes(id) ? [] : [...el.children];
+        return [s, ...kids.flatMap((child) => node(child, id))];
       };
       const out = [];
       for (const root of document.getElementById('app').children) {
@@ -91,7 +144,19 @@ export async function domTree(page) {
       }
       return out;
     },
-    { colors: COLORS, sizes: SIZES, aligns: ALIGNS },
+    {
+      colors: COLORS,
+      sizes: SIZES,
+      aligns: ALIGNS,
+      stretches: STRETCHES,
+      overflows: OVERFLOWS,
+      backgrounds: BACKGROUNDS,
+      borders: BORDERS,
+      radii: RADII,
+      shadows: SHADOWS,
+      cursors: CURSORS,
+      panelHandles,
+    },
   );
 }
 
@@ -145,11 +210,16 @@ export const producers = ['Rust', 'AssemblyScript', 'WAT'];
 export const desktopPages = ['/desktop.html', '/desktop-as.html', '/desktop-wat.html'];
 
 // Wait for the desktop page's grid to populate (the boot is async: the
-// demos are pre-compiled, then the component runs).
+// demos are pre-compiled, then the component runs). The tiles are the
+// component's cursor-pointer nodes (the demos' own nodes use no pointer).
 export async function loadDesktop(page, path) {
   await page.goto(path);
-  await page.locator('#grid .tile').first().waitFor();
+  await page.locator('#app .waui-cursor-pointer').first().waitFor();
 }
+
+// The window count (the component's menu-bar node, id 4, under the menu
+// bar, id 2: a panel's tree can carry the same id, so scope to the bar).
+const windowCount = (page) => page.locator('[data-id="2"] [data-id="4"]');
 
 // The desktop states, as a setup function per state: drive a page into the
 // state from a fresh load (a page's component keeps its state across
@@ -162,15 +232,15 @@ export const desktopStates = {
   // The first tile (Counter, Rust).
   '1 window': async (page, path) => {
     await loadDesktop(page, path);
-    await page.locator('#grid .tile').nth(0).dblclick();
-    await expect(page.locator('#window-count')).toHaveText('1 window');
+    await page.locator('#app .waui-cursor-pointer').nth(0).dblclick();
+    await expect(windowCount(page)).toHaveText('1 window');
   },
   // The first two tiles (both counters, at rest).
   '2 windows': async (page, path) => {
     await loadDesktop(page, path);
-    await page.locator('#grid .tile').nth(0).dblclick();
-    await page.locator('#grid .tile').nth(1).dblclick();
-    await expect(page.locator('#window-count')).toHaveText('2 windows');
+    await page.locator('#app .waui-cursor-pointer').nth(0).dblclick();
+    await page.locator('#app .waui-cursor-pointer').nth(1).dblclick();
+    await expect(windowCount(page)).toHaveText('2 windows');
   },
 };
 
@@ -228,21 +298,13 @@ export const demoStates = {
 };
 
 // Settle the frame before a screenshot: move the mouse off the last-clicked
-// widget (its :hover style) and drop focus (the browser's focus ring).
+// widget (its :hover style) and drop focus (the browser's focus ring). The
+// desktop's icons are <img> fetches (the site's registry); wait for them,
+// or the screenshot catches a tile mid-icon.
 export async function settle(page) {
   await page.mouse.move(0, 0);
   await page.evaluate(() => document.activeElement?.blur());
-  // The desktop's icons are <img> fetches, and its tiles animate their
-  // :hover transform and icon shadow (web/desktop.html); wait for both to
-  // settle, or the screenshot catches them mid-flight. The demo pages have
-  // neither, so this is a no-op there.
-  await page.waitForFunction(
-    () =>
-      [...document.images].every((i) => i.complete) &&
-      [...document.querySelectorAll('.tile')].every(
-        (t) => getComputedStyle(t).transform === 'none',
-      ),
-  );
+  await page.waitForFunction(() => [...document.images].every((i) => i.complete));
 }
 
 // The per-channel tolerance of the pixel comparison. One: chromium's

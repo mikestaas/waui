@@ -1,11 +1,17 @@
 // The component desktop (web/desktop.html): the `demo-desktop` component on
 // the windowing side of the `app` world, with the windowing host. Unlike the
-// static launcher (desktop.spec.mjs, `/`), each window embeds a demo
-// *component* rendered in place (`.window-content`), not in an iframe.
+// static launcher (desktop.spec.mjs, `/`), each window's content is a demo
+// *component* running in its own sandbox, its tree seated in the window's
+// content slot (the container whose id is the host handle).
 //
-// The grid is the component's tree: nine tiles (`.tile`), each an icon, a
-// label (`.tile-name`), and a caption (`.tile-lang`). The window count is the
-// component's menu-bar node, restyled into `#window-count`.
+// The grid is the component's tree: nine tiles (the cursor-pointer nodes,
+// ids 100 and up), each an icon, a label, and a caption. The window count is
+// the component's menu-bar node (id 4, under the menu bar, id 2).
+//
+// The window's chrome is the component's own tree, addressed by the handle
+// scheme (crates/demo-desktop): window h+100000, title bar h+200000, close
+// h+400000, grip h+500000, content slot h. Handles start at 10000 and grow
+// monotonically per page, so a fresh page's first window is 10000.
 //
 // The suite runs against the component in all three source languages (the
 // Rust page, the AssemblyScript one, the WAT one): the host and the demo
@@ -26,56 +32,58 @@ function defineDesktopTests(url) {
     await page.goto(url);
     // The boot is async (the demos are pre-compiled, then the component
     // runs); wait for the grid to populate.
-    await expect(page.locator('#grid .tile')).toHaveCount(9);
+    await expect(page.locator('#app .waui-cursor-pointer')).toHaveCount(9);
   });
 
-  // The z-order counter (the host's raise()).
-  const z = (win) => win.evaluate((el) => Number(el.dataset.z));
+  // The window nodes of handle `h` (the host assigns 10000 to the first
+  // window a fresh page opens, then 10001, ...).
+  const win = (page, h) => page.locator(`[data-id="${h + 100000}"]`);
+  const z = (el) => el.evaluate((el) => Number(el.dataset.z));
 
   test('renders the nine demo tiles', async ({ page }) => {
-    const tiles = page.locator('#grid .tile');
+    const tiles = page.locator('#app .waui-cursor-pointer');
     await expect(tiles).toHaveCount(9);
-    await expect(tiles.nth(0).locator('.tile-name')).toHaveText('Counter');
-    await expect(tiles.nth(0).locator('.tile-lang')).toHaveText('Rust');
-    await expect(tiles.nth(1).locator('.tile-lang')).toHaveText('AssemblyScript');
-    await expect(tiles.nth(2).locator('.tile-lang')).toHaveText('WAT');
-    await expect(tiles.nth(3).locator('.tile-name')).toHaveText('Stopwatch');
-    await expect(tiles.nth(5).locator('.tile-lang')).toHaveText('WAT');
-    await expect(tiles.nth(6).locator('.tile-name')).toHaveText('Todo');
-    await expect(tiles.nth(8).locator('.tile-lang')).toHaveText('WAT');
-    await expect(page.locator('#window-count')).toHaveText('0 windows');
+    // The tile's label and caption are its text children (the icon, when
+    // the registry has one, is an img, not a div).
+    await expect(tiles.nth(0).locator('div').nth(0)).toHaveText('Counter');
+    await expect(tiles.nth(0).locator('div').nth(1)).toHaveText('Rust');
+    await expect(tiles.nth(1).locator('div').nth(1)).toHaveText('AssemblyScript');
+    await expect(tiles.nth(2).locator('div').nth(1)).toHaveText('WAT');
+    await expect(tiles.nth(3).locator('div').nth(0)).toHaveText('Stopwatch');
+    await expect(tiles.nth(5).locator('div').nth(1)).toHaveText('WAT');
+    await expect(tiles.nth(6).locator('div').nth(0)).toHaveText('Todo');
+    await expect(tiles.nth(8).locator('div').nth(1)).toHaveText('WAT');
+    await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('0 windows');
   });
 
   test('double-click opens a window with the embedded demo', async ({ page }) => {
-    await page.locator('#grid .tile').nth(0).dblclick(); // Counter, Rust
-    const win = page.locator('.window');
-    await expect(win).toHaveCount(1);
-    await expect(win.locator('.titlebar-title')).toHaveText('Counter');
-    // The demo runs in place: the counter's display reads "0".
-    await expect(win.locator('.window-content')).toHaveText(/\b0\b/);
-    await expect(page.locator('#window-count')).toHaveText('1 window');
+    await page.locator('#app .waui-cursor-pointer').nth(0).dblclick(); // Counter, Rust
+    const w = win(page, 10000);
+    await expect(w).toHaveCount(1);
+    // The title bar's label (the entry's label, an id-less text node).
+    await expect(w.locator('[data-id="210000"] div').first()).toHaveText('Counter');
+    // The demo runs in place: the counter's readout (id 3) reads "0".
+    await expect(w.locator('[data-id="10000"] [data-id="3"]')).toHaveText('0');
+    await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('1 window');
   });
 
   test('the embedded demo is interactive', async ({ page }) => {
-    await page.locator('#grid .tile').nth(0).dblclick(); // Counter, Rust
-    const win = page.locator('.window');
-    const display = win
-      .locator('.window-content')
-      .locator('div')
-      .filter({ hasText: /^\d+$/ })
-      .first();
+    await page.locator('#app .waui-cursor-pointer').nth(0).dblclick(); // Counter, Rust
+    const w = win(page, 10000);
+    const display = w.locator('[data-id="10000"] [data-id="3"]');
     await expect(display).toHaveText('0');
-    // The "+" button is the first button in the content.
-    await win.locator('.window-content button').first().click();
+    // The "+" button (id 2) in the content slot (id 10000).
+    const plus = w.locator('[data-id="10000"] button[data-id="2"]');
+    await plus.click();
     await expect(display).toHaveText('1');
-    await win.locator('.window-content button').first().click();
+    await plus.click();
     await expect(display).toHaveText('2');
   });
 
   test('typing in the embedded todo keeps the input focused', async ({ page }) => {
-    await page.locator('#grid .tile').nth(6).dblclick(); // Todo, Rust
-    const win = page.locator('.window');
-    const input = win.locator('.window-content input');
+    await page.locator('#app .waui-cursor-pointer').nth(6).dblclick(); // Todo, Rust
+    const w = win(page, 10000);
+    const input = w.locator('[data-id="10000"] input[data-id="8"]');
     await input.click();
     await input.type('buy coffee');
     // A content-only change restyles in place: the element is not replaced, so
@@ -85,56 +93,58 @@ function defineDesktopTests(url) {
   });
 
   test('windows raise on click', async ({ page }) => {
-    const tiles = page.locator('#grid .tile');
+    const tiles = page.locator('#app .waui-cursor-pointer');
     await tiles.nth(0).dblclick(); // counter
     await tiles.nth(3).dblclick(); // stopwatch
-    await expect(page.locator('#window-count')).toHaveText('2 windows');
-    const counterWin = page.locator('.window').first();
-    const stopWin = page.locator('.window').last();
-    expect(await z(stopWin)).toBeGreaterThan(await z(counterWin));
+    await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('2 windows');
+    const counter = win(page, 10000);
+    const stop = win(page, 10001);
+    expect(await z(stop)).toBeGreaterThan(await z(counter));
     // A click on the counter's title bar raises it above the stopwatch.
-    await counterWin.locator('.titlebar').click();
-    expect(await z(counterWin)).toBeGreaterThan(await z(stopWin));
+    await counter.locator('[data-id="210000"]').click();
+    expect(await z(counter)).toBeGreaterThan(await z(stop));
   });
 
   test('close button and Escape close windows', async ({ page }) => {
-    const tiles = page.locator('#grid .tile');
+    const tiles = page.locator('#app .waui-cursor-pointer');
     await tiles.nth(0).dblclick();
     await tiles.nth(3).dblclick();
-    await expect(page.locator('#window-count')).toHaveText('2 windows');
+    await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('2 windows');
 
     // The frontmost (last opened) closes by its button.
-    await page.locator('.window').last().locator('.close').click();
-    await expect(page.locator('#window-count')).toHaveText('1 window');
+    await win(page, 10001).locator('[data-id="410001"]').click();
+    await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('1 window');
 
     // Escape closes the frontmost. Focus the wallpaper first (a key pressed
     // while a window's content has focus would go to the demo).
     await page.locator('body').click({ position: { x: 1200, y: 650 } });
     await page.keyboard.press('Escape');
-    await expect(page.locator('#window-count')).toHaveText('0 windows');
+    await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('0 windows');
   });
 
   test('drag moves the window', async ({ page }) => {
-    await page.locator('#grid .tile').nth(0).dblclick();
-    const win = page.locator('.window');
-    const before = await win.boundingBox();
-    const bar = await win.locator('.titlebar').boundingBox();
+    await page.locator('#app .waui-cursor-pointer').nth(0).dblclick();
+    const w = win(page, 10000);
+    const before = await w.boundingBox();
+    const bar = await w.locator('[data-id="210000"]').boundingBox();
     await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2);
     await page.mouse.down();
-    await page.mouse.move(bar.x + bar.width / 2 + 80, bar.y + bar.height / 2 + 50, { steps: 8 });
+    await page.mouse.move(bar.x + bar.width / 2 + 80, bar.y + bar.height / 2 + 50, {
+      steps: 8,
+    });
     await page.mouse.up();
-    const after = await win.boundingBox();
+    const after = await w.boundingBox();
     expect(Math.abs(after.x - before.x - 80)).toBeLessThan(1);
     expect(Math.abs(after.y - before.y - 50)).toBeLessThan(1);
   });
 
   test('the grip resizes, clamped to a minimum', async ({ page }) => {
-    await page.locator('#grid .tile').nth(0).dblclick(); // 300x380
-    const win = page.locator('.window');
-    const size = () => win.evaluate((el) => [el.offsetWidth, el.offsetHeight]);
+    await page.locator('#app .waui-cursor-pointer').nth(0).dblclick(); // 300x380
+    const w = win(page, 10000);
+    const size = () => w.evaluate((el) => [el.offsetWidth, el.offsetHeight]);
 
     // Grow.
-    let grip = await win.locator('.grip').boundingBox();
+    let grip = await w.locator('[data-id="510000"]').boundingBox();
     await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
     await page.mouse.down();
     await page.mouse.move(grip.x + grip.width / 2 + 100, grip.y + grip.height / 2 + 80, {
@@ -144,7 +154,7 @@ function defineDesktopTests(url) {
     expect(await size()).toEqual([400, 460]);
 
     // Shrink past the minimum: clamps to 220x260.
-    grip = await win.locator('.grip').boundingBox();
+    grip = await w.locator('[data-id="510000"]').boundingBox();
     await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
     await page.mouse.down();
     await page.mouse.move(grip.x + grip.width / 2 - 1000, grip.y + grip.height / 2 - 1000, {

@@ -2,12 +2,14 @@
 <!--
   waui web host — template.
 
-  build.mjs fills two placeholders: the wasm boot script (inlined base64
-  by default, or a fetch with --url) and the app's JS (glue.js + app.js,
-  concatenated). The default output is a single self-contained page that
-  works straight from disk: `open demo-counter.html`. No server, no npm,
-  no dependencies. With --url, the page fetches the module from the given
-  URL as a blob instead (make site), for sites that serve the .wasm file.
+  build.mjs fills three placeholders: the wasm boot script (inlined base64
+  by default, or a fetch with --url), the entry registry (the windowing
+  side of the `app` world; empty for a plain demo), and the app's JS
+  (glue.js + app.js, concatenated). The default output is a single
+  self-contained page that works straight from disk: `open
+  demo-counter.html`. No server, no npm, no dependencies. With --url, the
+  page fetches the module from the given URL as a blob instead (make
+  site), for sites that serve the .wasm file.
 -->
 <html>
   <head>
@@ -28,10 +30,42 @@
       }
       #app {
         padding: 2rem;
+        position: relative;
+      }
+      /* The windowing side of the `app` world (a registry the host can
+         open): the app fills the viewport, so a root that stretches both
+         axes fills it, and the page's padding is the host's standalone
+         presentation, not part of the viewport. app.js sets the class. */
+      #app.waui-registry {
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100vw;
+        height: 100vh;
+        overflow: hidden;
+      }
+      /* The app's root, as a flex item of the registry-mode #app (a column):
+         the contract's `stretch` token is relative to the root's own
+         direction, and flexbox sizes an item on its parent's axes, so the
+         mapping depends on both. `main` is the root's axis, `cross` the
+         other; a matching child's main is #app's main (flex-grow), a
+         mismatched child's main is #app's cross (align-self). */
+      #app.waui-registry
+        > :is(.waui-column.waui-stretch-main, .waui-row.waui-stretch-cross, .waui-stretch-both) {
+        flex-grow: 1;
+      }
+      #app.waui-registry
+        > :is(.waui-row.waui-stretch-main, .waui-column.waui-stretch-cross, .waui-stretch-both) {
+        align-self: stretch;
       }
       .waui {
         display: flex;
         gap: 8px;
+        /* A positioned child (a window) places relative to its nearest
+           positioned ancestor, so every container is one: a window's (x, y)
+           is relative to its parent, the grip's to its window. */
+        position: relative;
       }
       .waui-column {
         flex-direction: column;
@@ -53,6 +87,76 @@
       }
       .waui-align-end {
         align-items: end;
+      }
+      /* The contract's `stretch` token on a container's children: `main` is
+         the container's `direction` axis, `cross` the other. Flexbox sizes
+         an item on its parent's axes, so the mapping depends on both
+         directions: a child whose direction matches its parent's main is the
+         parent's main (flex-grow), a mismatched child's main is the parent's
+         cross (align-self). `both` is both, either way. A host that cannot
+         express a token renders without it: `none` is the default. */
+      .waui-row
+        > :is(.waui-row.waui-stretch-main, .waui-column.waui-stretch-cross, .waui-stretch-both),
+      .waui-column
+        > :is(.waui-column.waui-stretch-main, .waui-row.waui-stretch-cross, .waui-stretch-both) {
+        flex-grow: 1;
+      }
+      .waui-row
+        > :is(.waui-column.waui-stretch-main, .waui-row.waui-stretch-cross, .waui-stretch-both),
+      .waui-column
+        > :is(.waui-row.waui-stretch-main, .waui-column.waui-stretch-cross, .waui-stretch-both) {
+        align-self: stretch;
+      }
+      /* A positioned container (the contract's `positioned` flag): out of
+         flow, at (x, y) relative to its parent, stacked by `z`. */
+      .waui-positioned {
+        position: absolute;
+      }
+      /* The contract's chrome tokens, mapped onto this page's palette (the
+         iced host's, 1:1). The default of each token is the no-op: a
+         container with none of them is a plain row/column. */
+      .waui-overflow-clip {
+        overflow: hidden;
+      }
+      .waui-overflow-scroll {
+        overflow: auto;
+      }
+      .waui-bg-panel {
+        background: #24283b;
+      }
+      .waui-bg-bar {
+        background: #1e2130;
+      }
+      .waui-border-line {
+        /* The border is inside the container's size (the iced host's), so
+           an explicit w/h keeps its edge where the component drew it. */
+        box-sizing: border-box;
+        border: 1px solid #414868;
+      }
+      .waui-border-ring {
+        /* A selection ring: an outline, so it never shifts the layout. */
+        outline: 2px solid #7aa2f7;
+      }
+      .waui-radius-small {
+        border-radius: 4px;
+      }
+      .waui-radius-large {
+        border-radius: 8px;
+      }
+      .waui-shadow-raised {
+        box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+      }
+      .waui-cursor-pointer {
+        cursor: pointer;
+      }
+      .waui-cursor-grab {
+        cursor: grab;
+      }
+      .waui-cursor-grabbing {
+        cursor: grabbing;
+      }
+      .waui-cursor-resize {
+        cursor: resize;
       }
       .waui-text {
         min-height: 1.5em;
@@ -109,6 +213,9 @@
       .waui-warning {
         color: #e0af68;
       }
+      .waui-dim {
+        color: #565f89;
+      }
       .waui-small {
         font-size: 0.85em;
       }
@@ -117,6 +224,18 @@
       }
       .waui-large {
         font-size: 1.8em;
+      }
+      /* A panel whose content slot the component no longer draws: centered,
+         chrome-less, until the host drops it (a close-entry). */
+      .waui-fallback {
+        position: fixed;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        pointer-events: none;
+      }
+      .waui-fallback > * {
+        pointer-events: auto;
       }
       #badge {
         position: fixed;

@@ -11,7 +11,7 @@
 //! applied per widget in `map_tree`, not part of the `Theme`.
 
 use iced::theme::{Palette, Style};
-use iced::widget::{button, container, text_input};
+use iced::widget::{button, text_input};
 use iced::{border, Background, Border, Color, Shadow, Theme};
 
 /// The palette, matching `web/index.html`.
@@ -79,78 +79,6 @@ pub fn input_style(value: Color) -> impl Fn(&Theme, text_input::Status) -> text_
         placeholder: value,
         value,
         selection,
-    }
-}
-
-/// The window's chrome (`.window` in `site/desktop.css`): the button's
-/// fill and border, a 10px radius.
-pub fn panel_style(_theme: &Theme) -> container::Style {
-    container::Style {
-        text_color: None,
-        background: Some(Background::Color(Color::from_rgb8(0x24, 0x28, 0x3b))),
-        border: Border {
-            color: Color::from_rgb8(0x41, 0x48, 0x68),
-            width: 1.0,
-            radius: border::radius(10.0),
-        },
-        shadow: Shadow::default(),
-        snap: false,
-    }
-}
-
-/// The desktop's tile chrome: the panel's family, an 8px radius. The web
-/// tile is unframed (it lifts on hover); a frame marks the double-clickable
-/// region, which this host cannot hover-animate.
-pub fn tile_style(_theme: &Theme) -> container::Style {
-    container::Style {
-        text_color: None,
-        background: Some(Background::Color(Color::from_rgb8(0x24, 0x28, 0x3b))),
-        border: Border {
-            color: Color::from_rgb8(0x41, 0x48, 0x68),
-            width: 1.0,
-            radius: border::radius(8.0),
-        },
-        shadow: Shadow::default(),
-        snap: false,
-    }
-}
-
-/// The window's title bar (`.titlebar` in `site/desktop.css`): the page's
-/// darker fill; the panel's own border separates it from the content.
-pub fn titlebar_style(_theme: &Theme) -> container::Style {
-    container::Style {
-        text_color: None,
-        background: Some(Background::Color(Color::from_rgb8(0x1e, 0x21, 0x30))),
-        border: Border {
-            color: Color::from_rgb8(0x41, 0x48, 0x68),
-            width: 1.0,
-            radius: border::radius(0.0),
-        },
-        shadow: Shadow::default(),
-        snap: false,
-    }
-}
-
-/// The title bar's close button (`.close` in `site/desktop.css`): dim at
-/// rest; on hover, the page's translucent negative fill and its color.
-pub fn close_style(_theme: &Theme, status: button::Status) -> button::Style {
-    let (background, color) = match status {
-        button::Status::Hovered => (
-            Some(Background::Color(Color::from_rgba8(0xf7, 0x76, 0x8e, 0.18))),
-            Color::from_rgb8(0xf7, 0x76, 0x8e),
-        ),
-        _ => (None, Color::from_rgb8(0x56, 0x5f, 0x89)),
-    };
-    button::Style {
-        background,
-        text_color: color,
-        border: Border {
-            color: Color::from_rgb8(0x41, 0x48, 0x68),
-            width: 0.0,
-            radius: border::radius(6.0),
-        },
-        shadow: Shadow::default(),
-        snap: false,
     }
 }
 

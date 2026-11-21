@@ -3,7 +3,8 @@
 //! - `bindgen!` for the `waui:ui/app` world
 //! - [`build_tree`]: the rebuild of the component's flat node list into a
 //!   widget tree
-//! - [`Retained`]: the retained node list the diff protocol applies against
+//! - [`Retained`]: the retained node list the host refreshes (content-only
+//!   diffs applied in place, structural ones re-queried from `view`)
 //!
 //! The flat-list invariants these depend on (depth-first pre-order, parents
 //! precede children) are documented by the WIT itself, so their reference
@@ -25,7 +26,10 @@ wasmtime::component::bindgen!({
 
 // `Node` and `Mutation` resolve to the aliases the macro emits at this
 // crate's root.
-use waui::ui::widget::{Align, Direction, Style};
+use waui::ui::widget::{
+    Align, Background, Border, Container, Cursor, Direction, Overflow, Radius, Shadow, Stretch,
+    Style,
+};
 
 // --------------------------------------------------------------------------
 // The browser host's engine config, shared with the precompile tool.
@@ -91,6 +95,77 @@ mod tls {
     }
 }
 
+/// A container's chrome and geometry, as the component sent it (see the
+/// `container` record in `wit/widget.wit`). A host that cannot express a
+/// token renders without it.
+#[derive(Debug, Clone, Copy)]
+pub struct ContainerStyle {
+    /// `true` places the container at `(x, y)` relative to its parent.
+    pub positioned: bool,
+    pub x: u32,
+    pub y: u32,
+    /// The explicit size; `0` sizes to content.
+    pub w: u32,
+    pub h: u32,
+    /// The stacking order; `0` = none.
+    pub z: u32,
+    /// The space between children; `0` = the host's default.
+    pub gap: u32,
+    /// The space around the children; `0` = the host's default.
+    pub padding: u32,
+    pub stretch: Stretch,
+    pub overflow: Overflow,
+    pub background: Background,
+    pub border: Border,
+    pub radius: Radius,
+    pub shadow: Shadow,
+    pub cursor: Cursor,
+}
+
+impl ContainerStyle {
+    /// The token defaults a component's tree carries when it sets none of
+    /// them (the `component-ui` builder's defaults).
+    pub const fn default() -> Self {
+        Self {
+            positioned: false,
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            z: 0,
+            gap: 0,
+            padding: 0,
+            stretch: Stretch::None,
+            overflow: Overflow::Clip,
+            background: Background::None,
+            border: Border::None,
+            radius: Radius::None,
+            shadow: Shadow::None,
+            cursor: Cursor::Default,
+        }
+    }
+
+    fn from_node(c: &Container) -> Self {
+        Self {
+            positioned: c.positioned != 0,
+            x: c.x,
+            y: c.y,
+            w: c.w,
+            h: c.h,
+            z: c.z,
+            gap: c.gap,
+            padding: c.padding,
+            stretch: c.stretch,
+            overflow: c.overflow,
+            background: c.background,
+            border: c.border,
+            radius: c.radius,
+            shadow: c.shadow,
+            cursor: c.cursor,
+        }
+    }
+}
+
 /// A rebuilt widget tree.
 #[derive(Debug, Clone)]
 pub enum Tree {
@@ -107,11 +182,11 @@ pub enum Tree {
     /// the height — `0` is the host's default)
     Image(Option<u32>, String, u32, u32),
     /// (widget id — `None` for a container a component did not give an id,
-    /// the cross-axis alignment, the children)
-    Row(Option<u32>, Align, Vec<Tree>),
+    /// the cross-axis alignment, the chrome and geometry, the children)
+    Row(Option<u32>, Align, ContainerStyle, Vec<Tree>),
     /// (widget id — `None` for a container a component did not give an id,
-    /// the cross-axis alignment, the children)
-    Column(Option<u32>, Align, Vec<Tree>),
+    /// the cross-axis alignment, the chrome and geometry, the children)
+    Column(Option<u32>, Align, ContainerStyle, Vec<Tree>),
 }
 
 /// The node's id, if it has one (see the WIT identity note: a node the
@@ -143,10 +218,11 @@ fn to_tree(node: &Node) -> Tree {
         Node::Input(i) => Tree::Input(i.id, i.content.clone(), i.width, i.style),
         Node::Image(i) => Tree::Image(i.id, i.src.clone(), i.width, i.height),
         Node::Container(c) => {
+            let style = ContainerStyle::from_node(c);
             if c.direction == Direction::Row {
-                Tree::Row(c.id, c.align, Vec::new())
+                Tree::Row(c.id, c.align, style, Vec::new())
             } else {
-                Tree::Column(c.id, c.align, Vec::new())
+                Tree::Column(c.id, c.align, style, Vec::new())
             }
         }
     }
@@ -193,7 +269,7 @@ pub fn build_tree(nodes: &[Node]) -> Tree {
         }
         let (head, tail) = trees.split_at_mut(first);
         match head[i].as_mut() {
-            Some(Tree::Row(_, _, children) | Tree::Column(_, _, children)) => {
+            Some(Tree::Row(_, _, _, children) | Tree::Column(_, _, _, children)) => {
                 for k in kids {
                     if let Some(child) = tail[k - first].take() {
                         children.push(child);
@@ -215,15 +291,20 @@ pub fn build_tree(nodes: &[Node]) -> Tree {
         }
     }
     match roots.len() {
-        0 => Tree::Column(None, Align::Center, Vec::new()),
+        0 => Tree::Column(None, Align::Center, ContainerStyle::default(), Vec::new()),
         1 => roots.pop().unwrap(),
-        _ => Tree::Column(None, Align::Center, roots),
+        _ => Tree::Column(None, Align::Center, ContainerStyle::default(), roots),
     }
 }
 
-/// The host's retained copy of the component's tree, as the diff protocol
-/// maintains it: a full snapshot from `view` at startup, then `changes`
-/// diffs applied by node id.
+/// The host's retained copy of the component's tree: a full snapshot from
+/// `view` at startup, then content-only diffs applied by node id, and a
+/// re-queried snapshot after any structural change.
+///
+/// The split follows the WIT identity note: a diff cannot carry id-less
+/// nodes, so a structural change (which may add or move one — a window's
+/// title-bar label) forces a `view` re-query, while a content-only diff
+/// carries everything it changes and is applied in place.
 #[derive(Debug, Clone)]
 pub struct Retained {
     /// The full tree, in canonical pre-order.
@@ -241,130 +322,62 @@ impl Retained {
         &self.nodes
     }
 
-    /// Apply a `changes` diff. Returns whether anything was retained.
-    pub fn apply(&mut self, mutations: &[Mutation]) -> bool {
-        if mutations.is_empty() {
-            return false;
-        }
+    /// Whether `mutations` is content-only: every mutation is a `changed`
+    /// for an id'd leaf that keeps its position (a restyle, no structure).
+    ///
+    /// Such a diff carries everything it changes, so a host may apply it.
+    /// A structural diff may not — it cannot carry id-less nodes (the WIT
+    /// identity note) — so the host re-queries `view` instead.
+    pub fn is_content_only(&self, mutations: &[Mutation]) -> bool {
+        mutations.iter().all(|m| match m {
+            Mutation::Changed(c) => {
+                let node = &c.node;
+                let Some(id) = node_id(node) else {
+                    return false;
+                };
+                if matches!(node, Node::Container(_)) {
+                    return false;
+                }
+                let Some(prev) = self.nodes.iter().find(|n| node_id(n) == Some(id)) else {
+                    return false; // a new node: structure
+                };
+                node_parent(node) == node_parent(prev)
+            }
+            Mutation::Removed(_) => false,
+        })
+    }
+
+    /// Apply a content-only diff (see [`is_content_only`]): each changed
+    /// node replaces its retained copy in place.
+    pub fn apply(&mut self, mutations: &[Mutation]) {
         for mutation in mutations {
-            match mutation {
-                Mutation::Changed(c) => {
-                    let node = &c.node;
-                    // A node without an id is unaddressable (see the WIT
-                    // identity note): the diff cannot name it, so skip it.
-                    if node_id(node).is_none() {
-                        continue;
-                    }
-                    match self.nodes.iter().position(|n| node_id(n) == node_id(node)) {
-                        Some(i) => {
-                            if node_parent(&self.nodes[i]) == node_parent(node) {
-                                // Same parent: the node keeps its position
-                                // (the index is ignored).
-                                self.nodes[i] = node.clone();
-                            } else {
-                                // Re-parented: move it to `index` among the
-                                // new parent's children.
-                                self.nodes.remove(i);
-                                self.insert(node.clone(), c.index);
-                            }
-                        }
-                        // A node the host has never seen (added after
-                        // bootstrap): insert at `index` among the parent's
-                        // children.
-                        None => self.insert(node.clone(), c.index),
-                    }
-                }
-                Mutation::Removed(id) => self.remove_subtree(*id),
-            }
-        }
-        true
-    }
-
-    /// Insert a node the host does not have at `index` among its parent's
-    /// children (0 is the front; an index past the end appends), or at the
-    /// end of the list if it is a new root. The walk skips the node's own
-    /// descendants still in the list, so a re-added container lands after
-    /// them.
-    fn insert(&mut self, node: Node, index: u32) {
-        let id = node_id(&node);
-        // A node with no parent, or whose parent the host does not retain,
-        // cannot be placed among a parent's children: it is a new root.
-        let Some(parent) = node_parent(&node) else {
-            self.nodes.push(node);
-            return;
-        };
-        let Some(p) = self.nodes.iter().position(|n| node_id(n) == Some(parent)) else {
-            self.nodes.push(node);
-            return;
-        };
-        let mut i = p + 1;
-        let mut siblings = 0;
-        while i < self.nodes.len() {
-            let n = &self.nodes[i];
-            if self.descendant_of(n, id) {
-                i += 1; // the node's own descendant
+            let Mutation::Changed(c) = mutation else {
+                continue; // content-only: no removals
+            };
+            let node = &c.node;
+            // A node without an id is unaddressable (see the WIT identity
+            // note): a well-behaved component does not report one, and a
+            // host may ignore it.
+            let Some(id) = node_id(node) else {
                 continue;
-            }
-            if !self.descendant_of(n, Some(parent)) {
-                break; // past the parent's subtree
-            }
-            if node_parent(n) == Some(parent) {
-                if siblings >= index as usize {
-                    break; // before the `index`-th sibling
-                }
-                siblings += 1;
-                let child_id = node_id(n);
-                i += 1;
-                while i < self.nodes.len() && self.descendant_of(&self.nodes[i], child_id) {
-                    i += 1;
-                }
-            } else {
-                i += 1; // a deeper descendant: advance
+            };
+            if let Some(i) = self.nodes.iter().position(|n| node_id(n) == Some(id)) {
+                self.nodes[i] = node.clone();
             }
         }
-        self.nodes.insert(i, node);
-    }
-
-    /// Remove a node and, if it is a container, its whole subtree.
-    fn remove_subtree(&mut self, id: u32) {
-        let Some(p) = self.nodes.iter().position(|n| node_id(n) == Some(id)) else {
-            return;
-        };
-        let mut end = p + 1;
-        while end < self.nodes.len() && self.descendant_of(&self.nodes[end], Some(id)) {
-            end += 1;
-        }
-        self.nodes.drain(p..end);
-    }
-
-    /// Whether `node` is in the subtree rooted at `ancestor`.
-    fn descendant_of(&self, node: &Node, ancestor: Option<u32>) -> bool {
-        let Some(ancestor) = ancestor else {
-            // Nothing can be a descendant of an id-less node.
-            return false;
-        };
-        let mut current = node_parent(node);
-        while let Some(parent) = current {
-            if parent == ancestor {
-                return true;
-            }
-            current = self
-                .nodes
-                .iter()
-                .find(|n| node_id(n) == Some(parent))
-                .and_then(node_parent);
-        }
-        false
     }
 }
 
 #[cfg(test)]
 mod tests {
-    //! The diff machinery is pure data structure work — testable without
-    //! a component in sight.
+    //! The rebuild is pure data structure work — testable without a
+    //! component in sight.
 
     use super::*;
-    use waui::ui::widget::{Button, Changed, Color, Container, Direction, Size, Style, Text};
+    use waui::ui::widget::{
+        Button, Changed, Color, Container, Cursor, Direction, Overflow, Radius, Shadow, Size,
+        Stretch, Style, Text,
+    };
 
     fn style(color: Color, size: Size) -> Style {
         Style { color, size }
@@ -378,9 +391,34 @@ mod tests {
         Node::Container(Container {
             id: Some(id),
             parent,
+            ..container_defaults()
+        })
+    }
+
+    /// The token fields a test's `Container` literal leaves at their
+    /// defaults (the generated record has no `Default` impl).
+    fn container_defaults() -> Container {
+        Container {
+            id: None,
+            parent: None,
             direction: Direction::Column,
             align: Align::Center,
-        })
+            positioned: 0,
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            z: 0,
+            gap: 0,
+            padding: 0,
+            stretch: Stretch::None,
+            overflow: Overflow::Clip,
+            background: Background::None,
+            border: Border::None,
+            radius: Radius::None,
+            shadow: Shadow::None,
+            cursor: Cursor::Default,
+        }
     }
 
     fn text(id: u32, parent: Option<u32>, content: &str) -> Node {
@@ -401,149 +439,53 @@ mod tests {
         })
     }
 
-    /// The retained list's ids, in order — the layout contract (id-less
-    /// nodes, of which these tests have none, are skipped).
-    fn ids(r: &Retained) -> Vec<u32> {
-        r.nodes.iter().filter_map(node_id).collect()
+    #[test]
+    fn content_only_is_a_changed_leaf_in_place() {
+        // The counter's tick: the readout text changes, same parent.
+        let r = Retained::from_view(vec![
+            cont(1, None),
+            text(3, Some(1), "0"),
+            button(4, Some(1), "+"),
+        ]);
+        assert!(r.is_content_only(&[changed(text(3, Some(1), "1"), 0)]));
     }
 
     #[test]
-    fn apply_empty_is_a_noop() {
-        let mut r = Retained::from_view(vec![cont(1, None), text(3, Some(1), "0")]);
-        assert!(!r.apply(&[]));
-        assert_eq!(ids(&r), vec![1, 3]);
-    }
-
-    #[test]
-    fn apply_skips_an_unaddressable_change() {
-        // A `changed` node without an id cannot be named (see the WIT
-        // identity note): the host ignores it rather than guess.
-        let mut r = Retained::from_view(vec![cont(1, None), text(3, Some(1), "0")]);
-        assert!(r.apply(&[changed(
+    fn content_only_rejects_structure() {
+        let r = Retained::from_view(vec![cont(1, None), text(3, Some(1), "0")]);
+        // A container change (a restyle cannot update one in place).
+        assert!(!r.is_content_only(&[changed(cont(1, None), 0)]));
+        // A node the host has never retained (an addition).
+        assert!(!r.is_content_only(&[changed(text(9, Some(1), "x"), 0)]));
+        // A re-parent.
+        let two = Retained::from_view(vec![cont(1, None), cont(2, None), text(3, Some(1), "0")]);
+        assert!(!two.is_content_only(&[changed(text(3, Some(2), "0"), 0)]));
+        // A removal.
+        assert!(!r.is_content_only(&[Mutation::Removed(3)]));
+        // An id-less node (unaddressable: the WIT identity note).
+        assert!(!r.is_content_only(&[changed(
             Node::Text(Text {
                 id: None,
                 parent: Some(1),
-                content: "intruder".to_string(),
+                content: "x".to_string(),
                 style: style(Color::Neutral, Size::Large),
             }),
             0
         )]));
-        assert_eq!(ids(&r), vec![1, 3]);
-        match &r.nodes[1] {
-            Node::Text(t) => assert_eq!(t.content, "0"),
-            _ => panic!("expected the original text node"),
-        }
     }
 
     #[test]
-    fn apply_replaces_in_place() {
+    fn apply_replaces_the_changed_leaf_in_place() {
         let mut r = Retained::from_view(vec![
             cont(1, None),
             text(3, Some(1), "0"),
-            button(4, Some(1), "-"),
+            button(4, Some(1), "+"),
         ]);
-        assert!(r.apply(&[changed(text(3, Some(1), "-1"), 0)]));
-        assert_eq!(ids(&r), vec![1, 3, 4]); // position kept
+        r.apply(&[changed(text(3, Some(1), "5"), 0)]);
+        assert_eq!(r.nodes.len(), 3);
         match &r.nodes[1] {
-            Node::Text(t) => assert_eq!(t.content, "-1"),
-            _ => panic!("node 3 should still be the text readout"),
-        }
-    }
-
-    #[test]
-    fn apply_prunes_the_whole_subtree() {
-        let mut r = Retained::from_view(vec![
-            cont(1, None),
-            cont(2, Some(1)),
-            text(3, Some(2), "a"),
-            text(4, Some(2), "b"),
-            button(5, Some(1), "x"),
-        ]);
-        assert!(r.apply(&[Mutation::Removed(2)]));
-        assert_eq!(ids(&r), vec![1, 5]);
-    }
-
-    #[test]
-    fn apply_reparents_to_the_canonical_position() {
-        // Two roots; the readout moves from under the first to under the
-        // second.
-        let mut r = Retained::from_view(vec![
-            cont(1, None),
-            text(3, Some(1), "a"),
-            cont(2, None),
-            text(4, Some(2), "b"),
-        ]);
-        assert!(r.apply(&[changed(text(3, Some(2), "a"), 0)]));
-        // At index 0 of its new parent's children, before its new
-        // siblings: still pre-ordered.
-        assert_eq!(ids(&r), vec![1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn apply_inserts_a_new_node_at_index_zero() {
-        let mut r = Retained::from_view(vec![
-            cont(1, None),
-            text(3, Some(1), "a"),
-            cont(2, Some(1)),
-            text(4, Some(2), "b"),
-        ]);
-        assert!(r.apply(&[changed(text(7, Some(1), "c"), 0)]));
-        // Index 0 is the front: the leaf lands before the existing
-        // children, and the walk steps over the container's subtree.
-        assert_eq!(ids(&r), vec![1, 7, 3, 2, 4]);
-    }
-
-    #[test]
-    fn apply_inserts_children_in_the_emitted_order() {
-        // A batch of children emitted in pre-order must land in the
-        // component's order, not reversed at the front of the parent.
-        let mut r = Retained::from_view(vec![
-            cont(1, None),
-            text(3, Some(1), "a"),
-            button(4, Some(1), "b"),
-        ]);
-        assert!(r.apply(&[
-            changed(cont(5, Some(1)), 0),
-            changed(text(6, Some(5), "x"), 0),
-            changed(text(7, Some(5), "y"), 1),
-            changed(button(8, Some(5), "z"), 2),
-        ]));
-        assert_eq!(ids(&r), vec![1, 5, 6, 7, 8, 3, 4]);
-    }
-
-    #[test]
-    fn apply_inserts_at_a_middle_index_and_appends() {
-        let mut r = Retained::from_view(vec![
-            cont(1, None),
-            text(3, Some(1), "a"),
-            button(4, Some(1), "b"),
-        ]);
-        assert!(r.apply(&[
-            changed(text(7, Some(1), "c"), 1),
-            changed(text(8, Some(1), "d"), 3),
-        ]));
-        // 7 before the second child; 8 past the end (appended).
-        assert_eq!(ids(&r), vec![1, 3, 7, 4, 8]);
-    }
-
-    #[test]
-    fn a_mutated_tree_still_builds() {
-        // End-to-end over the machinery: mutate, then rebuild — the
-        // rebuilt tree must reflect the diff.
-        let mut r = Retained::from_view(vec![
-            cont(1, None),
-            text(3, Some(1), "0"),
-            button(2, Some(1), "+"),
-            button(4, Some(1), "-"),
-        ]);
-        assert!(r.apply(&[changed(text(3, Some(1), "-1"), 0)]));
-        let tree = build_tree(r.nodes());
-        if let Tree::Column(_, _, children) = &tree {
-            // List order: the readout first, then the two buttons.
-            assert_eq!(children.len(), 3);
-            assert!(matches!(&children[0], Tree::Text(c, _) if c.as_str() == "-1"));
-        } else {
-            panic!("expected a column of three children");
+            Node::Text(t) => assert_eq!(t.content, "5"),
+            other => panic!("the readout should stay text: {other:?}"),
         }
     }
 
@@ -557,12 +499,13 @@ mod tests {
                 parent: Some(1),
                 direction: Direction::Column,
                 align: Align::Start,
+                ..container_defaults()
             }),
             text(4, Some(3), "a"),
         ]);
         match &tree {
-            Tree::Column(_, Align::Center, children) => match &children[0] {
-                Tree::Column(_, Align::Start, kids) => assert_eq!(kids.len(), 1),
+            Tree::Column(_, Align::Center, _, children) => match &children[0] {
+                Tree::Column(_, Align::Start, _, kids) => assert_eq!(kids.len(), 1),
                 _ => panic!("the wrapper should keep its start align"),
             },
             _ => panic!("expected the centered root column"),
@@ -571,9 +514,9 @@ mod tests {
 
     #[test]
     fn rebuild_carries_a_container_id() {
-        // A host that addresses containers (the desktop's tiles) needs the
-        // id; an id-less container carries None, and the synthetic roots
-        // (the multi-root wrapper) carry None too.
+        // A host that addresses containers (its tiles) needs the id; an
+        // id-less container carries None, and the synthetic roots (the
+        // multi-root wrapper) carry None too.
         let tree = build_tree(&[
             cont(1, None),
             Node::Container(Container {
@@ -581,25 +524,27 @@ mod tests {
                 parent: Some(1),
                 direction: Direction::Row,
                 align: Align::Center,
+                ..container_defaults()
             }),
             Node::Container(Container {
                 id: None,
                 parent: None,
                 direction: Direction::Column,
                 align: Align::Center,
+                ..container_defaults()
             }),
         ]);
         match &tree {
-            Tree::Column(None, _, roots) if roots.len() == 2 => {
+            Tree::Column(None, _, _, roots) if roots.len() == 2 => {
                 match &roots[0] {
-                    Tree::Column(Some(1), _, children) => match &children[0] {
-                        Tree::Row(Some(2), _, _) => {}
+                    Tree::Column(Some(1), _, _, children) => match &children[0] {
+                        Tree::Row(Some(2), _, _, _) => {}
                         other => panic!("expected the id'd row: {other:?}"),
                     },
                     other => panic!("root 1 should keep its id: {other:?}"),
                 }
                 match &roots[1] {
-                    Tree::Column(None, _, _) => {}
+                    Tree::Column(None, _, _, _) => {}
                     other => panic!("the id-less root should carry None: {other:?}"),
                 }
             }
