@@ -32,6 +32,52 @@ use waui::ui::widget::{
 };
 
 // --------------------------------------------------------------------------
+// The registry manifest (the desktop's entries).
+// --------------------------------------------------------------------------
+
+/// A registry entry: the name (`open-entry`'s key), the component's path,
+/// and the `data` blob (the host-defined metadata the component parses).
+#[derive(Clone, Debug)]
+pub struct EntrySpec {
+    pub name: String,
+    pub path: String,
+    pub data: String,
+}
+
+/// Read a registry manifest (a JSON file): its entries' names, paths, and
+/// `data` blobs. The manifest is the single source of truth for the
+/// desktop's registry; the `data` object it carries is serialized to the
+/// blob string the component parses.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_manifest(path: &str) -> Result<Vec<EntrySpec>, String> {
+    use std::fs;
+
+    #[derive(serde::Deserialize)]
+    struct Manifest {
+        entries: Vec<ManifestEntry>,
+    }
+    #[derive(serde::Deserialize)]
+    struct ManifestEntry {
+        name: String,
+        path: String,
+        data: serde_json::Value,
+    }
+
+    let text = fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
+    let manifest: Manifest =
+        serde_json::from_str(&text).map_err(|e| format!("bad manifest {path}: {e}"))?;
+    Ok(manifest
+        .entries
+        .into_iter()
+        .map(|e| EntrySpec {
+            name: e.name,
+            path: e.path,
+            data: e.data.to_string(),
+        })
+        .collect())
+}
+
+// --------------------------------------------------------------------------
 // The browser host's engine config, shared with the precompile tool.
 // --------------------------------------------------------------------------
 

@@ -33,10 +33,10 @@ use wasmtime::{Engine, Store};
 use host_shared::{build_tree, App, Retained};
 // The renderer, focus ring, and `--dump` frame, shared with the browser
 // module.
+use host_shared::EntrySpec;
 use host_tui::{
     active_app, active_surface, active_target, active_tree, derive_active, draw, dump_frame,
-    focus_newest_window, input_content, now_ms, report_input, reseat_active, EntrySpec, Host,
-    Surface,
+    focus_newest_window, input_content, now_ms, report_input, reseat_active, Host, Surface,
 };
 
 use crossterm::{
@@ -156,7 +156,8 @@ fn main() {
             }
             "--entry" => {
                 // `name=path`: a registry entry (the name is the tile's
-                // label fallback; the path is the component to open).
+                // label fallback; the path is the component to open). The
+                // `data` blob is empty: a `--entry` carries no metadata.
                 match args.get(i + 1) {
                     Some(v) if v.contains('=') => {
                         let (name, p) = v.split_once('=').unwrap();
@@ -164,6 +165,7 @@ fn main() {
                             entries.push(EntrySpec {
                                 name: name.to_string(),
                                 path: p.to_string(),
+                                data: "{}".to_string(),
                             });
                             i += 1;
                         } else {
@@ -177,6 +179,25 @@ fn main() {
                     }
                 }
             }
+            // The registry manifest (the desktop's entries): a JSON file
+            // with each entry's name, path, and `data` blob. Replaces the
+            // `--entry` repetition for the desktop.
+            "--registry" => match args.get(i + 1) {
+                Some(v) => {
+                    match host_shared::read_manifest(v) {
+                        Ok(mut read) => entries.append(&mut read),
+                        Err(e) => {
+                            eprintln!("--registry: {e}");
+                            std::process::exit(2);
+                        }
+                    }
+                    i += 1;
+                }
+                _ => {
+                    eprintln!("--registry takes a manifest path");
+                    std::process::exit(2);
+                }
+            },
             "--now" => {
                 let (b, s) = (args.get(i + 1), args.get(i + 2));
                 match (b, s) {
@@ -205,7 +226,7 @@ fn main() {
         Some(p) => p,
         None => {
             eprintln!(
-                "usage: host-tui [--dump] [--width <n>] [--entry name=path] [--click <id>] [--double-click <id>] [--close <handle>] [--now <base> <step>] <component.wasm>"
+                "usage: host-tui [--dump] [--width <n>] [--entry name=path] [--registry <manifest.json>] [--click <id>] [--double-click <id>] [--close <handle>] [--now <base> <step>] <component.wasm>"
             );
             std::process::exit(2);
         }

@@ -7,11 +7,13 @@
 //! component (cargo + wit-bindgen), its AssemblyScript one (asc + the
 //! hand-rolled ABI), and its hand-rolled WAT one. The assertions are shared.
 //!
-//! The desktop scenario (`--entry` registry, `--double-click` tiles,
+//! The desktop scenario (`--registry` manifest, `--double-click` tiles,
 //! `--click` a window's close button) runs the desktop app, which draws the
 //! whole desktop — the menu bar, the icon grid, and each window's chrome and
 //! placement — as its own tree. The host seats each opened entry's content in
-//! the window's content slot and routes the events to the app.
+//! the window's content slot and routes the events to the app. The
+//! manifest's nine entries span all three producers, so the scenario builds
+//! all three suites.
 //!
 //! The goldens in `tests/goldens/` are the visual regression layer: the
 //! whole frame, byte-exact, shared by the three producers (they must render
@@ -26,7 +28,7 @@ use std::process::Command;
 use waui_test::{
     as_toolchain_available, assert_golden, build_component, build_component_as,
     build_component_wat, component_path, component_path_as, component_path_wat,
-    wat_toolchain_available, AS_BUILD_LOCK, RUST_BUILD_LOCK, WAT_BUILD_LOCK,
+    wat_toolchain_available, waui_root, AS_BUILD_LOCK, RUST_BUILD_LOCK, WAT_BUILD_LOCK,
 };
 
 /// The fake clock for the stopwatch's running state: the n-th `now` call
@@ -42,6 +44,10 @@ const FAKE_NOW: (u64, u64) = (1_000, 50);
 fn run_dump(path: &Path, args: &[String], now: Option<(u64, u64)>, width: Option<u16>) -> String {
     let bin = env!("CARGO_BIN_EXE_host-tui");
     let mut cmd = Command::new(bin);
+    // The registry manifest's entry paths are relative to the repo root, so
+    // the host runs from there (an opened entry loads its component from
+    // one).
+    cmd.current_dir(waui_root());
     cmd.arg("--dump");
     if let Some(w) = width {
         cmd.arg("--width").arg(w.to_string());
@@ -522,23 +528,14 @@ fn todo_dump_wat() {
     assert_todo_frame(&component_path_wat("demo-todo"), "wat");
 }
 
-/// The registry's `--entry` argv elements for the producer's three demos,
-/// in tile order (the tile `i` is the registry entry `i`).
-fn entries(producer: &str) -> Vec<String> {
-    let suffix = match producer {
-        "rust" => "",
-        "as" => "-as",
-        _ => "-wat",
-    };
-    let mut out = Vec::new();
-    for name in ["counter", "stopwatch", "todo"] {
-        out.push("--entry".to_string());
-        out.push(format!(
-            "{name}={}",
-            component_path(&format!("demo-{name}{suffix}")).display()
-        ));
-    }
-    out
+/// The registry's `--registry` argv element: the manifest at the repo root
+/// (the nine entries, all three producers' demos — the tile `i` is the
+/// registry entry `i`).
+fn registry_args() -> Vec<String> {
+    vec![
+        "--registry".to_string(),
+        waui_root().join("registry.json").display().to_string(),
+    ]
 }
 
 /// The app's frames: the framed tiles, the window's title bar and border, the
@@ -547,7 +544,7 @@ fn entries(producer: &str) -> Vec<String> {
 /// the stopwatch's, paused, a fixed 0 ms).
 fn assert_desktop_frame(path: &Path, producer: &str) {
     // One window: the counter, opened by a double-click on its tile.
-    let mut args = entries(producer);
+    let mut args = registry_args();
     args.push("--double-click".to_string());
     args.push("100".to_string());
     let frame = run_dump(path, &args, None, None);
@@ -568,13 +565,13 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
         "the menu bar should count one window: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
-    // The title bar shows the entry's name and the close marker. The tui
-    // renders a button as a bordered box, so the marker sits on its own row
-    // (the title bar's height is the component's); the two are checked
-    // separately, not on one line.
+    // The title bar shows the entry's label (the manifest's, capitalized)
+    // and the close marker. The tui renders a button as a bordered box, so
+    // the marker sits on its own row (the title bar's height is the
+    // component's); the two are checked separately, not on one line.
     assert!(
-        ls.iter().any(|l| l.plain.contains("counter")),
-        "the window's title bar should show the entry's name: {:?}",
+        ls.iter().any(|l| l.plain.contains("Counter")),
+        "the window's title bar should show the entry's label: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     assert!(
@@ -583,28 +580,25 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     // The window covers the grid behind it (its interior is cleared, so a
-    // terminal cell keeps no earlier drawing): the counter tile is hidden
-    // whole, the stopwatch tile shows only the sliver past the window's
-    // edge, and the todo tile (right of the window) is visible.
-    assert!(
-        ls.iter().any(|l| l.plain.contains("todo")),
-        "the uncovered tile's label should be visible: {:?}",
-        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
-    );
-    assert!(
-        !ls.iter().any(|l| l.plain.contains("stopwatch")),
-        "the covered tile's label should be hidden behind the window: {:?}",
+    // terminal cell keeps no earlier drawing): of the ten icons (the nine
+    // tiles' and the title bar's), the window hides the top two rows' left
+    // and middle, and the title bar's marker (too small for its box).
+    let images = ls.iter().flat_map(|l| l.plain.matches("image")).count();
+    assert_eq!(
+        images,
+        5,
+        "the window should cover five of the ten icons: {images} visible: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     assert_frame_golden(&frame, "desktop-1.txt");
     save_producer_golden(&frame, producer, "desktop-1.txt");
 
     // Two windows: the stopwatch cascades down-right of the counter.
-    let mut args = entries(producer);
+    let mut args = registry_args();
     args.push("--double-click".to_string());
     args.push("100".to_string());
     args.push("--double-click".to_string());
-    args.push("101".to_string());
+    args.push("103".to_string());
     let frame = run_dump(path, &args, None, None);
     let ls = lines(&frame);
     assert!(
@@ -617,7 +611,7 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     // title bar (and close button) is visible; the lower window shows its
     // border and a sliver of its title.
     assert!(
-        ls.iter().any(|l| l.plain.contains("stopwatch")),
+        ls.iter().any(|l| l.plain.contains("Stopwatch")),
         "the top window's title bar should be visible: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
@@ -629,14 +623,15 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     assert_frame_golden(&frame, "desktop-2.txt");
     save_producer_golden(&frame, producer, "desktop-2.txt");
 
-    // Close the first window: click its close button (the app's own, id =
-    // handle + the close offset). The count drops back to one, and the
-    // surviving window stays at its cascade position.
-    let mut args = entries(producer);
+    // Close the first window (the counter, under the stopwatch): click its
+    // close button (the app's own, id = handle + the close offset). The
+    // count drops back to one, and the surviving window stays at its
+    // cascade position.
+    let mut args = registry_args();
     args.push("--double-click".to_string());
     args.push("100".to_string());
     args.push("--double-click".to_string());
-    args.push("101".to_string());
+    args.push("103".to_string());
     args.push("--click".to_string());
     args.push("410000".to_string());
     let frame = run_dump(path, &args, None, None);
@@ -655,46 +650,59 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     save_producer_golden(&frame, producer, "desktop-close.txt");
 }
 
-#[test]
-fn desktop_dump() {
-    let _guard = RUST_BUILD_LOCK
+/// The desktop scenario's registry spans all three producers (the manifest's
+/// nine entries), so the scenario builds all three suites (the four
+/// components each), under all three build locks in a fixed order. `false`
+/// when a toolchain is missing: the caller skips the scenario.
+fn build_all_producers() -> bool {
+    if !as_toolchain_available() || !wat_toolchain_available() {
+        return false;
+    }
+    let _rust = RUST_BUILD_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    build_component("demo-desktop");
-    build_component("demo-counter");
-    build_component("demo-stopwatch");
-    build_component("demo-todo");
+    let _as = AS_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _wat = WAT_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for demo in [
+        "demo-desktop",
+        "demo-counter",
+        "demo-stopwatch",
+        "demo-todo",
+    ] {
+        build_component(demo);
+        build_component_as(demo);
+        build_component_wat(demo);
+    }
+    true
+}
+
+#[test]
+fn desktop_dump() {
+    if !build_all_producers() {
+        eprintln!("skipping: the desktop registry needs all three producers' toolchains (run `npm install`)");
+        return;
+    }
     assert_desktop_frame(&component_path("demo-desktop"), "rust");
 }
 
 #[test]
 fn desktop_dump_as() {
-    if !as_toolchain_available() {
-        eprintln!("skipping: AssemblyScript toolchain not installed (run `npm install`)");
+    if !build_all_producers() {
+        eprintln!("skipping: the desktop registry needs all three producers' toolchains (run `npm install`)");
         return;
     }
-    let _guard = AS_BUILD_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    build_component_as("demo-desktop");
-    build_component_as("demo-counter");
-    build_component_as("demo-stopwatch");
-    build_component_as("demo-todo");
     assert_desktop_frame(&component_path_as("demo-desktop"), "as");
 }
 
 #[test]
 fn desktop_dump_wat() {
-    if !wat_toolchain_available() {
-        eprintln!("skipping: wasm-tools not on the PATH");
+    if !build_all_producers() {
+        eprintln!("skipping: the desktop registry needs all three producers' toolchains (run `npm install`)");
         return;
     }
-    let _guard = WAT_BUILD_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    build_component_wat("demo-desktop");
-    build_component_wat("demo-counter");
-    build_component_wat("demo-stopwatch");
-    build_component_wat("demo-todo");
     assert_desktop_frame(&component_path_wat("demo-desktop"), "wat");
 }

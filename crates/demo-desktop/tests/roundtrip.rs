@@ -81,24 +81,21 @@ impl AppImports for Host {
 // bindings require this empty marker impl.
 impl waui::ui::widget::Host for Host {}
 
-/// The nine entries, in the site's order (three demos, three languages):
-/// the name is the unique identifier, the `data` blob the tile's
-/// presentation.
-fn nine_entries() -> Vec<Entry> {
-    let names = ["Counter", "Stopwatch", "Todo"];
-    let langs = ["Rust", "AssemblyScript", "WAT"];
-    let mut out = Vec::new();
-    for lang in langs {
-        for name in &names {
-            out.push(Entry {
-                name: format!("{name}-{lang}"),
-                data: format!(
-                    r#"{{"label":"{name}","lang":"{lang}","icon":"icons/{name}-{lang}.svg","width":300,"height":380}}"#
-                ),
-            });
-        }
-    }
-    out
+/// The registry, as the hosts read it: the manifest at the repo root
+/// (registry.json) through the shared reader, so this test parses the same
+/// file the native hosts do.
+fn manifest_entries() -> Vec<Entry> {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("registry.json");
+    host_shared::read_manifest(path.to_str().unwrap())
+        .expect("failed to read registry.json")
+        .into_iter()
+        .map(|s| Entry {
+            name: s.name,
+            data: s.data,
+        })
+        .collect()
 }
 
 /// Link and instantiate the component against our world.
@@ -142,15 +139,16 @@ fn assert_desktop_roundtrip(app: &mut App, mut store: &mut Store<Host>) {
     // The menu bar: "waui" and "0 windows".
     assert!(summaries.iter().any(|s| s == "text:None:waui"));
     assert!(summaries.iter().any(|s| s == "text:Some(4):0 windows"));
-    // The nine tiles, each an image + name + lang.
+    // The nine tiles, each an image + label + lang (the manifest's
+    // presentation), the icon the manifest's canonical path.
     assert!(summaries
         .iter()
-        .any(|s| s == "image:None:icons/Counter-Rust.svg"));
+        .any(|s| s == "image:None:site/icons/counter-rust.svg"));
     assert!(summaries.iter().any(|s| s == "text:None:Counter"));
     assert!(summaries.iter().any(|s| s == "text:None:Rust"));
     assert!(summaries
         .iter()
-        .any(|s| s == "image:None:icons/Todo-WAT.svg"));
+        .any(|s| s == "image:None:site/icons/todo-wat.svg"));
 
     // Nothing has changed since the view: an empty diff.
     assert!(app
@@ -164,7 +162,7 @@ fn assert_desktop_roundtrip(app: &mut App, mut store: &mut Store<Host>) {
     let opens = store.data().opens.lock().unwrap();
     assert_eq!(opens.len(), 1, "one tile opened one window");
     // The open is by the entry's name; the size is the blob's default.
-    assert_eq!(opens[0].0, "Counter-Rust");
+    assert_eq!(opens[0].0, "counter-rust");
     assert_eq!((opens[0].1, opens[0].2), (300, 380));
     drop(opens);
 
@@ -234,7 +232,7 @@ fn desktop_grid_and_window_roundtrip() {
     let mut store = Store::new(
         &engine,
         Host {
-            entries: nine_entries(),
+            entries: manifest_entries(),
             ..Default::default()
         },
     );
@@ -260,7 +258,7 @@ fn desktop_grid_and_window_roundtrip_as() {
     let mut store = Store::new(
         &engine,
         Host {
-            entries: nine_entries(),
+            entries: manifest_entries(),
             ..Default::default()
         },
     );
@@ -286,7 +284,7 @@ fn desktop_grid_and_window_roundtrip_wat() {
     let mut store = Store::new(
         &engine,
         Host {
-            entries: nine_entries(),
+            entries: manifest_entries(),
             ..Default::default()
         },
     );

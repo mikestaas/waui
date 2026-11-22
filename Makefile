@@ -117,8 +117,11 @@ run-stop-tui-wat: components-wat
 run-todo-tui-wat: components-wat
 	cargo run -p host-tui -- target/components/demo-todo-wat.component.wasm
 
-run-desktop-tui-wat: components-wat
-	cargo run -p host-tui -- --entry counter=target/components/demo-counter-wat.component.wasm --entry stopwatch=target/components/demo-stopwatch-wat.component.wasm --entry todo=target/components/demo-todo-wat.component.wasm target/components/demo-desktop-wat.component.wasm
+# The desktop targets read the registry manifest (registry.json): the nine
+# entries (the three demos, three languages), so all producers build, and
+# the host runs the producer's desktop app (the windowing component).
+run-desktop-tui-wat: components components-as components-wat
+	cargo run -p host-tui -- --registry registry.json target/components/demo-desktop-wat.component.wasm
 
 run-iced-wat: components-wat
 	cargo run -p host-iced -- target/components/demo-counter-wat.component.wasm
@@ -129,8 +132,8 @@ run-stop-iced-wat: components-wat
 run-todo-iced-wat: components-wat
 	cargo run -p host-iced -- target/components/demo-todo-wat.component.wasm
 
-run-desktop-iced-wat: components-wat
-	cargo run -p host-iced -- --entry counter=target/components/demo-counter-wat.component.wasm --entry stopwatch=target/components/demo-stopwatch-wat.component.wasm --entry todo=target/components/demo-todo-wat.component.wasm target/components/demo-desktop-wat.component.wasm
+run-desktop-iced-wat: components components-as components-wat
+	cargo run -p host-iced -- --registry registry.json target/components/demo-desktop-wat.component.wasm
 
 # The same hosts, pointed at the AssemblyScript components.
 run-cli-as: components-as
@@ -151,8 +154,8 @@ run-stop-tui-as: components-as
 run-todo-tui-as: components-as
 	cargo run -p host-tui -- target/components/demo-todo-as.component.wasm
 
-run-desktop-tui-as: components-as
-	cargo run -p host-tui -- --entry counter=target/components/demo-counter-as.component.wasm --entry stopwatch=target/components/demo-stopwatch-as.component.wasm --entry todo=target/components/demo-todo-as.component.wasm target/components/demo-desktop-as.component.wasm
+run-desktop-tui-as: components components-as components-wat
+	cargo run -p host-tui -- --registry registry.json target/components/demo-desktop-as.component.wasm
 
 run-iced-as: components-as
 	cargo run -p host-iced -- target/components/demo-counter-as.component.wasm
@@ -163,8 +166,8 @@ run-stop-iced-as: components-as
 run-todo-iced-as: components-as
 	cargo run -p host-iced -- target/components/demo-todo-as.component.wasm
 
-run-desktop-iced-as: components-as
-	cargo run -p host-iced -- --entry counter=target/components/demo-counter-as.component.wasm --entry stopwatch=target/components/demo-stopwatch-as.component.wasm --entry todo=target/components/demo-todo-as.component.wasm target/components/demo-desktop-as.component.wasm
+run-desktop-iced-as: components components-as components-wat
+	cargo run -p host-iced -- --registry registry.json target/components/demo-desktop-as.component.wasm
 
 # Terminal hosts: one component, two different renderers.
 run-cli: components
@@ -185,8 +188,8 @@ run-stop-tui: components
 run-todo-tui: components
 	cargo run -p host-tui -- target/components/demo-todo.component.wasm
 
-run-desktop-tui: components
-	cargo run -p host-tui -- --entry counter=target/components/demo-counter.component.wasm --entry stopwatch=target/components/demo-stopwatch.component.wasm --entry todo=target/components/demo-todo.component.wasm target/components/demo-desktop.component.wasm
+run-desktop-tui: components components-as components-wat
+	cargo run -p host-tui -- --registry registry.json target/components/demo-desktop.component.wasm
 
 # Windowed hosts (iced).
 run-iced: components
@@ -198,49 +201,50 @@ run-stop-iced: components
 run-todo-iced: components
 	cargo run -p host-iced -- target/components/demo-todo.component.wasm
 
-run-desktop-iced: components
-	cargo run -p host-iced -- --entry counter=target/components/demo-counter.component.wasm --entry stopwatch=target/components/demo-stopwatch.component.wasm --entry todo=target/components/demo-todo.component.wasm target/components/demo-desktop.component.wasm
+run-desktop-iced: components components-as components-wat
+	cargo run -p host-iced -- --registry registry.json target/components/demo-desktop.component.wasm
 
 # Web host: one self-contained HTML page per component (the wasm module
-# inlined as base64), plus the desktop page (the registry's three demos as
-# entries). The pages run straight from disk — no server, no npm.
-web: components
+# inlined as base64), plus the desktop page (the registry manifest's nine
+# entries). The pages run straight from disk — no server, no npm. The
+# desktop page's icons come from the site's set, copied to target/web/icons/.
+web: components components-as components-wat
 	@mkdir -p target/web
+	@rm -rf target/web/icons
+	@cp -R site/icons target/web/
 	@for c in $(COMPONENTS); do \
 		lib=$$(printf '%s' "$$c" | tr '-' '_'); \
 		node web/build.mjs target/$(WASM_TARGET)/release/$$lib.wasm target/web/$$c.html || exit 1; \
 	done
 	@node web/build.mjs target/$(WASM_TARGET)/release/demo_desktop.wasm target/web/demo-desktop.html \
-		--entry counter=target/$(WASM_TARGET)/release/demo_counter.wasm \
-		--entry stopwatch=target/$(WASM_TARGET)/release/demo_stopwatch.wasm \
-		--entry todo=target/$(WASM_TARGET)/release/demo_todo.wasm || exit 1
+		--registry registry.json --wasm-target $(WASM_TARGET) || exit 1
 	@echo "wrote target/web/*.html — open them directly (no server needed)"
 
 # The same self-contained pages for the AssemblyScript components. The web
 # host runs the pre-lift core module, so it consumes the renamed modules
 # straight from target/assembly/ — glue.js and app.js are untouched.
-web-as: components-as
+web-as: components components-as components-wat
 	@mkdir -p target/web
+	@rm -rf target/web/icons
+	@cp -R site/icons target/web/
 	@for c in $(AS_COMPONENTS); do \
 		node web/build.mjs target/assembly/$$c-as.wasm target/web/$$c-as.html || exit 1; \
 	done
 	@node web/build.mjs target/assembly/demo-desktop-as.wasm target/web/demo-desktop-as.html \
-		--entry counter=target/assembly/demo-counter-as.wasm \
-		--entry stopwatch=target/assembly/demo-stopwatch-as.wasm \
-		--entry todo=target/assembly/demo-todo-as.wasm || exit 1
+		--registry registry.json --wasm-target $(WASM_TARGET) || exit 1
 	@echo "wrote target/web/*-as.html — open them directly (no server needed)"
 
 # The same self-contained pages for the WAT components. As with the AS
 # pages, the web host runs the pre-lift core module (target/wat/).
-web-wat: components-wat
+web-wat: components components-as components-wat
 	@mkdir -p target/web
+	@rm -rf target/web/icons
+	@cp -R site/icons target/web/
 	@for c in $(WAT_COMPONENTS); do \
 		node web/build.mjs target/wat/$$c.wasm target/web/$$c-wat.html || exit 1; \
 	done
 	@node web/build.mjs target/wat/demo-desktop.wasm target/web/demo-desktop-wat.html \
-		--entry counter=target/wat/demo-counter.wasm \
-		--entry stopwatch=target/wat/demo-stopwatch.wasm \
-		--entry todo=target/wat/demo-todo.wasm || exit 1
+		--registry registry.json --wasm-target $(WASM_TARGET) || exit 1
 	@echo "wrote target/web/*-wat.html — open them directly (no server needed)"
 
 # The GitHub Pages site: the desktop launcher (site/) plus the nine demo
@@ -268,24 +272,14 @@ site: components components-as components-wat
 	done
 	# The desktop page, per producer (the demo-desktop core module, the
 	# windowing host): desktop.html (Rust), desktop-as.html, desktop-wat.html.
-	# Each carries the nine-entry registry (the three demos, three languages);
-	# the data blobs are derived from the entry names (label, lang, icon,
-	# size), so the tiles and windows are labeled.
+	# Each carries the registry manifest (registry.json) — the same nine
+	# entries the native hosts read, the icons remapped to the page's set.
 	@cp target/$(WASM_TARGET)/release/demo_desktop.wasm target/site/demo-desktop.wasm || exit 1
-	@node web/build.mjs target/site/demo-desktop.wasm target/site/desktop.html --url demo-desktop.wasm \
-		--entry counter-rust=demo-counter.wasm --entry counter-as=demo-counter-as.wasm --entry counter-wat=demo-counter-wat.wasm \
-		--entry stopwatch-rust=demo-stopwatch.wasm --entry stopwatch-as=demo-stopwatch-as.wasm --entry stopwatch-wat=demo-stopwatch-wat.wasm \
-		--entry todo-rust=demo-todo.wasm --entry todo-as=demo-todo-as.wasm --entry todo-wat=demo-todo-wat.wasm || exit 1
+	@node web/build.mjs target/site/demo-desktop.wasm target/site/desktop.html --url demo-desktop.wasm --registry registry.json || exit 1
 	@cp target/assembly/demo-desktop-as.wasm target/site/demo-desktop-as.wasm || exit 1
-	@node web/build.mjs target/site/demo-desktop-as.wasm target/site/desktop-as.html --url demo-desktop-as.wasm \
-		--entry counter-rust=demo-counter.wasm --entry counter-as=demo-counter-as.wasm --entry counter-wat=demo-counter-wat.wasm \
-		--entry stopwatch-rust=demo-stopwatch.wasm --entry stopwatch-as=demo-stopwatch-as.wasm --entry stopwatch-wat=demo-stopwatch-wat.wasm \
-		--entry todo-rust=demo-todo.wasm --entry todo-as=demo-todo-as.wasm --entry todo-wat=demo-todo-wat.wasm || exit 1
+	@node web/build.mjs target/site/demo-desktop-as.wasm target/site/desktop-as.html --url demo-desktop-as.wasm --registry registry.json || exit 1
 	@cp target/wat/demo-desktop.wasm target/site/demo-desktop-wat.wasm || exit 1
-	@node web/build.mjs target/site/demo-desktop-wat.wasm target/site/desktop-wat.html --url demo-desktop-wat.wasm \
-		--entry counter-rust=demo-counter.wasm --entry counter-as=demo-counter-as.wasm --entry counter-wat=demo-counter-wat.wasm \
-		--entry stopwatch-rust=demo-stopwatch.wasm --entry stopwatch-as=demo-stopwatch-as.wasm --entry stopwatch-wat=demo-stopwatch-wat.wasm \
-		--entry todo-rust=demo-todo.wasm --entry todo-as=demo-todo-as.wasm --entry todo-wat=demo-todo-wat.wasm || exit 1
+	@node web/build.mjs target/site/demo-desktop-wat.wasm target/site/desktop-wat.html --url demo-desktop-wat.wasm --registry registry.json || exit 1
 	@echo "wrote target/site/ — serve it over http; .github/workflows/site.yml deploys it"
 
 # Headless check of the web host's ABI layer (Node).

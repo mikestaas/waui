@@ -71,7 +71,9 @@ use wasmtime::{Engine, Store};
 
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
-use host_shared::{build_tree, waui, App, AppImports, Entry, Error, Retained, Tree, ViewportSize};
+use host_shared::{
+    build_tree, waui, App, AppImports, Entry, EntrySpec, Error, Retained, Tree, ViewportSize,
+};
 
 // The contract's style tokens, aliased to avoid clashing with `iced::Color`.
 use host_shared::waui::ui::widget::{
@@ -94,16 +96,6 @@ pub mod web;
 pub struct Wake {
     pub rate_ms: u64,
     pub last_wake_ms: u64,
-}
-
-/// A launchable entry (`--entry <name=path>`): the registry's `data` blob
-/// is always `{}`: the host supplies no per-entry metadata, so a tile
-/// renders the name only, as the component degrades a blob it cannot
-/// parse.
-#[derive(Clone)]
-pub struct EntrySpec {
-    pub name: String,
-    pub path: String,
 }
 
 /// An open panel: the entry's component running in its own store (the
@@ -239,7 +231,7 @@ impl AppImports for Host {
             .iter()
             .map(|e| Entry {
                 name: e.name.clone(),
-                data: "{}".to_string(),
+                data: e.data.clone(),
             })
             .collect()
     }
@@ -1369,6 +1361,31 @@ fn positioned_element<'a>(
 /// it feeds.
 static EMPTY_PANELS: [Panel; 0] = [];
 
+/// The placeholder for an image the host cannot draw (the browser module, or
+/// a native `src` with no file): a box, the node's size (a host default when
+/// it is 0), a dim marker, the host's standard border.
+fn image_placeholder(w: f32, h: f32) -> iced::Element<'static, Message> {
+    use iced::widget;
+    let marker = widget::text("image")
+        .size(14.0)
+        .color(iced::Color::from_rgb8(0x56, 0x5f, 0x89));
+    widget::container(marker)
+        .center_x(iced::Length::Fixed(w))
+        .center_y(iced::Length::Fixed(h))
+        .style(|_: &iced::Theme| iced::widget::container::Style {
+            text_color: None,
+            background: None,
+            border: iced::Border {
+                color: iced::Color::from_rgb8(0x41, 0x48, 0x68),
+                width: 1.0,
+                radius: iced::border::radius(6.0),
+            },
+            shadow: iced::Shadow::default(),
+            snap: false,
+        })
+        .into()
+}
+
 /// Map the tree onto iced widgets. `surface` names the component a node
 /// belongs to (the main app's and a panel's id spaces overlap), and `panels`
 /// seats a panel whose handle is a content slot's id.
@@ -1441,30 +1458,30 @@ fn map_tree<'a>(
             }
             input.into()
         }
-        // This host draws no pixels: a placeholder box, the node's size
-        // (a host default when it is 0), a dim marker, the host's standard
-        // border.
-        Tree::Image(_, _, width, height) => {
+        // An image node: the host's rendering of the `src`. Natively the
+        // real icon — iced's `svg` rasterizes the file on demand, and the
+        // `--dump` path does so synchronously — and a file that is missing
+        // falls back to the placeholder box. The browser module draws no
+        // pixels: the placeholder.
+        Tree::Image(_, src, width, height) => {
             let w = if *width > 0 { *width as f32 } else { 64.0 };
             let h = if *height > 0 { *height as f32 } else { 64.0 };
-            let marker = widget::text("image")
-                .size(14.0)
-                .color(iced::Color::from_rgb8(0x56, 0x5f, 0x89));
-            widget::container(marker)
-                .center_x(iced::Length::Fixed(w))
-                .center_y(iced::Length::Fixed(h))
-                .style(|_: &iced::Theme| iced::widget::container::Style {
-                    text_color: None,
-                    background: None,
-                    border: iced::Border {
-                        color: iced::Color::from_rgb8(0x41, 0x48, 0x68),
-                        width: 1.0,
-                        radius: iced::border::radius(6.0),
-                    },
-                    shadow: iced::Shadow::default(),
-                    snap: false,
-                })
-                .into()
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                if std::path::Path::new(src).is_file() {
+                    widget::svg(iced_core::svg::Handle::from_path(src.as_str()))
+                        .width(iced::Length::Fixed(w))
+                        .height(iced::Length::Fixed(h))
+                        .into()
+                } else {
+                    image_placeholder(w, h)
+                }
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = src;
+                image_placeholder(w, h)
+            }
         }
         // A container: its in-flow children, its chrome, and its positioned
         // children (see `map_container`). A positioned one (a window) is the

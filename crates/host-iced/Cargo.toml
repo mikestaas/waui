@@ -27,7 +27,11 @@ host-shared = { path = "../host-shared" }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wasmtime = { workspace = true }
-iced = { workspace = true, features = ["smol", "fira-sans"] }
+# `svg` for the registry's icons: iced's tiny-skia backend rasterizes an SVG
+# on demand, synchronously, so the headless `--dump` frame carries the
+# raster; the wgpu window does the same. The wasm32 build keeps the
+# placeholder box (the browser module runs no registry).
+iced = { workspace = true, features = ["smol", "fira-sans", "svg"] }
 # The window's layout+draw path, reused by the headless `--dump` render.
 iced_runtime = "0.14"
 # The dump's font database, pruned to the bundled fonts so the render is

@@ -8,19 +8,21 @@
 //! the injected clicks, the opened entries, and the headless `--dump` —
 //! is documented by the library.
 //!
-//! `--entry <name=path>` registers an entry the host can run. `--click
-//! <id>`, `--double-click <id>`, and `--close <handle>` inject events before
-//! the frame or the interactive loop; `--dump <file.png>` renders one frame
-//! to a PNG and exits, headless; `--now <base> <step>` fakes the host clock
-//! (each call advances `step` ms).
+//! `--entry <name=path>` registers an entry the host can run; `--registry
+//! <manifest.json>` reads the desktop's entries (name, path, and `data`
+//! blob) from a manifest file. `--click <id>`, `--double-click <id>`, and
+//! `--close <handle>` inject events before the frame or the interactive
+//! loop; `--dump <file.png>` renders one frame to a PNG and exits, headless;
+//! `--now <base> <step>` fakes the host clock (each call advances `step` ms).
 
 use wasmtime::component::Component;
 use wasmtime::Engine;
 
 use host_iced::{
-    apply_pending, canvas_size, new_state, render_png, subscription, theme, update, view,
-    EntrySpec, Injected, State,
+    apply_pending, canvas_size, new_state, render_png, subscription, theme, update, view, Injected,
+    State,
 };
+use host_shared::EntrySpec;
 
 /// The host's arguments: `--entry`, `--click`, `--double-click`, and
 /// `--close` flags, an optional `--dump <file>`, an optional `--now <base>
@@ -52,11 +54,31 @@ fn parse_args() -> Args {
                     entries.push(EntrySpec {
                         name: name.to_string(),
                         path: p.to_string(),
+                        data: "{}".to_string(),
                     });
                     i += 1;
                 }
                 None => {
                     eprintln!("--entry takes name=path");
+                    std::process::exit(2);
+                }
+            },
+            // The registry manifest (the desktop's entries): a JSON file
+            // with each entry's name, path, and `data` blob. Replaces the
+            // `--entry` repetition for the desktop.
+            "--registry" => match args.get(i + 1) {
+                Some(v) => {
+                    match host_shared::read_manifest(v) {
+                        Ok(mut read) => entries.append(&mut read),
+                        Err(e) => {
+                            eprintln!("--registry: {e}");
+                            std::process::exit(2);
+                        }
+                    }
+                    i += 1;
+                }
+                None => {
+                    eprintln!("--registry takes a manifest path");
                     std::process::exit(2);
                 }
             },
@@ -128,7 +150,7 @@ fn parse_args() -> Args {
         Some(p) => p,
         None => {
             eprintln!(
-                "usage: host-iced [--entry <name=path>]... [--click <id>] [--double-click <id>] [--close <handle>] [--dump <file.png>] [--now <base> <step>] <component.wasm>"
+                "usage: host-iced [--entry <name=path>]... [--registry <manifest.json>] [--click <id>] [--double-click <id>] [--close <handle>] [--dump <file.png>] [--now <base> <step>] <component.wasm>"
             );
             std::process::exit(2);
         }

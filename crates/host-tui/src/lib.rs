@@ -46,7 +46,8 @@ use wasmtime::{Engine, Store};
 // The world's bindings and the node-list→tree rebuild live in the shared
 // host core; this crate is only its renderer.
 use host_shared::{
-    build_tree, waui, App, AppImports, ContainerStyle, Entry, Error, Retained, Tree, ViewportSize,
+    build_tree, waui, App, AppImports, ContainerStyle, Entry, EntrySpec, Error, Retained, Tree,
+    ViewportSize,
 };
 
 // The contract's style tokens, aliased to avoid clashing with ratatui's
@@ -71,16 +72,6 @@ use ratatui::{
 pub struct Wake {
     pub rate_ms: u64,
     pub last_wake_ms: u64,
-}
-
-/// A registry entry: the name (`open-entry`'s key, the tile's label
-/// fallback) and the component's file path. The `data` blob is always
-/// `{}`: the host supplies no per-entry metadata, so a tile renders the
-/// name only, as the component degrades a blob it cannot parse.
-#[derive(Clone)]
-pub struct EntrySpec {
-    pub name: String,
-    pub path: String,
 }
 
 /// One surface's focus ring: its targets (in pre-order), the ring's
@@ -215,7 +206,7 @@ impl AppImports for Host {
             .iter()
             .map(|e| Entry {
                 name: e.name.clone(),
-                data: "{}".to_string(),
+                data: e.data.clone(),
             })
             .collect()
     }

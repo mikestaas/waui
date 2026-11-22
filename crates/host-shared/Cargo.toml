@@ -5,6 +5,9 @@ edition = "2021"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 wasmtime = { workspace = true }
+# The registry manifest reader (the desktop's entries): JSON parsing.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The default feature set pulls in `cache` (rustix/errno), which does not

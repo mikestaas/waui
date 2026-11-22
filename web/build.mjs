@@ -3,6 +3,7 @@
 //   node web/build.mjs <component.wasm> <out.html>
 //   node web/build.mjs <component.wasm> <out.html> --url <wasm-url>
 //   node web/build.mjs <component.wasm> <out.html> --entry <name=path>...
+//   node web/build.mjs <component.wasm> <out.html> --registry <manifest.json>
 //
 // The default inlines the core wasm module (base64) plus glue.js and app.js
 // into a copy of index.html, producing a single self-contained file that
@@ -15,6 +16,14 @@
 // URL) or fetched (--url mode), and its `data` blob is derived from the name
 // (the display label, the language's caption, the icon, the window's default
 // size) — the host-defined metadata the opening component parses.
+//
+// With --registry, the registry comes from the manifest file the native
+// hosts read (registry.json): one source of truth for the desktop's entries.
+// The manifest's `data` is carried as-is, except the icon, which the page
+// remaps from the repo's `site/icons/` to its own `icons/`. Each entry's
+// `src` is derived from the name's language suffix: --url mode is the
+// module's URL, inlined mode the core module the page reads (its rust one
+// from `target/<wasm-target>/release/`, the flag's default).
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname } from 'node:path';
@@ -45,10 +54,36 @@ for (;;) {
   entries.push({ name, path: rest.join('=') });
   args.splice(entryFlag, 2);
 }
+// The registry manifest, one: `--registry <manifest.json>`, the file the
+// native hosts read (registry.json at the repo root) — one source of truth
+// for the desktop's entries.
+const registryFlag = args.indexOf('--registry');
+let manifest = null;
+if (registryFlag >= 0) {
+  const file = args[registryFlag + 1];
+  if (!file) {
+    console.error('--registry takes a manifest path');
+    process.exit(2);
+  }
+  manifest = JSON.parse(readFileSync(file, 'utf8'));
+  args.splice(registryFlag, 2);
+}
+// The rust core module's directory for inlined mode (the Makefile's
+// `WASM_TARGET`); the other producers' directories are fixed.
+const targetFlag = args.indexOf('--wasm-target');
+let wasmTarget = 'wasm32-unknown-unknown';
+if (targetFlag >= 0) {
+  wasmTarget = args[targetFlag + 1];
+  if (!wasmTarget) {
+    console.error('--wasm-target takes a value');
+    process.exit(2);
+  }
+  args.splice(targetFlag, 2);
+}
 const [wasmPath, outPath] = args;
 if (!wasmPath || !outPath) {
   console.error(
-    'usage: node web/build.mjs <component.wasm> <out.html> [--url <wasm-url>] [--entry <name=path>]...',
+    'usage: node web/build.mjs <component.wasm> <out.html> [--url <wasm-url>] [--entry <name=path>]... [--registry <manifest.json>] [--wasm-target <triple>]',
   );
   process.exit(2);
 }
@@ -88,16 +123,51 @@ function deriveData(n) {
   return JSON.stringify(data);
 }
 
+// The manifest's `data`, with the icon remapped to the page's icon
+// directory: the manifest carries the canonical (native) path, and the page
+// serves the same set from its own `icons/`.
+function manifestData(d) {
+  const data = { ...d };
+  if (typeof data.icon === 'string' && data.icon.startsWith('site/')) {
+    data.icon = data.icon.slice('site/'.length);
+  }
+  return data;
+}
+
+// The manifest entry's module `src`, from the name's language suffix (no
+// suffix is rust): --url mode is the module's URL; inlined mode is the core
+// module's path, read for the data: URL. The manifest's own `path` is the
+// native component's, which the page does not run.
+function entrySrc(name) {
+  const m = name.match(/^(.*)-(rust|as|wat)$/);
+  const base = m ? m[1] : name;
+  const suffix = m ? `-${m[2]}` : '';
+  if (wasmUrl) return `demo-${base}${suffix}.wasm`;
+  if (!m || m[2] === 'rust') return `target/${wasmTarget}/release/demo_${base}.wasm`;
+  if (m[2] === 'as') return `target/assembly/demo-${base}-as.wasm`;
+  return `target/wat/demo-${base}.wasm`;
+}
+
 // The registry, as the page carries it. `src` is host-internal (the
 // component never sees it): inlined mode is a data: URL the page fetches
 // like any other src; --url mode is the URL as given.
-const registry = entries.map((e) => {
-  const entry = { name: e.name, data: deriveData(e.name) };
-  if (wasmUrl) {
-    entry.src = e.path;
-  } else {
-    entry.src = `data:application/wasm;base64,${readFileSync(e.path).toString('base64')}`;
-  }
+const registry = [
+  // The manifest's entries: the `data` as carried (the icon remapped), the
+  // `src` derived from the name.
+  ...(manifest
+    ? manifest.entries.map((e) => ({
+        name: e.name,
+        path: entrySrc(e.name),
+        data: JSON.stringify(manifestData(e.data)),
+      }))
+    : []),
+  // The ad-hoc `--entry` ones: the `data` derived from the name.
+  ...entries.map((e) => ({ ...e, data: deriveData(e.name) })),
+].map((e) => {
+  const entry = { name: e.name, data: e.data };
+  entry.src = wasmUrl
+    ? e.path
+    : `data:application/wasm;base64,${readFileSync(e.path).toString('base64')}`;
   return entry;
 });
 
@@ -146,5 +216,5 @@ const size = wasmUrl
   ? `module at ${wasmUrl}`
   : `component ${(readFileSync(wasmPath).length / 1024).toFixed(0)} kB`;
 console.log(
-  `wrote ${outPath} (${(page.length / 1024).toFixed(0)} kB, ${size}${entries.length > 0 ? `, ${entries.length} entries` : ''})`,
+  `wrote ${outPath} (${(page.length / 1024).toFixed(0)} kB, ${size}${registry.length > 0 ? `, ${registry.length} entries` : ''})`,
 );

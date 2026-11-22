@@ -1,0 +1,49 @@
+{
+  "entries": [
+    {
+      "name": "counter-rust",
+      "path": "target/components/demo-counter.component.wasm",
+      "data": { "label": "Counter", "lang": "Rust", "icon": "site/icons/counter-rust.svg", "width": 300, "height": 380 }
+    },
+    {
+      "name": "counter-as",
+      "path": "target/components/demo-counter-as.component.wasm",
+      "data": { "label": "Counter", "lang": "AssemblyScript", "icon": "site/icons/counter-as.svg", "width": 300, "height": 380 }
+    },
+    {
+      "name": "counter-wat",
+      "path": "target/components/demo-counter-wat.component.wasm",
+      "data": { "label": "Counter", "lang": "WAT", "icon": "site/icons/counter-wat.svg", "width": 300, "height": 380 }
+    },
+    {
+      "name": "stopwatch-rust",
+      "path": "target/components/demo-stopwatch.component.wasm",
+      "data": { "label": "Stopwatch", "lang": "Rust", "icon": "site/icons/stopwatch-rust.svg", "width": 300, "height": 380 }
+    },
+    {
+      "name": "stopwatch-as",
+      "path": "target/components/demo-stopwatch-as.component.wasm",
+      "data": { "label": "Stopwatch", "lang": "AssemblyScript", "icon": "site/icons/stopwatch-as.svg", "width": 300, "height": 380 }
+    },
+    {
+      "name": "stopwatch-wat",
+      "path": "target/components/demo-stopwatch-wat.component.wasm",
+      "data": { "label": "Stopwatch", "lang": "WAT", "icon": "site/icons/stopwatch-wat.svg", "width": 300, "height": 380 }
+    },
+    {
+      "name": "todo-rust",
+      "path": "target/components/demo-todo.component.wasm",
+      "data": { "label": "Todo", "lang": "Rust", "icon": "site/icons/todo-rust.svg", "width": 460, "height": 500 }
+    },
+    {
+      "name": "todo-as",
+      "path": "target/components/demo-todo-as.component.wasm",
+      "data": { "label": "Todo", "lang": "AssemblyScript", "icon": "site/icons/todo-as.svg", "width": 460, "height": 500 }
+    },
+    {
+      "name": "todo-wat",
+      "path": "target/components/demo-todo-wat.component.wasm",
+      "data": { "label": "Todo", "lang": "WAT", "icon": "site/icons/todo-wat.svg", "width": 460, "height": 500 }
+    }
+  ]
+}

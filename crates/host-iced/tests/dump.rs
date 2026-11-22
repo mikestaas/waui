@@ -16,14 +16,15 @@
 //! byte-identical PNGs; the stopwatch's readout is wall-clock time, so its
 //! running state runs on a fake clock that advances (`--now <base> <step>`).
 //!
-//! The multi-component scenario (`--entry` registry, `--double-click`
+//! The multi-component scenario (`--registry` manifest, `--double-click`
 //! tiles, `--click` the window's close button) runs the desktop app, which
 //! draws the whole desktop — the menu bar, the icon grid, and each window's
 //! chrome (title bar, close button, cascade) — as its own widget tree. The
 //! host seats each opened entry's content in the window's content slot and
-//! routes the pointer and key events to the app. The windows' content is
-//! deterministic (the counter at 0; the stopwatch paused at 0 ms), so no
-//! fake clock is needed.
+//! routes the pointer and key events to the app. The manifest's nine
+//! entries span all three producers, so the scenario builds all three
+//! suites. The windows' content is deterministic (the counter at 0; the
+//! stopwatch paused at 0 ms), so no fake clock is needed.
 //!
 //! The goldens in `tests/goldens/` are the visual regression layer: the
 //! whole frame, byte-exact, shared by the three producers (the shared
@@ -36,7 +37,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use waui_test::{
     as_toolchain_available, assert_golden, build_component, build_component_as,
     build_component_wat, component_path, component_path_as, component_path_wat,
-    wat_toolchain_available, AS_BUILD_LOCK, RUST_BUILD_LOCK, WAT_BUILD_LOCK,
+    wat_toolchain_available, waui_root, AS_BUILD_LOCK, RUST_BUILD_LOCK, WAT_BUILD_LOCK,
 };
 
 // The fake clock for the stopwatch's running state: the n-th `now` call
@@ -60,6 +61,9 @@ fn run_dump(path: &Path, args: &[String], now: Option<(u64, u64)>) -> (u32, u32,
         DUMP_COUNTER.fetch_add(1, Ordering::Relaxed)
     ));
     let mut cmd = Command::new(bin);
+    // The registry manifest's entry paths and icon paths are relative to
+    // the repo root, so the host runs from there.
+    cmd.current_dir(waui_root());
     cmd.arg("--dump").arg(&file);
     if let Some((base, step)) = now {
         cmd.arg("--now").arg(base.to_string()).arg(step.to_string());
@@ -405,23 +409,14 @@ fn assert_todo_frame(path: &Path, producer: &str) {
     save_producer_golden(&bytes, producer, "todo-added.png");
 }
 
-/// The registry's `--entry` argv elements for the producer's three demos,
-/// in tile order (the tile `i` is the registry entry `i`).
-fn entries(producer: &str) -> Vec<String> {
-    let suffix = match producer {
-        "rust" => "",
-        "as" => "-as",
-        _ => "-wat",
-    };
-    let mut out = Vec::new();
-    for name in ["counter", "stopwatch", "todo"] {
-        out.push("--entry".to_string());
-        out.push(format!(
-            "{name}={}",
-            component_path(&format!("demo-{name}{suffix}")).display()
-        ));
-    }
-    out
+/// The registry's `--registry` argv element: the manifest at the repo root
+/// (the nine entries, all three producers' demos — the tile `i` is the
+/// registry entry `i`).
+fn registry_args() -> Vec<String> {
+    vec![
+        "--registry".to_string(),
+        waui_root().join("registry.json").display().to_string(),
+    ]
 }
 
 /// The desktop's frames: the app-drawn window chrome (panel fill, title
@@ -430,7 +425,7 @@ fn entries(producer: &str) -> Vec<String> {
 /// paused at 0 ms), so the frames are deterministic without a fake clock.
 fn assert_desktop_frame(path: &Path, producer: &str) {
     // One window: the counter, opened by a double-click on its tile.
-    let mut args = entries(producer);
+    let mut args = registry_args();
     args.push("--double-click".to_string());
     args.push("100".to_string());
     let (w, h, buf, bytes) = run_dump(path, &args, None);
@@ -478,10 +473,12 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
         "the window's and the tiles' borders are missing: {border} px"
     );
     // The first cascade position (24, 48): the title bar, then the body.
+    // The title bar's left edge is the entry's icon, so the bar fill is
+    // sampled past the label.
     assert!(
-        near(px(&buf, w, 30, 60), TITLEBAR, 8),
+        near(px(&buf, w, 150, 60), TITLEBAR, 8),
         "the window's title bar should be at the first cascade position: {:?}",
-        px(&buf, w, 30, 60)
+        px(&buf, w, 150, 60)
     );
     assert!(
         near(px(&buf, w, 30, 200), BUTTON_FILL, 8),
@@ -493,11 +490,11 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
 
     // Two windows: the stopwatch cascades down-right of the counter; its
     // title bar adds pixels on top.
-    let mut args = entries(producer);
+    let mut args = registry_args();
     args.push("--double-click".to_string());
     args.push("100".to_string());
     args.push("--double-click".to_string());
-    args.push("101".to_string());
+    args.push("103".to_string());
     let (w, h, buf, bytes) = run_dump(path, &args, None);
     let titlebar_two = count_near(&buf, w, h, TITLEBAR, 8);
     assert!(
@@ -507,14 +504,14 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     assert_png_golden(&bytes, "desktop-2.png");
     save_producer_golden(&bytes, producer, "desktop-2.png");
 
-    // Close the first window: click its close button (the app's own, id =
-    // handle + the close offset). The surviving window's chrome is all that
-    // remains.
-    let mut args = entries(producer);
+    // Close the first window (the counter, under the stopwatch): click its
+    // close button (the app's own, id = handle + the close offset). The
+    // surviving window's chrome is all that remains.
+    let mut args = registry_args();
     args.push("--double-click".to_string());
     args.push("100".to_string());
     args.push("--double-click".to_string());
-    args.push("101".to_string());
+    args.push("103".to_string());
     args.push("--click".to_string());
     args.push("410000".to_string());
     let (w, h, buf, bytes) = run_dump(path, &args, None);
@@ -527,47 +524,60 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     save_producer_golden(&bytes, producer, "desktop-close.png");
 }
 
-#[test]
-fn desktop_dump() {
-    let _guard = RUST_BUILD_LOCK
+/// The desktop scenario's registry spans all three producers (the manifest's
+/// nine entries), so the scenario builds all three suites (the four
+/// components each), under all three build locks in a fixed order. `false`
+/// when a toolchain is missing: the caller skips the scenario.
+fn build_all_producers() -> bool {
+    if !as_toolchain_available() || !wat_toolchain_available() {
+        return false;
+    }
+    let _rust = RUST_BUILD_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    build_component("demo-desktop");
-    build_component("demo-counter");
-    build_component("demo-stopwatch");
-    build_component("demo-todo");
+    let _as = AS_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let _wat = WAT_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for demo in [
+        "demo-desktop",
+        "demo-counter",
+        "demo-stopwatch",
+        "demo-todo",
+    ] {
+        build_component(demo);
+        build_component_as(demo);
+        build_component_wat(demo);
+    }
+    true
+}
+
+#[test]
+fn desktop_dump() {
+    if !build_all_producers() {
+        eprintln!("skipping: the desktop registry needs all three producers' toolchains (run `npm install`)");
+        return;
+    }
     assert_desktop_frame(&component_path("demo-desktop"), "rust");
 }
 
 #[test]
 fn desktop_dump_as() {
-    if !as_toolchain_available() {
-        eprintln!("skipping: AssemblyScript toolchain not installed (run `npm install`)");
+    if !build_all_producers() {
+        eprintln!("skipping: the desktop registry needs all three producers' toolchains (run `npm install`)");
         return;
     }
-    let _guard = AS_BUILD_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    build_component_as("demo-desktop");
-    build_component_as("demo-counter");
-    build_component_as("demo-stopwatch");
-    build_component_as("demo-todo");
     assert_desktop_frame(&component_path_as("demo-desktop"), "as");
 }
 
 #[test]
 fn desktop_dump_wat() {
-    if !wat_toolchain_available() {
-        eprintln!("skipping: wasm-tools not on the PATH");
+    if !build_all_producers() {
+        eprintln!("skipping: the desktop registry needs all three producers' toolchains (run `npm install`)");
         return;
     }
-    let _guard = WAT_BUILD_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    build_component_wat("demo-desktop");
-    build_component_wat("demo-counter");
-    build_component_wat("demo-stopwatch");
-    build_component_wat("demo-todo");
     assert_desktop_frame(&component_path_wat("demo-desktop"), "wat");
 }
 

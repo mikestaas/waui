@@ -13,3 +13,6 @@ component-ui = { path = "../component-ui" }
 [dev-dependencies]
 wasmtime = { workspace = true }
 waui-test = { path = "../waui-test" }
+# The roundtrip test reads the registry manifest through the hosts' own
+# reader, so the test and the hosts parse one file the same way.
+host-shared = { path = "../host-shared" }
