@@ -30,6 +30,7 @@
 //! re-queried from `view` (a diff cannot carry id-less nodes) — and
 //! rebuilds; otherwise it redraws.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
 // The host clock: wall time natively, `performance.now()` in the browser.
@@ -59,11 +60,22 @@ use host_shared::waui::ui::widget::{
 
 use ratatui::{
     backend::TestBackend,
-    layout::{Alignment, Constraint, Layout, Margin, Rect},
+    layout::{Alignment, Constraint, Layout, Margin, Rect, Size},
     style::{Color, Modifier, Style},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame, Terminal,
 };
+// The halfblocks image encoder: the vendored copy of ratatui-image's
+// pure-Rust halfblocks path, for the surfaces the crate does not run on
+// (the `--dump` frame and the browser).
+mod halfblocks;
+
+// The decoded images and their rasters: the `image` crate's type. `FilterType`
+// is the resize filter the native protocol path uses (the halfblocks encoder
+// carries its own, in `halfblocks.rs`), so it is native-only.
+#[cfg(not(target_arch = "wasm32"))]
+use image::imageops::FilterType;
+use image::DynamicImage;
 
 /// The component's refresh request, shared between the world-import impl
 /// (the writer) and the loop (the reader): the period in ms, 0 = no
@@ -118,6 +130,9 @@ pub struct Host {
     /// The registry (`--entry`): a non-empty one makes this host a
     /// multi-window host.
     pub entries: Vec<EntrySpec>,
+    /// The image state: the draw mode, the page's assets, and the decoded
+    /// images (the registry's icons, keyed by `src`).
+    pub image: ImageState,
     /// The open windows, in z-order (last = topmost).
     pub windows: Vec<Window>,
     /// The next window handle (the host's flat id, from [`HANDLE_BASE`]).
@@ -140,6 +155,7 @@ impl Default for Host {
             engine,
             linker,
             entries: Vec::new(),
+            image: ImageState::default(),
             windows: Vec::new(),
             next_handle: HANDLE_BASE,
         }
@@ -185,6 +201,12 @@ impl Host {
             engine: self.engine.clone(),
             linker: self.linker.clone(),
             entries: Vec::new(),
+            // The same draw mode (a window's images, if a demo ever has
+            // them, render like the app's); a fresh cache and no assets.
+            image: ImageState {
+                mode: self.image.mode.clone(),
+                ..ImageState::default()
+            },
             windows: Vec::new(),
             next_handle: HANDLE_BASE,
         }
@@ -317,6 +339,146 @@ fn is_tile(style: &ContainerStyle) -> bool {
     style.cursor == WCursor::Pointer
 }
 
+// --------------------------------------------------------------------------
+// Images: the registry's icons, decoded per `src` and drawn per surface.
+
+/// How an image node is drawn.
+#[derive(Clone)]
+pub enum ImageMode {
+    /// The native live terminal: ratatui-image, the terminal's graphics
+    /// protocol (sixel, kitty, iterm2) or its halfblocks fallback.
+    #[cfg(not(target_arch = "wasm32"))]
+    Protocol(ratatui_image::picker::Picker),
+    /// The `--dump` frame and the browser: the vendored halfblocks encoder
+    /// (the crate does not compile for wasm32-unknown-unknown).
+    Halfblocks,
+}
+
+impl Default for ImageMode {
+    fn default() -> Self {
+        ImageMode::Halfblocks
+    }
+}
+
+/// One decoded image, ready to draw at a cell size: the encoded halfblocks
+/// (both surfaces), or the built protocol (the native live terminal).
+enum ImageData {
+    Halfblocks {
+        data: Vec<halfblocks::HalfBlock>,
+        size: Size,
+    },
+    #[cfg(not(target_arch = "wasm32"))]
+    Protocol(ratatui_image::protocol::Protocol),
+}
+
+/// The host's image state: the draw mode, the asset bytes the page provided
+/// (the browser; the native host resolves a `src` against the working
+/// directory instead), and the decoded images, keyed by `src` and cell size.
+/// The decoded result is a pure function of the `src` bytes and the size, so
+/// caching it keeps the frame a pure function of the tree.
+pub struct ImageState {
+    pub mode: ImageMode,
+    pub assets: BTreeMap<String, Vec<u8>>,
+    rasters: BTreeMap<String, Option<DynamicImage>>,
+    data: BTreeMap<(String, u16, u16), Option<ImageData>>,
+}
+
+impl Default for ImageState {
+    fn default() -> Self {
+        Self {
+            mode: ImageMode::default(),
+            assets: BTreeMap::new(),
+            rasters: BTreeMap::new(),
+            data: BTreeMap::new(),
+        }
+    }
+}
+
+impl ImageState {
+    /// The image's bytes: the page's assets first (the browser), else the
+    /// file at `src` (the native host; the registry's icon paths are
+    /// relative to the working directory).
+    fn bytes(&self, src: &str) -> Option<Vec<u8>> {
+        if let Some(bytes) = self.assets.get(src) {
+            return Some(bytes.clone());
+        }
+        // The browser has no filesystem, so only the page's assets.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::fs::read(src).ok()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            None
+        }
+    }
+
+    /// The decoded image at its intrinsic size, cached per `src`: the
+    /// registry's icons are SVG, which the `image` crate cannot decode, so
+    /// resvg rasterizes them; the other formats go through `image`. A failed
+    /// decode is cached, so a bad `src` costs one attempt.
+    fn raster(&mut self, src: &str) -> Option<DynamicImage> {
+        if let Some(img) = self.rasters.get(src) {
+            return img.clone();
+        }
+        let img = self.bytes(src).and_then(|bytes| {
+            if src.ends_with(".svg") {
+                rasterize_svg(&bytes)
+            } else {
+                image::load_from_memory(&bytes).ok()
+            }
+        });
+        self.rasters.insert(src.to_string(), img.clone());
+        img
+    }
+
+    /// The image drawn at `size` cells, built once per (`src`, size).
+    fn image(&mut self, src: &str, size: Size) -> Option<&ImageData> {
+        let key = (src.to_string(), size.width, size.height);
+        if !self.data.contains_key(&key) {
+            let built = self.raster(src).and_then(|img| match &self.mode {
+                ImageMode::Halfblocks => Some(ImageData::Halfblocks {
+                    data: halfblocks::encode(&img, size),
+                    size,
+                }),
+                #[cfg(not(target_arch = "wasm32"))]
+                ImageMode::Protocol(picker) => picker
+                    .new_protocol(
+                        img,
+                        size,
+                        ratatui_image::Resize::Fit(Some(FilterType::Triangle)),
+                    )
+                    .ok()
+                    .map(ImageData::Protocol),
+            });
+            self.data.insert(key.clone(), built);
+        }
+        self.data.get(&key)?.as_ref()
+    }
+}
+
+/// An SVG at its own size, as RGBA: usvg parses it and resvg rasterizes it.
+/// The registry's icons are viewBoxes without a size, so their size is the
+/// viewBox's.
+fn rasterize_svg(bytes: &[u8]) -> Option<DynamicImage> {
+    let options = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_data(bytes, &options).ok()?;
+    let size = tree.size();
+    let w = size.width() as u32;
+    let h = size.height() as u32;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let mut pixmap = tiny_skia::Pixmap::new(w, h)?;
+    resvg::render(
+        &tree,
+        tiny_skia::Transform::identity(),
+        &mut pixmap.as_mut(),
+    );
+    let rgba = pixmap.data().to_vec();
+    Some(image::RgbaImage::from_raw(w, h, rgba)?.into())
+}
+
 // The tui's geometry scale: the component's pixel geometry (a positioned
 // container's `x`/`y`/`w`/`h`, an image's size) mapped onto the terminal's
 // character cells — 8px wide, 16px tall, the cell's aspect. `0` leaves a
@@ -324,6 +486,31 @@ fn is_tile(style: &ContainerStyle) -> bool {
 // stays 1:1 (a cell is a character).
 const CELL_W: u32 = 8;
 const CELL_H: u32 = 16;
+
+/// An image's cell size: its pixel size scaled to the cell metric, or the
+/// host's default when a dimension is 0.
+fn image_width(width: u32) -> u16 {
+    if width > 0 {
+        (width / CELL_W).max(1) as u16
+    } else {
+        8
+    }
+}
+
+/// An image's cell height: its pixel height scaled to the cell metric, or
+/// the host's default when it is 0.
+fn image_height(height: u32) -> u16 {
+    if height > 0 {
+        (height / CELL_H).max(1) as u16
+    } else {
+        3
+    }
+}
+
+/// An image's slot in cells.
+fn image_slot(width: u32, height: u32) -> Size {
+    Size::new(image_width(width), image_height(height))
+}
 
 /// A container's box, if it has one: a positioned container (a window) or a
 /// tile (the component's `cursor: pointer` marker, in-flow) is a bordered
@@ -347,17 +534,9 @@ pub fn width_of(node: &Tree, has_registry: bool) -> u16 {
             };
             inner + 2
         }
-        // A framed placeholder (a terminal has no pixels): the node's width
-        // in the host's units — a pixel size scaled to cells, or the host
-        // default when it is 0 — plus its two border columns.
-        Tree::Image(_, _, width, _) => {
-            let inner = if *width > 0 {
-                (*width / CELL_W).max(1) as u16
-            } else {
-                8
-            };
-            inner + 2
-        }
+        // A decoded image fills its slot; the placeholder, when the `src`
+        // does not resolve, is framed within it.
+        Tree::Image(_, _, width, _) => image_width(*width),
         // A bordered box (a tile or a window): a positioned box with an
         // explicit width uses it (scaled); the rest size to their widest
         // child plus the two border columns and the padding (the component's
@@ -399,17 +578,9 @@ pub fn height_of(node: &Tree, has_registry: bool) -> u16 {
         Tree::Text(..) => 1,
         Tree::Button(..) => 3, // border top, label, border bottom
         Tree::Input(..) => 3,  // border top, content, border bottom
-        // The placeholder's height in the host's units — a pixel size scaled
-        // to cells, or the host default when it is 0 — plus its two border
-        // rows.
-        Tree::Image(_, _, _, height) => {
-            let inner = if *height > 0 {
-                (*height / CELL_H).max(1) as u16
-            } else {
-                3
-            };
-            inner + 2
-        }
+        // A decoded image fills its slot; the placeholder, when the `src`
+        // does not resolve, is framed within it.
+        Tree::Image(_, _, _, height) => image_height(*height),
         // A bordered box (a tile or a window): a positioned box with an
         // explicit height uses it (scaled); the rest size to their tallest
         // child plus the two border rows and the padding (the component's
@@ -757,6 +928,7 @@ fn render(
     focus: Option<u32>,
     has_registry: bool,
     windows: &[Window],
+    images: &mut ImageState,
 ) {
     // A content slot: seat the opened component's tree here (centered). The
     // slot is empty in the app's tree; the window's tree fills it.
@@ -778,6 +950,7 @@ fn render(
                     focus,
                     false,
                     windows,
+                    images,
                 );
             }
             return;
@@ -831,18 +1004,30 @@ fn render(
                 area,
             );
         }
-        // A terminal has no pixels: a dim placeholder box, the node's size.
-        // An image is display-only, so the marker is dim, like the hint bar.
-        Tree::Image(..) => {
-            let style = Style::default().fg(Color::DarkGray);
-            let block = Block::default().borders(Borders::ALL).border_style(style);
-            frame.render_widget(
-                Paragraph::new("image")
-                    .style(style)
-                    .alignment(Alignment::Center)
-                    .block(block),
-                area,
-            );
+        // The registry's icons: the decoded image in its slot, or the
+        // placeholder when the `src` does not resolve (a display-only
+        // marker, dim, like the hint bar).
+        Tree::Image(_, src, width, height) => {
+            let size = image_slot(*width, *height);
+            match images.image(src, size) {
+                Some(ImageData::Halfblocks { data, size }) => {
+                    halfblocks::render(data, *size, area, frame.buffer_mut());
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                Some(ImageData::Protocol(protocol)) => {
+                    // A protocol image that no longer fits (a shrunken
+                    // terminal) leaves the placeholder in its place.
+                    if let Some(ph) = protocol.needs_placeholder(area) {
+                        render_image_placeholder(frame, ph);
+                    } else {
+                        frame.render_widget(
+                            ratatui_image::Image::new(protocol).allow_clipping(true),
+                            area,
+                        );
+                    }
+                }
+                None => render_image_placeholder(frame, area),
+            }
         }
         // A box (a tile or a window): a bordered box around its children,
         // the focus ring on the border when a focused tile.
@@ -858,6 +1043,7 @@ fn render(
                 focus,
                 has_registry,
                 windows,
+                images,
             );
         }
         Tree::Column(id, align, style, children) if is_box(style, has_registry) => {
@@ -872,6 +1058,7 @@ fn render(
                 focus,
                 has_registry,
                 windows,
+                images,
             );
         }
         Tree::Row(_, align, style, children) => {
@@ -884,6 +1071,7 @@ fn render(
                     focus,
                     has_registry,
                     windows,
+                    images,
                 );
             }
         }
@@ -897,6 +1085,7 @@ fn render(
                     focus,
                     has_registry,
                     windows,
+                    images,
                 );
             }
         }
@@ -919,6 +1108,7 @@ fn render_box(
     focus: Option<u32>,
     has_registry: bool,
     windows: &[Window],
+    images: &mut ImageState,
 ) {
     // A window is never the focus target (its content is), so its border is
     // dim; a focused tile takes the ring.
@@ -951,8 +1141,24 @@ fn render_box(
             focus,
             has_registry,
             windows,
+            images,
         );
     }
+}
+
+/// The marker for an image whose `src` does not resolve: a dim framed box,
+/// the node's size. An image is display-only, so the marker is dim, like
+/// the hint bar.
+fn render_image_placeholder(frame: &mut Frame, area: Rect) {
+    let style = Style::default().fg(Color::DarkGray);
+    let block = Block::default().borders(Borders::ALL).border_style(style);
+    frame.render_widget(
+        Paragraph::new("image")
+            .style(style)
+            .alignment(Alignment::Center)
+            .block(block),
+        area,
+    );
 }
 
 // --------------------------------------------------------------------------
@@ -1045,6 +1251,7 @@ pub fn draw(
     windows: &[Window],
     _active: usize,
     has_registry: bool,
+    images: &mut ImageState,
 ) {
     let area = frame.area();
     let has_windows = !windows.is_empty();
@@ -1058,7 +1265,15 @@ pub fn draw(
     // root is `stretch: both`) and is centered along the rest.
     let root_area = root_area(app, bars[1], has_registry);
     if root_area.width > 0 && root_area.height > 0 {
-        render(frame, app, root_area, app_focus, has_registry, windows);
+        render(
+            frame,
+            app,
+            root_area,
+            app_focus,
+            has_registry,
+            windows,
+            images,
+        );
     }
 }
 
@@ -1287,27 +1502,55 @@ pub fn report_input(app: &App, store: &mut Store<Host>, id: u32, buf: &str, pend
 // The `--dump` frame: the byte-parity surface.
 
 /// A terminal color as an ANSI SGR foreground code, for the dump. Returns
-/// `None` for colors a plain text dump cannot represent (reset, truecolor,
-/// indexed).
-fn sgr_fg(c: Color) -> Option<&'static str> {
+/// A cell's foreground as an SGR code: the sixteen colors by their codes,
+/// truecolor by `38;2`, and `None` for a reset (the terminal default) and
+/// indexed (a plain text dump has no palette to index into).
+fn sgr_fg(c: Color) -> Option<String> {
     Some(match c {
-        Color::Black => "\x1b[30m",
-        Color::Red => "\x1b[31m",
-        Color::Green => "\x1b[32m",
-        Color::Yellow => "\x1b[33m",
-        Color::Blue => "\x1b[34m",
-        Color::Magenta => "\x1b[35m",
-        Color::Cyan => "\x1b[36m",
-        Color::Gray => "\x1b[37m",
-        Color::DarkGray => "\x1b[90m",
-        Color::LightRed => "\x1b[91m",
-        Color::LightGreen => "\x1b[92m",
-        Color::LightYellow => "\x1b[93m",
-        Color::LightBlue => "\x1b[94m",
-        Color::LightMagenta => "\x1b[95m",
-        Color::LightCyan => "\x1b[96m",
-        Color::White => "\x1b[97m",
-        Color::Reset | Color::Rgb(..) | Color::Indexed(_) => return None,
+        Color::Black => "\x1b[30m".into(),
+        Color::Red => "\x1b[31m".into(),
+        Color::Green => "\x1b[32m".into(),
+        Color::Yellow => "\x1b[33m".into(),
+        Color::Blue => "\x1b[34m".into(),
+        Color::Magenta => "\x1b[35m".into(),
+        Color::Cyan => "\x1b[36m".into(),
+        Color::Gray => "\x1b[37m".into(),
+        Color::DarkGray => "\x1b[90m".into(),
+        Color::LightRed => "\x1b[91m".into(),
+        Color::LightGreen => "\x1b[92m".into(),
+        Color::LightYellow => "\x1b[93m".into(),
+        Color::LightBlue => "\x1b[94m".into(),
+        Color::LightMagenta => "\x1b[95m".into(),
+        Color::LightCyan => "\x1b[96m".into(),
+        Color::White => "\x1b[97m".into(),
+        Color::Reset | Color::Indexed(_) => return None,
+        Color::Rgb(r, g, b) => format!("\x1b[38;2;{r};{g};{b}m"),
+    })
+}
+
+/// A cell's background as an SGR code: the halfblocks cells carry a
+/// truecolor background (the lower half of each cell), and most cells have
+/// none (`Reset`), so `None`.
+fn sgr_bg(c: Color) -> Option<String> {
+    Some(match c {
+        Color::Black => "\x1b[40m".into(),
+        Color::Red => "\x1b[41m".into(),
+        Color::Green => "\x1b[42m".into(),
+        Color::Yellow => "\x1b[43m".into(),
+        Color::Blue => "\x1b[44m".into(),
+        Color::Magenta => "\x1b[45m".into(),
+        Color::Cyan => "\x1b[46m".into(),
+        Color::Gray => "\x1b[47m".into(),
+        Color::DarkGray => "\x1b[100m".into(),
+        Color::LightRed => "\x1b[101m".into(),
+        Color::LightGreen => "\x1b[102m".into(),
+        Color::LightYellow => "\x1b[103m".into(),
+        Color::LightBlue => "\x1b[104m".into(),
+        Color::LightMagenta => "\x1b[105m".into(),
+        Color::LightCyan => "\x1b[106m".into(),
+        Color::White => "\x1b[107m".into(),
+        Color::Reset | Color::Indexed(_) => return None,
+        Color::Rgb(r, g, b) => format!("\x1b[48;2;{r};{g};{b}m"),
     })
 }
 
@@ -1359,13 +1602,16 @@ fn positioned_extent(node: &Tree) -> (u16, u16) {
 /// inlined at their content slots.
 ///
 /// This is the byte-parity surface between the native and the browser
-/// host: a pure function of the tree, the windows, the width, and whether
-/// a registry is present, so the two must render identically.
+/// host: a pure function of the tree, the windows, the width, whether a
+/// registry is present, and the image state (its mode and the decoded
+/// images, which are pure functions of the asset bytes), so the two must
+/// render identically.
 pub fn dump_frame(
     tree: &Tree,
     windows: &[Window],
     width: Option<u16>,
     has_registry: bool,
+    images: &mut ImageState,
 ) -> String {
     let has_windows = !windows.is_empty();
     // The buffer fits the app whole, floored at half the hint's length, so
@@ -1389,7 +1635,7 @@ pub fn dump_frame(
     let mut app_surf = Surface::default();
     reseat(tree, has_registry, windows, &mut app_surf);
     let completed = terminal
-        .draw(|f| draw(f, tree, app_surf.focus, windows, 0, has_registry))
+        .draw(|f| draw(f, tree, app_surf.focus, windows, 0, has_registry, images))
         .expect("draw failed");
     let buf = completed.buffer;
     let area = buf.area();
@@ -1400,15 +1646,28 @@ pub fn dump_frame(
     for y in 0..area.height {
         let mut line = String::new();
         let mut styled = false;
+        // The SGR state persists across a row's cells, so a cell with no
+        // background clears the one the previous cell set — a stale
+        // halfblocks background would otherwise paint the row's tail.
+        let mut bg_set = false;
         for x in 0..area.width {
-            let (sym, fg, modifier) = match buf.cell((x, y)) {
-                Some(c) => (c.symbol(), c.fg, c.modifier),
-                None => (" ", Color::Reset, Modifier::empty()),
+            let (sym, fg, bg, modifier) = match buf.cell((x, y)) {
+                Some(c) => (c.symbol(), c.fg, c.bg, c.modifier),
+                None => (" ", Color::Reset, Color::Reset, Modifier::empty()),
             };
             if let Some(code) = sgr_fg(fg) {
-                line.push_str(code);
+                line.push_str(&code);
                 styled = true;
             }
+            let bg_code = sgr_bg(bg);
+            if let Some(code) = &bg_code {
+                line.push_str(code);
+                styled = true;
+            } else if bg_set {
+                line.push_str("\x1b[49m");
+                styled = true;
+            }
+            bg_set = bg_code.is_some();
             if modifier.intersects(Modifier::BOLD | Modifier::DIM) {
                 line.push_str(if modifier.contains(Modifier::BOLD) {
                     "\x1b[1m"
@@ -1468,7 +1727,7 @@ mod tests {
             Terminal::new(TestBackend::new(40, 12)).expect("failed to create terminal");
         let tree = Tree::Column(None, WAlign::Center, ContainerStyle::default(), Vec::new());
         terminal
-            .draw(|f| draw(f, &tree, None, &[], 0, false))
+            .draw(|f| draw(f, &tree, None, &[], 0, false, &mut ImageState::default()))
             .expect("draw failed");
         let want: Vec<String> = HINT.split_whitespace().map(str::to_string).collect();
         assert_eq!(
@@ -1486,7 +1745,7 @@ mod tests {
             Terminal::new(TestBackend::new(100, 10)).expect("failed to create terminal");
         let tree = Tree::Column(None, WAlign::Center, ContainerStyle::default(), Vec::new());
         terminal
-            .draw(|f| draw(f, &tree, None, &[], 0, false))
+            .draw(|f| draw(f, &tree, None, &[], 0, false, &mut ImageState::default()))
             .expect("draw failed");
         let buf = terminal.backend().buffer();
         let row = |y: u16| -> String {

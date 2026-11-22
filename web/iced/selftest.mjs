@@ -14,7 +14,7 @@
 // (crates/host-iced/tests/dump.rs): the counter's sign colors, the
 // stopwatch's clock readout, the todo's rows.
 
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -40,33 +40,61 @@ if (!existsSync(hostIcedBin)) {
 const iced = await import(rel('target/host-iced/pkg/host_iced.js'));
 iced.initSync({ module: readFileSync(pkgWasm) });
 
-// One scenario: the demo, the clicks (widget ids, in order), and the fake
-// clock (the n-th `now` call returns base + n * step; null = wall time).
+// One scenario: the demo, the clicks (widget ids, in order), the fake clock
+// (the n-th `now` call returns base + n * step; null = wall time), the
+// registry manifest (a path, or null), and the icon assets (a directory of
+// files, or null). The last two are the desktop's: the browser has no
+// filesystem, so the page hands the manifest and the icons over.
 const scenarios = [
   // The counter: fresh, + + - = 1, and - - - = -3 (the readout joins the
   // minus label in red).
-  ['demo-counter', [], null, null],
-  ['demo-counter', [2, 2, 4], null, null],
-  ['demo-counter', [4, 4, 4], null, null],
+  ['demo-counter', [], null, null, null, null],
+  ['demo-counter', [2, 2, 4], null, null, null, null],
+  ['demo-counter', [4, 4, 4], null, null, null, null],
   // The stopwatch: paused (never reads the clock), and running on the
   // advancing fake clock (the readout is the fixed 100 ms).
-  ['demo-stopwatch', [], null, null],
-  ['demo-stopwatch', [3], 1000, 50],
+  ['demo-stopwatch', [], null, null, null, null],
+  ['demo-stopwatch', [3], 1000, 50, null, null],
   // The todo: the seeded rows, and the add button's next preset.
-  ['demo-todo', [], null, null],
-  ['demo-todo', [9], null, null],
+  ['demo-todo', [], null, null, null, null],
+  ['demo-todo', [9], null, null, null, null],
+  // The desktop: the registry's icon grid (no windows — opening an entry
+  // errors in the browser). The manifest and the icons come from the repo;
+  // the native host reads the same files through the filesystem.
+  ['demo-desktop', [], null, null, 'registry.json', 'site/icons'],
 ];
 
+// The desktop's registry manifest text (the native host reads the same file).
+function manifestText(p) {
+  return p === null ? null : readFileSync(rel(p), 'utf8');
+}
+
+// The desktop's icons, base64-encoded, keyed by their path (the `src` the
+// component uses). The browser has no filesystem, so the page hands them
+// over; `dir` is a directory of files, relative to the repo root.
+function assetsJson(dir) {
+  if (dir === null) return null;
+  const abs = rel(dir);
+  const files = readdirSync(abs).filter((f) => f.endsWith('.svg'));
+  const obj = {};
+  for (const f of files) {
+    obj[`${dir}/${f}`] = readFileSync(`${abs}/${f}`).toString('base64');
+  }
+  return JSON.stringify(obj);
+}
+
 // The native `--dump` PNG for the scenario: the same events the wasm
-// `dump` applies, in the native binary's argv form.
+// `dump` applies, in the native binary's argv form. It runs from the repo
+// root so the manifest's relative paths (and the desktop's icons) resolve.
 const dumpCounter = { value: 0 };
-function nativeFrame(demo, clicks, nowBase, nowStep) {
+function nativeFrame(demo, clicks, nowBase, nowStep, manifest) {
   const file = `/tmp/waui-host-iced-parity-${process.pid}-${dumpCounter.value++}.png`;
   const args = ['--dump', file];
   if (nowBase !== null) args.push('--now', String(nowBase), String(nowStep));
   for (const id of clicks) args.push('--click', String(id));
+  if (manifest !== null) args.push('--registry', manifest);
   args.push(rel(`${componentsDir}/${demo}.component.wasm`));
-  execFileSync(hostIcedBin, args);
+  execFileSync(hostIcedBin, args, { cwd: rel('.') });
   const bytes = readFileSync(file);
   rmSync(file, { force: true });
   return bytes;
@@ -88,17 +116,20 @@ function pngDiff(want, actual) {
   );
 }
 
-for (const [demo, clicks, nowBase, nowStep] of scenarios) {
-  const want = nativeFrame(demo, clicks, nowBase, nowStep);
+for (const [demo, clicks, nowBase, nowStep, manifest, assets] of scenarios) {
+  const want = nativeFrame(demo, clicks, nowBase, nowStep, manifest);
   const artifact = readFileSync(rel(`${componentsDir}/${demo}.cwasm`));
   // The u64 clock parameters are BigInts in the wasm ABI (a JS number is
-  // not one); null stays null (the `isLikeNone` branch).
+  // not one); null stays null (the `isLikeNone` branch). The manifest and
+  // the icon bytes are strings (or null), straight through.
   const actual = new Uint8Array(
     iced.dump(
       new Uint8Array(artifact),
       nowBase === null ? null : BigInt(nowBase),
       nowStep === null ? null : BigInt(nowStep),
       new Uint32Array(clicks),
+      manifestText(manifest),
+      assetsJson(assets),
     ),
   );
   assert.ok(

@@ -27,6 +27,19 @@ host-shared = { path = "../host-shared" }
 wasmtime = { workspace = true }
 ratatui = { workspace = true, features = ["unstable-rendered-line-info"] }
 crossterm = { workspace = true }
+# The image widget: sixel/kitty/iterm2 in a terminal that supports them, its
+# halfblocks fallback otherwise. `default-features = false`: no chafa (it
+# links libchafa) and no tokio. It does not compile for wasm32-unknown-unknown
+# (its rustix dependency selects the libc backend, and libc is empty there),
+# so it is native-only; the browser and `--dump` use the vendored halfblocks
+# encoder (the crate's own, in `halfblocks.rs`).
+ratatui-image = { version = "11.1.0", default-features = false }
+# The registry's icons are SVG, which the `image` crate cannot decode: resvg
+# rasterizes them to RGBA, and `image` decodes the other formats. `tiny-skia`
+# is resvg's raster target (a `Pixmap`), at the version resvg pins.
+resvg = "0.45"
+tiny-skia = "0.11"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # The default feature set pulls in `cache` (rustix/errno), which does not
@@ -45,6 +58,15 @@ js-sys = { workspace = true }
 web-sys = { workspace = true, features = ["Window", "KeyboardEvent"] }
 # `now_ms` on wasm32: `performance.now()`, mirroring the `std::time` API.
 web-time = { workspace = true }
+# The registry's icons for the browser's desktop: resvg rasterizes the SVG
+# (pure Rust, so it runs on wasm32) and `image` decodes the other formats;
+# both feed the vendored halfblocks encoder (`halfblocks.rs`), which is where
+# ratatui-image would draw them natively. The manifest and the icon bytes
+# arrive from the page (the browser has no filesystem) and are parsed by
+# host-shared.
+resvg = "0.45"
+tiny-skia = "0.11"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 waui-test = { path = "../waui-test" }

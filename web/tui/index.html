@@ -60,6 +60,13 @@
       const fail = (message) => {
         badge.textContent = `waui (tui host) — ${message}`;
       };
+      // ArrayBuffer to base64 (the page has no filesystem, so the icons are
+      // handed to the host as bytes).
+      const bufToBase64 = (bytes) => {
+        let binary = '';
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+        return btoa(binary);
+      };
 
       // The page owns the terminal; the host's run reads window.term and
       // wires the keyboard and resize to it.
@@ -78,7 +85,23 @@
         await mod.default();
         badge.textContent = `waui (tui host) — loading ${artifact}`;
         const bytes = new Uint8Array(await (await fetch(artifact)).arrayBuffer());
-        mod.run(bytes);
+        // The desktop carries the registry (the manifest) and the icons; the
+        // browser has no filesystem, so the page fetches both and hands them
+        // over. The other demos carry neither.
+        let manifest = null;
+        let assets = null;
+        if (demo === 'desktop') {
+          manifest = await (await fetch('registry.json')).text();
+          const obj = {};
+          for (const entry of JSON.parse(manifest).entries) {
+            const resp = await fetch(entry.data.icon);
+            if (resp.ok) {
+              obj[entry.data.icon] = bufToBase64(new Uint8Array(await resp.arrayBuffer()));
+            }
+          }
+          assets = JSON.stringify(obj);
+        }
+        mod.run(bytes, manifest, assets);
         badge.textContent = `waui (tui host) — ${demo} (${producer})`;
         // The host's 50ms clock: wake the components whose refresh period
         // has elapsed, apply the diffs, and redraw.

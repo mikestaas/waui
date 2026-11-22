@@ -44,14 +44,12 @@ pub struct EntrySpec {
     pub data: String,
 }
 
-/// Read a registry manifest (a JSON file): its entries' names, paths, and
+/// Parse a registry manifest (JSON text): its entries' names, paths, and
 /// `data` blobs. The manifest is the single source of truth for the
 /// desktop's registry; the `data` object it carries is serialized to the
-/// blob string the component parses.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn read_manifest(path: &str) -> Result<Vec<EntrySpec>, String> {
-    use std::fs;
-
+/// blob string the component parses. `source` names the text in errors (the
+/// file path natively, the page's fetch in the browser).
+pub fn parse_manifest(source: &str, text: &str) -> Result<Vec<EntrySpec>, String> {
     #[derive(serde::Deserialize)]
     struct Manifest {
         entries: Vec<ManifestEntry>,
@@ -63,9 +61,8 @@ pub fn read_manifest(path: &str) -> Result<Vec<EntrySpec>, String> {
         data: serde_json::Value,
     }
 
-    let text = fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
     let manifest: Manifest =
-        serde_json::from_str(&text).map_err(|e| format!("bad manifest {path}: {e}"))?;
+        serde_json::from_str(text).map_err(|e| format!("bad manifest {source}: {e}"))?;
     Ok(manifest
         .entries
         .into_iter()
@@ -75,6 +72,38 @@ pub fn read_manifest(path: &str) -> Result<Vec<EntrySpec>, String> {
             data: e.data.to_string(),
         })
         .collect())
+}
+
+/// Read a registry manifest (a JSON file): its entries' names, paths, and
+/// `data` blobs.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_manifest(path: &str) -> Result<Vec<EntrySpec>, String> {
+    use std::fs;
+
+    let text = fs::read_to_string(path).map_err(|e| format!("failed to read {path}: {e}"))?;
+    parse_manifest(path, &text)
+}
+
+/// Decode the page's image assets: a JSON object mapping an asset path to its
+/// base64-encoded bytes. The browser has no filesystem, so the page fetches
+/// the registry's icons and hands them over; the `run`/`dump` exports take
+/// this text and decode it into the image state's asset map. Wasm-only: the
+/// native host resolves an asset's `src` against the working directory.
+#[cfg(target_arch = "wasm32")]
+pub fn decode_assets(json: &str) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+    use base64::Engine;
+
+    let obj: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(json).map_err(|e| format!("bad assets: {e}"))?;
+    let engine = base64::engine::general_purpose::STANDARD;
+    let mut assets = std::collections::BTreeMap::new();
+    for (path, b64) in obj {
+        let bytes = engine
+            .decode(b64)
+            .map_err(|e| format!("bad assets {path}: {e}"))?;
+        assets.insert(path, bytes);
+    }
+    Ok(assets)
 }
 
 // --------------------------------------------------------------------------

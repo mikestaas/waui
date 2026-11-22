@@ -55,6 +55,7 @@
 //! host clock (each call advances `step` ms), so a `--dump` frame that
 //! reads the clock is deterministic.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, Once};
 use std::time::Duration;
 
@@ -131,6 +132,10 @@ pub struct Host {
     /// The registry (`--entry`): a non-empty one lets the host run
     /// multi-component apps.
     pub entries: Vec<EntrySpec>,
+    /// The image assets the page provided (the browser; the native host
+    /// resolves a `src` against the filesystem instead): path to bytes, for
+    /// the registry's icons.
+    pub assets: BTreeMap<String, Vec<u8>>,
     /// The open panels, in the order they were opened.
     pub panels: Vec<Panel>,
     /// The next panel handle. The base is above the component's own id
@@ -170,6 +175,7 @@ impl Default for Host {
             engine,
             linker,
             entries: Vec::new(),
+            assets: BTreeMap::new(),
             panels: Vec::new(),
             next_handle: HANDLE_BASE,
         }
@@ -201,6 +207,9 @@ impl Host {
             engine: self.engine.clone(),
             linker: self.linker.clone(),
             entries: Vec::new(),
+            // A panel's images (if a demo ever has them) resolve against the
+            // same page assets as the app.
+            assets: self.assets.clone(),
             panels: Vec::new(),
             next_handle: HANDLE_BASE,
         }
@@ -428,6 +437,7 @@ pub fn new_state(
     entries: Vec<EntrySpec>,
     injected: Vec<Injected>,
     fake_now: Option<(u64, u64)>,
+    assets: BTreeMap<String, Vec<u8>>,
 ) -> State {
     let mut linker = Linker::new(engine);
     App::add_to_linker::<_, HasSelf<_>>(&mut linker, |host| host)
@@ -443,6 +453,7 @@ pub fn new_state(
             engine: engine.clone(),
             linker: linker.clone(),
             entries,
+            assets,
             panels: Vec::new(),
             next_handle: HANDLE_BASE,
         },
@@ -853,6 +864,7 @@ pub fn view(state: &State) -> iced::Element<'_, Message> {
         Surface::Main,
         has_registry,
         &host.panels,
+        &host.assets,
     ))
     .width(Length::Fill)
     .height(Length::Fill)
@@ -877,6 +889,7 @@ pub fn view(state: &State) -> iced::Element<'_, Message> {
                 Surface::Panel(panel.handle),
                 false,
                 &EMPTY_PANELS,
+                &host.assets,
             ))
             .width(Length::Fill)
             .height(Length::Fill)
@@ -1190,6 +1203,7 @@ fn map_container<'a>(
     has_registry: bool,
     row: bool,
     panels: &'a [Panel],
+    assets: &'a BTreeMap<String, Vec<u8>>,
 ) -> iced::Element<'a, Message> {
     use iced::widget;
     use iced::Length;
@@ -1219,12 +1233,13 @@ fn map_container<'a>(
             Surface::Panel(panel.handle),
             false,
             &EMPTY_PANELS,
+            assets,
         )]
     } else {
         children
             .iter()
             .filter(|c| !is_positioned(c))
-            .map(|c| map_tree(c, surface, has_registry, panels))
+            .map(|c| map_tree(c, surface, has_registry, panels, assets))
             .collect()
     };
     let spacing = if style.gap > 0 { style.gap as f32 } else { 8.0 };
@@ -1331,7 +1346,7 @@ fn map_container<'a>(
     let mut pos: Vec<(u32, &Tree)> = positioned.iter().map(|c| (z_of(c), *c)).collect();
     pos.sort_by_key(|&(z, _)| z);
     for (_, c) in pos {
-        layers.push(map_tree(c, surface, has_registry, panels));
+        layers.push(map_tree(c, surface, has_registry, panels, assets));
     }
     widget::stack(layers).into()
 }
@@ -1344,13 +1359,14 @@ fn positioned_element<'a>(
     surface: Surface,
     has_registry: bool,
     panels: &'a [Panel],
+    assets: &'a BTreeMap<String, Vec<u8>>,
 ) -> iced::Element<'a, Message> {
     let (x, y) = match node {
         Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) => (s.x as f32, s.y as f32),
         _ => (0.0, 0.0),
     };
     iced::Element::new(PanelWidget {
-        content: map_container(node, surface, has_registry, is_row(node), panels),
+        content: map_container(node, surface, has_registry, is_row(node), panels, assets),
         x,
         y,
     })
@@ -1394,6 +1410,7 @@ fn map_tree<'a>(
     surface: Surface,
     has_registry: bool,
     panels: &'a [Panel],
+    assets: &'a BTreeMap<String, Vec<u8>>,
 ) -> iced::Element<'a, Message> {
     use iced::widget;
     match node {
@@ -1458,11 +1475,12 @@ fn map_tree<'a>(
             }
             input.into()
         }
-        // An image node: the host's rendering of the `src`. Natively the
-        // real icon — iced's `svg` rasterizes the file on demand, and the
-        // `--dump` path does so synchronously — and a file that is missing
-        // falls back to the placeholder box. The browser module draws no
-        // pixels: the placeholder.
+        // An image node: the host's rendering of the `src`. Natively iced's
+        // `svg` rasterizes the file on demand (the `--dump` path does so
+        // synchronously), and a missing file falls back to the placeholder
+        // box. In the browser there is no filesystem: the page's assets (the
+        // registry's icons, base64) are rasterized from memory, and a `src`
+        // with no asset falls back to the placeholder.
         Tree::Image(_, src, width, height) => {
             let w = if *width > 0 { *width as f32 } else { 64.0 };
             let h = if *height > 0 { *height as f32 } else { 64.0 };
@@ -1479,8 +1497,13 @@ fn map_tree<'a>(
             }
             #[cfg(target_arch = "wasm32")]
             {
-                let _ = src;
-                image_placeholder(w, h)
+                match assets.get(src) {
+                    Some(bytes) => widget::svg(iced_core::svg::Handle::from_memory(bytes.clone()))
+                        .width(iced::Length::Fixed(w))
+                        .height(iced::Length::Fixed(h))
+                        .into(),
+                    None => image_placeholder(w, h),
+                }
             }
         }
         // A container: its in-flow children, its chrome, and its positioned
@@ -1488,9 +1511,9 @@ fn map_tree<'a>(
         // host's fixed-position widget at its `(x, y)`.
         Tree::Row(..) | Tree::Column(..) => {
             if is_positioned(node) {
-                positioned_element(node, surface, has_registry, panels)
+                positioned_element(node, surface, has_registry, panels, assets)
             } else {
-                map_container(node, surface, has_registry, is_row(node), panels)
+                map_container(node, surface, has_registry, is_row(node), panels, assets)
             }
         }
     }

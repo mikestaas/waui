@@ -15,12 +15,13 @@
 //! the Node selftest can compare it against the native `host-iced --dump`.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 
 use wasm_bindgen::prelude::*;
 use wasmtime::component::*;
 use wasmtime::Engine;
 
-use host_shared::pulley_config;
+use host_shared::{pulley_config, EntrySpec};
 
 use crate::{
     apply_pending, canvas_size, new_state, render_png, subscription, theme, update, view, Injected,
@@ -43,25 +44,48 @@ fn boot() -> State {
         .expect("the host state was not built; call run first")
 }
 
+/// Apply the page's registry (the desktop): the manifest's entries and the
+/// icon bytes. Both are `None` for the non-desktop demos, which carry no
+/// registry and no images.
+fn apply_registry(
+    manifest: Option<String>,
+    assets: Option<String>,
+) -> Result<(Vec<EntrySpec>, BTreeMap<String, Vec<u8>>), JsValue> {
+    let entries = match manifest {
+        Some(text) => host_shared::parse_manifest("the page's manifest", &text)
+            .map_err(|e| JsValue::from_str(&e))?,
+        None => Vec::new(),
+    };
+    let assets = match assets {
+        Some(json) => host_shared::decode_assets(&json).map_err(|e| JsValue::from_str(&e))?,
+        None => BTreeMap::new(),
+    };
+    Ok((entries, assets))
+}
+
 /// Start the host: deserialize the precompiled component, build the state,
 /// and run the application. The event loop runs on the page's animation
 /// frames and the canvas is appended to the body, so this returns once the
 /// loop is spawned, not when the application exits. `bytes` is the
-/// artifact the `host-precompile` tool wrote.
+/// artifact the `host-precompile` tool wrote. `manifest` (the desktop's
+/// registry JSON) and `assets` (the icons, base64) are `None` for the
+/// non-desktop demos.
 #[wasm_bindgen]
-pub fn run(bytes: &[u8]) -> Result<(), JsValue> {
+pub fn run(bytes: &[u8], manifest: Option<String>, assets: Option<String>) -> Result<(), JsValue> {
     let engine =
         Engine::new(&pulley_config()).map_err(|e| JsValue::from_str(&format!("engine: {e}")))?;
     let component = unsafe { Component::deserialize(&engine, bytes) }
         .map_err(|e| JsValue::from_str(&format!("deserialize: {e}")))?;
-    let state = new_state(&engine, &component, Vec::new(), Vec::new(), None);
+    let (entries, assets) = apply_registry(manifest, assets)?;
+    let has_registry = !entries.is_empty();
+    let state = new_state(&engine, &component, entries, Vec::new(), None, assets);
     STATE.with(|s| *s.borrow_mut() = Some(state));
 
     iced::application(boot, update, view)
         .theme(theme::theme())
         .style(|_, _| theme::style())
         .title("waui")
-        .window_size(canvas_size(false))
+        .window_size(canvas_size(has_registry))
         .subscription(subscription)
         .run()
         .map_err(|e| JsValue::from_str(&format!("run: {e}")))
@@ -79,6 +103,8 @@ pub fn dump(
     now_base: Option<u64>,
     now_step: Option<u64>,
     clicks: &[u32],
+    manifest: Option<String>,
+    assets: Option<String>,
 ) -> Result<Vec<u8>, JsValue> {
     let engine =
         Engine::new(&pulley_config()).map_err(|e| JsValue::from_str(&format!("engine: {e}")))?;
@@ -89,8 +115,9 @@ pub fn dump(
         (Some(base), Some(step)) => Some((base, step)),
         _ => None,
     };
+    let (entries, assets) = apply_registry(manifest, assets)?;
     let injected = clicks.iter().map(|&id| Injected::Click(id)).collect();
-    let mut state = new_state(&engine, &component, Vec::new(), injected, fake_now);
+    let mut state = new_state(&engine, &component, entries, injected, fake_now, assets);
     apply_pending(&mut state);
 
     let (_, _, png) = render_png(&state);

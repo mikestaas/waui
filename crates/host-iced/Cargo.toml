@@ -64,7 +64,7 @@ wasmtime = { version = "49", default-features = false, features = ["anyhow", "ru
 # `linux-theme-detection` are native-only: the executor is always the
 # wasm-bindgen one on wasm32, and the windowing backends have no target
 # there.
-iced = { version = "0.14", default-features = false, features = ["tiny-skia", "crisp", "web-colors", "smol", "fira-sans"] }
+iced = { version = "0.14", default-features = false, features = ["tiny-skia", "crisp", "web-colors", "smol", "fira-sans", "svg"] }
 iced_runtime = "0.14"
 iced_graphics = "0.14"
 fontdb = { version = "0.23", default-features = false }

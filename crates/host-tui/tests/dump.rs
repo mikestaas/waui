@@ -580,14 +580,22 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     // The window covers the grid behind it (its interior is cleared, so a
-    // terminal cell keeps no earlier drawing): of the ten icons (the nine
-    // tiles' and the title bar's), the window hides the top two rows' left
-    // and middle, and the title bar's marker (too small for its box).
-    let images = ls.iter().flat_map(|l| l.plain.matches("image")).count();
-    assert_eq!(
-        images,
-        5,
-        "the window should cover five of the ten icons: {images} visible: {:?}",
+    // terminal cell keeps no earlier drawing). The icons now render as
+    // halfblock pixels, not the old placeholder box: the un-covered ones show
+    // halfblock characters, and no "image" placeholder remains.
+    let halfblocks = ls
+        .iter()
+        .flat_map(|l| l.plain.chars())
+        .filter(|c| *c == '▀' || *c == '▄')
+        .count();
+    assert!(
+        halfblocks > 0,
+        "the visible icons should render as halfblock pixels: {halfblocks} halfblock chars: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    assert!(
+        !ls.iter().any(|l| l.plain.contains("image")),
+        "no image placeholder should remain (the icons are pixels): {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     assert_frame_golden(&frame, "desktop-1.txt");

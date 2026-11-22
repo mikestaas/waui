@@ -304,7 +304,7 @@ web-test-wat: components-wat
 host-tui-wasm: components
 	cargo build -p host-tui --no-default-features --release --target $(WASM_TARGET)
 	wasm-bindgen target/$(WASM_TARGET)/release/host_tui.wasm --target web --out-dir target/host-tui/pkg
-	@for c in $(COMPONENTS); do \
+	@for c in $(COMPONENTS) demo-desktop; do \
 		echo "==> precompiling $$c for pulley32"; \
 		cargo run -p host-precompile -- target/components/$$c.component.wasm target/components/$$c.cwasm || exit 1; \
 	done
@@ -325,7 +325,7 @@ host-tui-wasm-test: host-tui-wasm
 host-iced-wasm: components
 	cargo build -p host-iced --no-default-features --release --target $(WASM_TARGET)
 	wasm-bindgen target/$(WASM_TARGET)/release/host_iced.wasm --target web --out-dir target/host-iced/pkg
-	@for c in $(COMPONENTS); do \
+	@for c in $(COMPONENTS) demo-desktop; do \
 		echo "==> precompiling $$c for pulley32"; \
 		cargo run -p host-precompile -- target/components/$$c.component.wasm target/components/$$c.cwasm || exit 1; \
 	done
@@ -343,21 +343,28 @@ host-iced-wasm-test: host-iced-wasm
 # vendored xterm.js). The pages fetch, so they need a server, exactly like
 # the site's demo pages. Needs wasm-bindgen on the PATH.
 site-hosts: site host-tui-wasm host-iced-wasm
-	@mkdir -p target/site/tui/vendor target/site/iced
+	@mkdir -p target/site/tui/vendor target/site/tui/site/icons target/site/iced/site/icons
 	@cp web/tui/index.html target/site/tui/
 	@cp web/tui/vendor/xterm.js web/tui/vendor/xterm.css web/tui/vendor/LICENSE target/site/tui/vendor/
 	@cp target/host-tui/pkg/host_tui.js target/host-tui/pkg/host_tui_bg.wasm target/site/tui/
 	@cp web/iced/index.html target/site/iced/
 	@cp target/host-iced/pkg/host_iced.js target/host-iced/pkg/host_iced_bg.wasm target/site/iced/
+	# The desktop's registry manifest and icons: the page fetches them (the
+	# browser has no filesystem), the icons at the manifest's `site/icons/`
+	# paths, relative to the page.
+	@cp registry.json target/site/tui/
+	@cp registry.json target/site/iced/
+	@cp site/icons/*.svg target/site/tui/site/icons/
+	@cp site/icons/*.svg target/site/iced/site/icons/
 	# The rust artifacts came with the host builds; precompile the other
-	# two producers (the pages take all nine).
-	@for c in $(COMPONENTS); do \
+	# two producers (the pages take all nine, plus the desktop).
+	@for c in $(COMPONENTS) demo-desktop; do \
 		for s in -as -wat; do \
 			echo "==> precompiling $$c$$s for pulley32"; \
 			cargo run -p host-precompile -- target/components/$$c$$s.component.wasm target/components/$$c$$s.cwasm || exit 1; \
 		done; \
 	done
-	@for d in counter stopwatch todo; do \
+	@for d in counter stopwatch todo desktop; do \
 		for s in "" -as -wat; do \
 			cp target/components/demo-$$d$$s.cwasm target/site/tui/ || exit 1; \
 			cp target/components/demo-$$d$$s.cwasm target/site/iced/ || exit 1; \

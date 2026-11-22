@@ -630,10 +630,20 @@ impl WebHost {
         };
         let tree = &self.tree;
         let focus = self.app_surf.focus;
-        let windows = &self.store.data().windows;
         let active = self.active;
         let has_registry = self.has_registry;
-        let _ = term.draw(|f| draw(f, tree, focus, windows, active, has_registry));
+        let _ = term.draw(|f| {
+            let data = self.store.data_mut();
+            draw(
+                f,
+                tree,
+                focus,
+                &data.windows,
+                active,
+                has_registry,
+                &mut data.image,
+            )
+        });
     }
 }
 
@@ -641,11 +651,31 @@ impl WebHost {
 // The wasm-bindgen exports
 // --------------------------------------------------------------------------
 
+/// Apply the page's registry (the desktop): the manifest's entries and the
+/// icon bytes. Both are `None` for the non-desktop demos, which carry no
+/// registry and no images.
+fn apply_registry(
+    host: &mut Host,
+    manifest: Option<&str>,
+    assets: Option<&str>,
+) -> Result<(), JsValue> {
+    if let Some(text) = manifest {
+        host.entries = host_shared::parse_manifest("the page's manifest", text)
+            .map_err(|e| JsValue::from_str(&e))?;
+    }
+    if let Some(json) = assets {
+        host.image.assets = host_shared::decode_assets(json).map_err(|e| JsValue::from_str(&e))?;
+    }
+    Ok(())
+}
+
 /// Start the host: deserialize the precompiled component, instantiate it,
 /// open the xterm terminal, wire the keyboard, and draw the first frame.
-/// `bytes` is the artifact the `host-precompile` tool wrote.
+/// `bytes` is the artifact the `host-precompile` tool wrote. `manifest` (the
+/// desktop's registry JSON) and `assets` (the icons, base64) are `None` for
+/// the non-desktop demos.
 #[wasm_bindgen]
-pub fn run(bytes: &[u8]) -> Result<(), JsValue> {
+pub fn run(bytes: &[u8], manifest: Option<String>, assets: Option<String>) -> Result<(), JsValue> {
     let engine = Engine::new(&host_shared::pulley_config())
         .map_err(|e| JsValue::from_str(&format!("engine: {e}")))?;
     let component = unsafe { Component::deserialize(&engine, bytes) }
@@ -657,6 +687,7 @@ pub fn run(bytes: &[u8]) -> Result<(), JsValue> {
     let mut host = Host::default();
     host.engine = engine.clone();
     host.linker = linker.clone();
+    apply_registry(&mut host, manifest.as_deref(), assets.as_deref())?;
     let mut store = Store::new(&engine, host);
     let app = App::instantiate(&mut store, &component, &linker)
         .map_err(|e| JsValue::from_str(&format!("instantiate: {e}")))?;
@@ -771,6 +802,8 @@ pub fn dump(
     now_base: Option<u64>,
     now_step: Option<u64>,
     clicks: &[u32],
+    manifest: Option<String>,
+    assets: Option<String>,
 ) -> Result<String, JsValue> {
     let engine = Engine::new(&host_shared::pulley_config())
         .map_err(|e| JsValue::from_str(&format!("engine: {e}")))?;
@@ -787,6 +820,7 @@ pub fn dump(
         (Some(base), Some(step)) => Some((base, step)),
         _ => None,
     };
+    apply_registry(&mut host, manifest.as_deref(), assets.as_deref())?;
     let mut store = Store::new(&engine, host);
     let app = App::instantiate(&mut store, &component, &linker)
         .map_err(|e| JsValue::from_str(&format!("instantiate: {e}")))?;
@@ -811,10 +845,12 @@ pub fn dump(
         retained = Retained::from_view(nodes);
         tree = build_tree(retained.nodes());
     }
+    let data = store.data_mut();
     Ok(dump_frame(
         &tree,
-        &store.data().windows,
+        &data.windows,
         width,
         has_registry,
+        &mut data.image,
     ))
 }

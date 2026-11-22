@@ -11,7 +11,7 @@
 // mirror the native golden tests (crates/host-tui/tests/dump.rs): the
 // counter's sign colors, the stopwatch's clock readout, the todo's rows.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -38,32 +38,60 @@ const tui = await import(rel('target/host-tui/pkg/host_tui.js'));
 tui.initSync({ module: readFileSync(pkgWasm) });
 
 // One scenario: the demo, the clicks (widget ids, in order), the fake clock
-// (the n-th `now` call returns base + n * step; null = wall time), and the
-// buffer width (null = the frame's own size).
+// (the n-th `now` call returns base + n * step; null = wall time), the
+// buffer width (null = the frame's own size), the registry manifest (a path,
+// or null), and the icon assets (a directory of files, or null). The last
+// two are the desktop's: the browser has no filesystem, so the page hands
+// the manifest and the icons over.
 const scenarios = [
   // The counter: fresh, + + - = 1, - - - = -3, and a 40-column wrap.
-  ['demo-counter', [], null, null, null],
-  ['demo-counter', [2, 2, 4], null, null, null],
-  ['demo-counter', [4, 4, 4], null, null, null],
-  ['demo-counter', [], null, null, 40],
+  ['demo-counter', [], null, null, null, null, null],
+  ['demo-counter', [2, 2, 4], null, null, null, null, null],
+  ['demo-counter', [4, 4, 4], null, null, null, null, null],
+  ['demo-counter', [], null, null, 40, null, null],
   // The stopwatch: paused (never reads the clock), and running on the
   // advancing fake clock (the readout is the fixed 100 ms).
-  ['demo-stopwatch', [], null, null, null],
-  ['demo-stopwatch', [3], 1000, 50, null],
+  ['demo-stopwatch', [], null, null, null, null, null],
+  ['demo-stopwatch', [3], 1000, 50, null, null, null],
   // The todo: the seeded rows, and the add button's next preset.
-  ['demo-todo', [], null, null, null],
-  ['demo-todo', [9], null, null, null],
+  ['demo-todo', [], null, null, null, null, null],
+  ['demo-todo', [9], null, null, null, null, null],
+  // The desktop: the registry's icon grid (no windows — opening an entry
+  // errors in the browser). The manifest and the icons come from the repo;
+  // the native host reads the same files through the filesystem.
+  ['demo-desktop', [], null, null, null, 'registry.json', 'site/icons'],
 ];
 
+// The desktop's registry manifest text (the native host reads the same file).
+function manifestText(p) {
+  return p === null ? null : readFileSync(rel(p), 'utf8');
+}
+
+// The desktop's icons, base64-encoded, keyed by their path (the `src` the
+// component uses). The browser has no filesystem, so the page hands them
+// over; `dir` is a directory of files, relative to the repo root.
+function assetsJson(dir) {
+  if (dir === null) return null;
+  const abs = rel(dir);
+  const files = readdirSync(abs).filter((f) => f.endsWith('.svg'));
+  const obj = {};
+  for (const f of files) {
+    obj[`${dir}/${f}`] = readFileSync(`${abs}/${f}`).toString('base64');
+  }
+  return JSON.stringify(obj);
+}
+
 // The native `--dump` frame for the scenario: the same events the wasm
-// `dump` applies, in the native binary's argv form.
-function nativeFrame(demo, clicks, nowBase, nowStep, width) {
+// `dump` applies, in the native binary's argv form. It runs from the repo
+// root so the manifest's relative paths (and the desktop's icons) resolve.
+function nativeFrame(demo, clicks, nowBase, nowStep, width, manifest) {
   const args = ['--dump'];
   if (width !== null) args.push('--width', String(width));
   if (nowBase !== null) args.push('--now', String(nowBase), String(nowStep));
   for (const id of clicks) args.push('--click', String(id));
+  if (manifest !== null) args.push('--registry', manifest);
   args.push(rel(`${componentsDir}/${demo}.component.wasm`));
-  const out = execFileSync(hostTuiBin, args);
+  const out = execFileSync(hostTuiBin, args, { cwd: rel('.') });
   return new TextDecoder().decode(out);
 }
 
@@ -88,17 +116,20 @@ function frameDiff(want, actual) {
   return lines.join('\n');
 }
 
-for (const [demo, clicks, nowBase, nowStep, width] of scenarios) {
-  const want = nativeFrame(demo, clicks, nowBase, nowStep, width);
+for (const [demo, clicks, nowBase, nowStep, width, manifest, assets] of scenarios) {
+  const want = nativeFrame(demo, clicks, nowBase, nowStep, width, manifest);
   const artifact = readFileSync(rel(`${componentsDir}/${demo}.cwasm`));
   // The u64 clock parameters are BigInts in the wasm ABI (a JS number is
-  // not one); null stays null (the `isLikeNone` branch).
+  // not one); null stays null (the `isLikeNone` branch). The manifest and
+  // the icon bytes are strings (or null), straight through.
   const actual = tui.dump(
     new Uint8Array(artifact),
     width,
     nowBase === null ? null : BigInt(nowBase),
     nowStep === null ? null : BigInt(nowStep),
     new Uint32Array(clicks),
+    manifestText(manifest),
+    assetsJson(assets),
   );
   assert.equal(
     actual,

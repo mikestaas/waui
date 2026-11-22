@@ -15,6 +15,8 @@
 //! loop; `--dump <file.png>` renders one frame to a PNG and exits, headless;
 //! `--now <base> <step>` fakes the host clock (each call advances `step` ms).
 
+use std::collections::BTreeMap;
+
 use wasmtime::component::Component;
 use wasmtime::Engine;
 
@@ -183,6 +185,9 @@ fn main() -> iced::Result {
             args.entries.clone(),
             args.injected.clone(),
             args.now,
+            // The native host resolves an image's `src` against the
+            // filesystem; the page's assets are a browser concern.
+            BTreeMap::new(),
         );
         apply_pending(&mut state);
         return render_dump(&state, file);
@@ -203,7 +208,14 @@ fn main() -> iced::Result {
 fn boot() -> State {
     let args = parse_args();
     let (engine, component) = load(&args.path);
-    new_state(&engine, &component, args.entries, args.injected, args.now)
+    new_state(
+        &engine,
+        &component,
+        args.entries,
+        args.injected,
+        args.now,
+        BTreeMap::new(),
+    )
 }
 
 /// Render the current view to a PNG file: the library's render, written

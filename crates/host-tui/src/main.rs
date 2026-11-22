@@ -36,8 +36,10 @@ use host_shared::{build_tree, App, Retained};
 use host_shared::EntrySpec;
 use host_tui::{
     active_app, active_surface, active_target, active_tree, derive_active, draw, dump_frame,
-    focus_newest_window, input_content, now_ms, report_input, reseat_active, Host, Surface,
+    focus_newest_window, input_content, now_ms, report_input, reseat_active, Host, ImageMode,
+    Surface,
 };
+use ratatui_image::picker::Picker;
 
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
@@ -295,10 +297,14 @@ fn main() {
     if dump {
         // Headless: render one frame into a memory buffer and print it.
         // `--width` sizes the buffer like a terminal of that width; by
-        // default it fits the app whole and the windows' cascade.
+        // default it fits the app whole and the windows' cascade. The image
+        // state stays in its default (halfblocks) mode: a dump must not emit
+        // a terminal graphics protocol, and the halfblocks path is the
+        // byte-parity surface with the browser's dump.
+        let data = store.data_mut();
         print!(
             "{}",
-            dump_frame(&tree, &store.data().windows, width, has_registry)
+            dump_frame(&tree, &data.windows, width, has_registry, &mut data.image)
         );
         return;
     }
@@ -310,6 +316,14 @@ fn main() {
     execute!(stdout, EnterAlternateScreen).expect("failed to enter alt screen");
     let mut terminal =
         Terminal::new(CrosstermBackend::new(stdout)).expect("failed to create terminal");
+
+    // The image draw mode: ask the terminal which graphics protocol it
+    // supports (sixel, kitty, iterm2) and its font size, falling back to
+    // halfblocks. The query writes to and reads from the terminal, so it
+    // runs after the alt screen is entered and before the event loop reads
+    // it. A dump never reaches here (it returns above in halfblocks mode).
+    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+    store.data_mut().image.mode = ImageMode::Protocol(picker);
 
     let poll = Duration::from_millis(50);
     // `retained` and `tree` are the startup snapshot above, as the loop
@@ -554,13 +568,15 @@ fn main() {
 
         let _ = terminal
             .draw(|f| {
+                let data = store.data_mut();
                 draw(
                     f,
                     &tree,
                     app_surf.focus,
-                    &store.data().windows,
+                    &data.windows,
                     active,
                     has_registry,
+                    &mut data.image,
                 )
             })
             .expect("failed to draw");
