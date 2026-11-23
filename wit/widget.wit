@@ -92,6 +92,19 @@ interface widget {
     height: u32,
   }
 
+  /// A hyperlink. `label` is the text it displays; `href` is the URL the
+  /// host opens (a new tab or window on the web host, the operating system's
+  /// default handler elsewhere). The host owns the opening: it never reports
+  /// a link activation through the `app` world's `on-click`, so a link is
+  /// unaddressable in the same way an image is, and may omit its `id`.
+  record link {
+    id: option<u32>,
+    parent: option<u32>,
+    label: string,
+    href: string,
+    style: style,
+  }
+
   /// How a container fills the space available to it. `main` is the
   /// `direction` axis, `cross` the other; a host that cannot express a token
   /// renders without it.
@@ -225,6 +238,7 @@ interface widget {
     container(container),
     input(input),
     image(image),
+    link(link),
   }
 
   /// The `changed` mutation's payload: the node, plus its `index` — the

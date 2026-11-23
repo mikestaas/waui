@@ -58,6 +58,13 @@ pub fn to_node(input: TokenStream) -> TokenStream {
                     width: i.width,
                     height: i.height,
                 }}),
+                component_ui::Tree::Link(l) => {wit}::Node::Link({wit}::Link {{
+                    id: l.id,
+                    parent,
+                    label: l.label.clone(),
+                    href: l.href.clone(),
+                    style: style(l.style),
+                }}),
                 component_ui::Tree::Container(c) => {wit}::Node::Container({wit}::Container {{
                     id: c.id,
                     parent,

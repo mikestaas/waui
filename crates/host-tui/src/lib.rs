@@ -538,6 +538,8 @@ fn is_box(style: &ContainerStyle, has_registry: bool) -> bool {
 pub fn width_of(node: &Tree, has_registry: bool) -> u16 {
     match node {
         Tree::Text(content, _) => content.chars().count() as u16,
+        // A link is its label: the href is the host's, not the layout's.
+        Tree::Link(_, label, _, _) => label.chars().count() as u16,
         Tree::Button(_, label, _) => label.chars().count() as u16 + 2, // borders
         // Framed like a button: the field's width — the component's
         // character count, or the content's when it is `0` — plus its two
@@ -592,6 +594,7 @@ pub fn width_of(node: &Tree, has_registry: bool) -> u16 {
 pub fn height_of(node: &Tree, has_registry: bool) -> u16 {
     match node {
         Tree::Text(..) => 1,
+        Tree::Link(..) => 1,
         Tree::Button(..) => 3, // border top, label, border bottom
         Tree::Input(..) => 3,  // border top, content, border bottom
         // A decoded image fills its slot; the placeholder, when the `src`
@@ -1045,6 +1048,16 @@ fn render(
                 None => render_image_placeholder(frame, area),
             }
         }
+        // A link: its label, underlined (the host's marker for a URL). The
+        // host owns the opening, so it is not focusable.
+        Tree::Link(_, label, _, style) => {
+            frame.render_widget(
+                Paragraph::new(label.clone())
+                    .style(node_style(style).add_modifier(Modifier::UNDERLINED))
+                    .alignment(Alignment::Center),
+                area,
+            );
+        }
         // A box (a tile or a window): a bordered box around its children,
         // the focus ring on the border when a focused tile.
         Tree::Row(id, align, style, children) if is_box(style, has_registry) => {
@@ -1370,8 +1383,9 @@ fn focusables(
                 focusables(child, out, has_registry, windows, owner);
             }
         }
-        // An image is display-only; it is not focusable.
-        Tree::Text(..) | Tree::Image(..) => {}
+        // Text and images are display-only; a link is not focusable either
+        // (the host owns the opening).
+        Tree::Text(..) | Tree::Image(..) | Tree::Link(..) => {}
     }
 }
 

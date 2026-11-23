@@ -11,11 +11,11 @@ component changes.
 ## The contract (`wit/`, package `waui:ui`)
 
 - **`widget` interface** — a minimal, renderer-agnostic widget tree: `text`,
-  `button`, `input`, `image`, and `container` (row/column) records, a `node`
-  variant, a semantic `style` (a color and a size token), and a `mutation`
-  variant (`changed`, `removed`). The tree crosses the ABI as a flat,
-  pre-ordered node list; the rules for the list, node identity, and the diff
-  are documented in [`widget.wit`](wit/widget.wit).
+  `button`, `input`, `image`, `link`, and `container` (row/column) records,
+  a `node` variant, a semantic `style` (a color and a size token), and a
+  `mutation` variant (`changed`, `removed`). The tree crosses the ABI as a
+  flat, pre-ordered node list; the rules for the list, node identity, and
+  the diff are documented in [`widget.wit`](wit/widget.wit).
 - **`app` world** — the one component/host protocol: the component exports
   `view` (the current tree) and `changes` (the diff), and the host calls
   `on-click`, `on-text`, `on-tick`, the pointer channels (`on-pointer-down`,

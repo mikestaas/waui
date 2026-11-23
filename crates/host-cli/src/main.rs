@@ -153,6 +153,12 @@ fn render(node: &Tree, depth: usize, out: &mut String) {
             let id = id.map_or_else(String::new, |i| format!("{i}: "));
             out.push_str(&format!("{indent}@{id}{src}\n"));
         }
+        // A link is its label and the URL the host opens; the `→` marks the
+        // target.
+        Tree::Link(id, label, href, _) => {
+            let id = id.map_or_else(String::new, |i| format!("{i}: "));
+            out.push_str(&format!("{indent}[{id}{label} → {href}]\n"));
+        }
         Tree::Row(_, _, _, children) => {
             out.push_str(&format!("{indent}row:\n"));
             for child in children {

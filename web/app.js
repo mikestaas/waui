@@ -167,6 +167,17 @@ function elFor(n, childrenOf, elements) {
     el.style.width = n.width > 0 ? `${n.width}px` : '';
     el.style.height = n.height > 0 ? `${n.height}px` : '';
     if (n.id !== null) elements.set(n.id, el);
+  } else if (n.kind === 'link') {
+    el = document.createElement('a');
+    // The host owns the opening of the URL: a new tab, no referrer. The
+    // component is not told (the host owns the opening, per the WIT), so the
+    // link stays out of the host's pointer model (see the press handler).
+    el.className = `waui waui-link waui-${n.style.color} waui-${n.style.size}`;
+    el.textContent = n.label;
+    el.href = n.href;
+    el.target = '_blank';
+    el.rel = 'noopener';
+    if (n.id !== null) elements.set(n.id, el);
   } else {
     el = document.createElement('div');
     el.className = `waui waui-text waui-${n.style.color} waui-${n.style.size}`;
@@ -262,6 +273,12 @@ function makeTreeRenderer(api, mount) {
       el.dataset.height = n.height;
       el.style.width = n.width > 0 ? `${n.width}px` : '';
       el.style.height = n.height > 0 ? `${n.height}px` : '';
+    } else if (n.kind === 'link') {
+      // A changed link keeps its element; update the label, the target, and
+      // the style.
+      el.textContent = n.label;
+      el.href = n.href;
+      el.className = `waui waui-link waui-${n.style.color} waui-${n.style.size}`;
     }
     return true;
   }
@@ -302,8 +319,8 @@ function makeTreeRenderer(api, mount) {
     const mutations = api.changes();
     if (mutations.length === 0) return false; // nothing changed: do nothing
 
-    // Content-only? A changed leaf (text, button, or input) with an id,
-    // whose position in the tree is unchanged, can be restyled in place.
+    // Content-only? A changed leaf (text, button, input, or link) with an
+    // id, whose position in the tree is unchanged, can be restyled in place.
     // Anything else (a container — restyle cannot update one — or an id-less
     // node) forces a rebuild.
     const inPlace = mutations.every((m) => {
@@ -572,6 +589,10 @@ let lastSynthDbl = null;
 // background resolves to no node (a no-op).
 document.addEventListener('pointerdown', (e) => {
   if (e.button !== 0) return;
+  // A link is the host's, not the component's: the browser opens the `href`
+  // itself, and the host never reports a link activation through `on-click`
+  // (the WIT), so a press on one is dropped before the node resolution.
+  if (e.target.closest('.waui-link')) return;
   const el = e.target.closest('[data-id]');
   if (!el) return; // a press on an unaddressable node has no id to report
   const surface = surfaceOf(el);

@@ -65,7 +65,7 @@
   ;; array (null = none). The contract's tree is a flat, pre-ordered list,
   ;; so the list is the tree.
   (type $flat (struct
-    (field $kind i32)          ;; 0 text, 1 button, 2 container, 3 input, 4 image
+    (field $kind i32)          ;; 0 text, 1 button, 2 container, 3 input, 4 image, 5 link
     (field $id i32)            ;; 0 = none
     (field $parent i32)        ;; 0 = none
     (field $color i32)         ;; the WIT color token
@@ -88,6 +88,7 @@
     (field $shadow i32)        ;; containers: 0 none, 1 raised
     (field $cursor i32)        ;; containers: 0 default, 1 pointer, 2 grab, 3 grabbing, 4 resize
     (field $label (ref null $bytes))
+    (field $href (ref null $bytes))  ;; links: the URL the host opens (null = none)
     (field $index i32)         ;; position among the parent's children
   ))
   (type $flats (array (mut (ref null $flat))))
@@ -169,6 +170,10 @@
   (data (i32.const 65579) "Tab")
   (data (i32.const 65582) "Shift+Tab")
   (data (i32.const 65591) "\E2\9C\95") ;; the close glyph (U+2715)
+  (data (i32.const 65594) "wasm ui demos")
+  (data (i32.const 65607) "double-click an icon to open")
+  (data (i32.const 65635) "GitHub")
+  (data (i32.const 65641) "https://github.com/mikestaas/waui")
 
   ;; ================================================================ the ABI
 
@@ -343,12 +348,46 @@
     (i32.store (i32.add (local.get $rec) (i32.const 24)) (local.get $len))
   )
 
+  ;; Copy a link's href bytes into the arena; store the (ptr, len) at the
+  ;; record's href slot (+28/+32). A twin of $emit-label, whose slot is
+  ;; +20/+24. A null or empty href stores (0, 0).
+  (func $emit-href (param $rec i32) (param $href (ref null $bytes))
+    (local $a (ref $bytes))
+    (local $len i32)
+    (local $i i32)
+    (local $dst i32)
+    (local.set $dst (i32.const 0))
+    (local.set $len (i32.const 0))
+    (if (ref.is_null (local.get $href))
+      (then)
+      (else
+        (local.set $a (ref.cast (ref $bytes) (local.get $href)))
+        (local.set $len (array.len (local.get $a)))
+        (if (i32.eqz (local.get $len))
+          (then)
+          (else
+            (local.set $dst (call $arena-alloc (local.get $len)))
+            (block $done
+              (loop $lp
+                (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+                (i32.store8 (i32.add (local.get $dst) (local.get $i))
+                  (array.get $bytes (local.get $a) (local.get $i)))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br $lp)
+              ))
+          ))
+      ))
+    (i32.store (i32.add (local.get $rec) (i32.const 28)) (local.get $dst))
+    (i32.store (i32.add (local.get $rec) (i32.const 32)) (local.get $len))
+  )
+
   ;; =========================================================== the records
 
   ;; The 60-byte node record for f at rec. Every byte a host reads is
   ;; written: the tag, both option flags (0 = none), the id and parent words
   ;; (when flagged), and the per-kind payload. An image's [28..36) is the
-  ;; width and the height; a container's [20..59) is its 17 record fields.
+  ;; width and the height; a link's [28..36) is the href, its style at
+  ;; [36]/[37]; a container's [20..59) is its 17 record fields.
   ;; The canonical ABI's padding is never written and never read (see
   ;; web/glue.js), so no zero-fill.
   (func $emit-node (param $rec i32) (param $f (ref $flat))
@@ -413,14 +452,26 @@
               (struct.get $flat $height (local.get $f)))
           )
           (else
-            (i32.store8 (i32.add (local.get $rec) (i32.const 28))
-              (struct.get $flat $color (local.get $f)))
-            (i32.store8 (i32.add (local.get $rec) (i32.const 29))
-              (struct.get $flat $size (local.get $f)))
-            (if (i32.eq (local.get $kind) (i32.const 3))
+            (if (i32.eq (local.get $kind) (i32.const 5))
               (then
-                (i32.store (i32.add (local.get $rec) (i32.const 32))
-                  (struct.get $flat $width (local.get $f)))
+                ;; A link: the href at +28/+32 (not the style bytes), the
+                ;; style at +36/+37.
+                (call $emit-href (local.get $rec) (struct.get $flat $href (local.get $f)))
+                (i32.store8 (i32.add (local.get $rec) (i32.const 36))
+                  (struct.get $flat $color (local.get $f)))
+                (i32.store8 (i32.add (local.get $rec) (i32.const 37))
+                  (struct.get $flat $size (local.get $f)))
+              )
+              (else
+                (i32.store8 (i32.add (local.get $rec) (i32.const 28))
+                  (struct.get $flat $color (local.get $f)))
+                (i32.store8 (i32.add (local.get $rec) (i32.const 29))
+                  (struct.get $flat $size (local.get $f)))
+                (if (i32.eq (local.get $kind) (i32.const 3))
+                  (then
+                    (i32.store (i32.add (local.get $rec) (i32.const 32))
+                      (struct.get $flat $width (local.get $f)))
+                  ))
               ))
           ))
       ))
@@ -479,7 +530,7 @@
   ;; Every field is compared uniformly: the fields a kind does not use
   ;; are zero (a container's color/size, a leaf's geometry and chrome
   ;; tokens, an image's direction/align), so the same test holds across
-  ;; kinds; the label is compared after the scalars.
+  ;; kinds; the label, and a link's href, are compared after the scalars.
   (func $fields-differ (param $f (ref $flat)) (param $r (ref $flat)) (result i32)
     (local $d i32)
     (local.set $d
@@ -546,9 +597,14 @@
       ))
     (if (call $nez (local.get $d))
       (then (return (i32.const 1))))
+    (if (call $labels-differ
+          (struct.get $flat $label (local.get $f))
+          (struct.get $flat $label (local.get $r)))
+      (then (return (i32.const 1))))
+    ;; A link's href is its record's second string; the other kinds carry null.
     (call $labels-differ
-      (struct.get $flat $label (local.get $f))
-      (struct.get $flat $label (local.get $r)))
+      (struct.get $flat $href (local.get $f))
+      (struct.get $flat $href (local.get $r)))
   )
 
   ;; Whether f is reported `changed`: id'd and, in bootstrap, any;
@@ -699,7 +755,7 @@
     (local $w (ref $win))
     (local $entries (ref $entries))
     (local $wins (ref $wins))
-    (local.set $total (i32.const 7)) ;; root, menu bar, its three, the area, the grid
+    (local.set $total (i32.const 10)) ;; root, menu bar, its six, the area, the grid
     (local.set $entries (ref.cast (ref $entries) (global.get $entries)))
     (local.set $total (i32.add (local.get $total)
       (i32.div_u (i32.add (array.len (local.get $entries)) (i32.const 2)) (i32.const 3))))
@@ -778,8 +834,9 @@
         (i32.const 0) (i32.const 0) (i32.const 3) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0)
-        (ref.null $bytes) (i32.const 0)))
-    ;; The menu bar (2): the "waui" word, a spacer, and the window count (4).
+        (ref.null $bytes) (ref.null $bytes) (i32.const 0)))
+    ;; The menu bar (2): the "waui" word, the tagline, a spacer, the window
+    ;; count (4), a hint, and the repo link.
     (array.set $flats (local.get $arr) (i32.const 1)
       (struct.new $flat
         (i32.const 2) (i32.const 2) (i32.const 1)
@@ -789,7 +846,7 @@
         (i32.const 12) (i32.const 16) (i32.const 1) (i32.const 0)
         (i32.const 2) (i32.const 1) (i32.const 0) (i32.const 0)
         (i32.const 0)
-        (ref.null $bytes) (i32.const 0)))
+        (ref.null $bytes) (ref.null $bytes) (i32.const 0)))
     (array.set $flats (local.get $arr) (i32.const 2)
       (struct.new $flat
         (i32.const 0) (i32.const 0) (i32.const 2)
@@ -799,29 +856,61 @@
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0)
-        (call $label (i32.const 65536) (i32.const 4)) (i32.const 0)))
+        (call $label (i32.const 65536) (i32.const 4)) (ref.null $bytes) (i32.const 0)))
     (array.set $flats (local.get $arr) (i32.const 3)
       (struct.new $flat
-        (i32.const 2) (i32.const 3) (i32.const 2)
+        (i32.const 0) (i32.const 0) (i32.const 2)
+        (i32.const 5) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0)
+        (call $label (i32.const 65594) (i32.const 13)) (ref.null $bytes) (i32.const 1)))
+    (array.set $flats (local.get $arr) (i32.const 4)
+      (struct.new $flat
+        (i32.const 2) (i32.const 3) (i32.const 2)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 1)
         (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0)
-        (ref.null $bytes) (i32.const 1)))
-    (array.set $flats (local.get $arr) (i32.const 4)
+        (ref.null $bytes) (ref.null $bytes) (i32.const 2)))
+    (array.set $flats (local.get $arr) (i32.const 5)
       (struct.new $flat
         (i32.const 0) (i32.const 4) (i32.const 2)
-        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 5) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0)
-        (call $count-label (global.get $win-len)) (i32.const 2)))
+        (call $count-label (global.get $win-len)) (ref.null $bytes) (i32.const 3)))
+    (array.set $flats (local.get $arr) (i32.const 6)
+      (struct.new $flat
+        (i32.const 0) (i32.const 0) (i32.const 2)
+        (i32.const 5) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0)
+        (call $label (i32.const 65607) (i32.const 28)) (ref.null $bytes) (i32.const 4)))
+    (array.set $flats (local.get $arr) (i32.const 7)
+      (struct.new $flat
+        (i32.const 5) (i32.const 0) (i32.const 2)
+        (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0)
+        (call $label (i32.const 65635) (i32.const 6))
+        (call $label (i32.const 65641) (i32.const 33))
+        (i32.const 5)))
     ;; The grid area (6) and the grid (7): the rows (8+r) and the tiles.
-    (array.set $flats (local.get $arr) (i32.const 5)
+    (array.set $flats (local.get $arr) (i32.const 8)
       (struct.new $flat
         (i32.const 2) (i32.const 6) (i32.const 1)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 1)
@@ -830,8 +919,8 @@
         (i32.const 0) (i32.const 0) (i32.const 3) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0)
-        (ref.null $bytes) (i32.const 1)))
-    (array.set $flats (local.get $arr) (i32.const 6)
+        (ref.null $bytes) (ref.null $bytes) (i32.const 1)))
+    (array.set $flats (local.get $arr) (i32.const 9)
       (struct.new $flat
         (i32.const 2) (i32.const 7) (i32.const 6)
         (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 1)
@@ -840,8 +929,8 @@
         (i32.const 28) (i32.const 0) (i32.const 2) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0)
-        (ref.null $bytes) (i32.const 0)))
-    (local.set $pos (i32.const 7))
+        (ref.null $bytes) (ref.null $bytes) (i32.const 0)))
+    (local.set $pos (i32.const 10))
     (block $rows
       (loop $lp-rows
         (br_if $rows (i32.ge_u (local.get $r) (local.get $n-rows)))
@@ -855,7 +944,7 @@
             (i32.const 44) (i32.const 0) (i32.const 0) (i32.const 0)
             (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
             (i32.const 0)
-            (ref.null $bytes) (local.get $r)))
+            (ref.null $bytes) (ref.null $bytes) (local.get $r)))
         (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
         (local.set $c (i32.const 0))
         (block $cols
@@ -880,7 +969,7 @@
                   (else (i32.const 0)))
                 (i32.const 2) (i32.const 0)
                 (i32.const 1)
-                (ref.null $bytes) (local.get $c)))
+                (ref.null $bytes) (ref.null $bytes) (local.get $c)))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (if (local.get $has-icon)
               (then
@@ -894,7 +983,7 @@
                     (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                     (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                     (i32.const 0)
-                    (struct.get $entry $icon (local.get $e)) (i32.const 0)))
+                    (struct.get $entry $icon (local.get $e)) (ref.null $bytes) (i32.const 0)))
                 (local.set $pos (i32.add (local.get $pos) (i32.const 1)))))
             (array.set $flats (local.get $arr) (local.get $pos)
               (struct.new $flat
@@ -905,7 +994,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0)
-                (struct.get $entry $label (local.get $e)) (local.get $has-icon)))
+                (struct.get $entry $label (local.get $e)) (ref.null $bytes) (local.get $has-icon)))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (if (local.get $has-lang)
               (then
@@ -919,7 +1008,7 @@
                     (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                     (i32.const 0)
                     (struct.get $entry $lang (local.get $e))
-                    (i32.add (local.get $has-icon) (i32.const 1))))
+                    (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 1))))
                 (local.set $pos (i32.add (local.get $pos) (i32.const 1)))))
             (local.set $c (i32.add (local.get $c) (i32.const 1)))
             (br $lp-cols)
@@ -949,7 +1038,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 1) (i32.const 1) (i32.const 2) (i32.const 1)
                 (i32.const 0)
-                (ref.null $bytes) (i32.add (i32.const 2) (local.get $wi))))
+                (ref.null $bytes) (ref.null $bytes) (i32.add (i32.const 2) (local.get $wi))))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             ;; The title bar (handle + 200000): the drag handle.
             (array.set $flats (local.get $arr) (local.get $pos)
@@ -961,7 +1050,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 0)
                 (i32.const 2) (i32.const 1) (i32.const 0) (i32.const 0)
                 (i32.const 2)
-                (ref.null $bytes) (i32.const 0)))
+                (ref.null $bytes) (ref.null $bytes) (i32.const 0)))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (local.set $has-icon (i32.eqz (ref.is_null (struct.get $win $icon (local.get $w)))))
             (if (local.get $has-icon)
@@ -975,7 +1064,7 @@
                     (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                     (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                     (i32.const 0)
-                    (struct.get $win $icon (local.get $w)) (i32.const 0)))
+                    (struct.get $win $icon (local.get $w)) (ref.null $bytes) (i32.const 0)))
                 (local.set $pos (i32.add (local.get $pos) (i32.const 1)))))
             (array.set $flats (local.get $arr) (local.get $pos)
               (struct.new $flat
@@ -986,7 +1075,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0)
-                (struct.get $win $label (local.get $w)) (local.get $has-icon)))
+                (struct.get $win $label (local.get $w)) (ref.null $bytes) (local.get $has-icon)))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (array.set $flats (local.get $arr) (local.get $pos)
               (struct.new $flat
@@ -997,7 +1086,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0)
-                (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 1))))
+                (ref.null $bytes) (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 1))))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (array.set $flats (local.get $arr) (local.get $pos)
               (struct.new $flat
@@ -1009,7 +1098,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0)
                 (call $label (i32.const 65591) (i32.const 3))
-                (i32.add (local.get $has-icon) (i32.const 2))))
+                (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 2))))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             ;; The content slot: its id is the handle itself (the host seats
             ;; the opened component's tree there).
@@ -1022,7 +1111,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 3) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0)
-                (ref.null $bytes) (i32.const 1)))
+                (ref.null $bytes) (ref.null $bytes) (i32.const 1)))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             ;; The grip, at the window's bottom-right corner.
             (array.set $flats (local.get $arr) (local.get $pos)
@@ -1037,7 +1126,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 4)
-                (ref.null $bytes) (i32.const 2)))
+                (ref.null $bytes) (ref.null $bytes) (i32.const 2)))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
             (br $lp-wins)

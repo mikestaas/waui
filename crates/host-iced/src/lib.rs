@@ -340,6 +340,33 @@ pub fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+// The host's side of a link: open `href` where the platform opens URLs. The
+// component is not told (the host owns the opening, per the WIT).
+#[cfg(not(target_arch = "wasm32"))]
+fn open_url(url: &str) {
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn open_url(url: &str) {
+    if let Some(window) = web_sys::window() {
+        let _ = window.open_with_url_and_target_and_features(url, "_blank", "noopener");
+    }
+}
+
 // The `widget` interface is pulled into the world (via `use widget.{node}`),
 // so the generated bindings require this empty marker impl.
 impl waui::ui::widget::Host for Host {}
@@ -388,6 +415,9 @@ pub enum Message {
     PointerUp,
     /// The pointer moved to `(x, y)`, in canvas coordinates.
     PointerMove(f32, f32),
+    /// A link was activated: the host opens `href`. The host owns the
+    /// opening, so the component is not told (no `on-click`).
+    OpenUrl(String),
     Tick,
 }
 
@@ -820,6 +850,11 @@ pub fn update(state: &mut State, message: Message) {
                     main_woke |= surface == Surface::Main;
                 }
             }
+        }
+        // A link activation: the host opens the URL itself and never tells
+        // the component (the host owns the opening), so no wake, no diff.
+        Message::OpenUrl(url) => {
+            open_url(&url);
         }
         Message::Tick => {
             let mut w = state.wake.lock().unwrap();
@@ -1523,6 +1558,21 @@ fn map_tree<'a>(
                     None => image_placeholder(w, h),
                 }
             }
+        }
+        // A link: its label, underlined (the host's marker for a URL). iced
+        // has no url widget, so a mouse area wraps the label and the host
+        // opens the `href` on a press; the press's capture keeps it off the
+        // component's pointer channel.
+        Tree::Link(_, label, href, style) => {
+            let color = iced_color(style.color).unwrap_or_else(|| theme::style().text_color);
+            let span: widget::text::Span<'_, (), iced::Font> =
+                widget::text::Span::new(label.as_str())
+                    .size(size_pt(style.size))
+                    .color(color)
+                    .underline(true);
+            widget::mouse_area(widget::rich_text(vec![span]))
+                .on_press(Message::OpenUrl(href.clone()))
+                .into()
         }
         // A container: its in-flow children, its chrome, and its positioned
         // children (see `map_container`). A positioned one (a window) is the

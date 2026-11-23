@@ -113,20 +113,22 @@ API:
 
 - constructors: `text(content, color, size)`, `button(label, color, size)`,
   `input(content, color, size)`, `image(src, width, height)`,
-  `row(children)`, `column(children)`
-- chainable: `.id(n)`, `.label(s)`, `.reserve(bytes)`, `.style(color, size)`,
+  `link(label, href, color, size)`, `row(children)`, `column(children)`
+- chainable: `.id(n)`, `.label(s)`, `.href(s)` (links), `.reserve(bytes)`,
+  `.style(color, size)`,
   `.width(n)` (inputs and images), `.height(n)` (images only).
   AssemblyScript cannot name a field and a method alike the way Rust can, so
   the id's, width's, and height's storage is `_id`, `_width`, and `_height`,
   set with `.id()`, `.width()`, and `.height()`
 - plain fields: `children`
 - JSX: `h(tag, props, ...children)` — the factory `../jsx.mjs` emits; `tag`
-  is `text`/`button`/`input`/`image`/`row`/`column`/`container`, `props` is
-  the `Props` class
-  (a bag of `id`, `label`, `color`, `size`, `reserve`, `direction`, `width`,
-  `height` — `direction` honored only by `container`, `width` by `input` and
-  `image`, `height` by `image`, `align` by the containers; for an `image` the
-  `label` is its `src`), null when the element has no attributes. Each child
+  is `text`/`button`/`input`/`image`/`link`/`row`/`column`/`container`,
+  `props` is the `Props` class
+  (a bag of `id`, `label`, `href`, `color`, `size`, `reserve`, `direction`,
+  `width`, `height` — `direction` honored only by `container`, `width` by
+  `input` and `image`, `height` by `image`, `href` by `link`, `align` by the
+  containers; for an `image` the `label` is its `src`), null when the element
+  has no attributes. Each child
   is a `Widget` or a `Widget[]` — a dynamic list, spliced into the children:
   a rest argument is one value and AssemblyScript has no union types, so the
   rest is Object[] and the factory discriminates each child.
@@ -205,7 +207,7 @@ returns the region to its base.
 | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `arena.ts`  | the page-0 bump arena (capped at `RESULT_END`) + the world's `cabi_post_view`/`cabi_post_changes` (both reset it) + `cabi_realloc` (a bump allocator over the top-4 KiB scratch region) |
 | `utf8.ts`   | `writeUtf8` (surrogate pairs; stops at a whole character at the `end` bound), `readUtf8` (a UTF-8 byte run into an AS string; stops at a whole character), and `writeInt32`/`writeInt64` (a number that would not fit whole is not written) |
-| `node.ts`   | emitters for the ABI encodings: the 36-byte `node` record (text/button/input/image/container), the 44-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
+| `node.ts`   | emitters for the ABI encodings: the 60-byte `node` record (text/button/input/image/link/container), the 68-byte `mutation` record, the `{ptr,len}` list descriptor (`makeList`) |
 | `root.ts`   | the world's import side: `now` and `schedule` as `@external('$root', ...)`                                                                        |
 
 AS strings are UTF-16; the ABI's are UTF-8 bytes, converted at write time.

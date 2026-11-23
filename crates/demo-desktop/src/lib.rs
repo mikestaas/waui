@@ -347,17 +347,28 @@ fn tree(entries: &[EntryMeta], windows: &[Window]) -> Tree {
         .background(Background::None)
 }
 
-/// The menu bar: the name, a spacer, and the window count.
+/// The menu bar: the name, a spacer, the window count, a hint, and the repo
+/// link. The id-less nodes never diff, so only the count (id 4) does.
 fn menubar(n_open: usize) -> Tree {
     let (count, plural) = (n_open.to_string(), if n_open == 1 { "" } else { "s" });
     Tree::row(vec![
         Tree::text("waui", Style::new(Color::Accent, Size::Large)),
+        Tree::text("wasm ui demos", Style::new(Color::Dim, Size::Small)),
         Tree::row(Vec::new()).id(3).stretch(Stretch::Main),
         Tree::text(
             format!("{count} window{plural}"),
-            Style::new(Color::Neutral, Size::Small),
+            Style::new(Color::Dim, Size::Small),
         )
         .id(4),
+        Tree::text(
+            "double-click an icon to open",
+            Style::new(Color::Dim, Size::Small),
+        ),
+        Tree::link(
+            "GitHub",
+            "https://github.com/mikestaas/waui",
+            Style::new(Color::Accent, Size::Small),
+        ),
     ])
     .id(2)
     .align(Align::Center)

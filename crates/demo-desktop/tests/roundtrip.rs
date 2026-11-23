@@ -114,6 +114,7 @@ fn node_id(node: &waui::ui::widget::Node) -> Option<u32> {
         waui::ui::widget::Node::Button(b) => b.id,
         waui::ui::widget::Node::Input(i) => i.id,
         waui::ui::widget::Node::Image(i) => i.id,
+        waui::ui::widget::Node::Link(l) => l.id,
         waui::ui::widget::Node::Container(c) => c.id,
     }
 }
@@ -125,6 +126,7 @@ fn node_summary(node: &waui::ui::widget::Node) -> String {
         waui::ui::widget::Node::Button(b) => format!("button:{:?}:{}", b.id, b.label),
         waui::ui::widget::Node::Input(i) => format!("input:{:?}:{}", i.id, i.content),
         waui::ui::widget::Node::Image(i) => format!("image:{:?}:{}", i.id, i.src),
+        waui::ui::widget::Node::Link(l) => format!("link:{:?}:{}", l.id, l.label),
         waui::ui::widget::Node::Container(c) => {
             format!("container:{:?}: {:?}", c.id, c.direction)
         }
@@ -136,9 +138,11 @@ fn assert_desktop_roundtrip(app: &mut App, mut store: &mut Store<Host>) {
     // The initial view: the menu bar (0 windows) and the 3x3 grid.
     let nodes = app.call_view(&mut store).expect("view failed");
     let summaries: Vec<String> = nodes.iter().map(node_summary).collect();
-    // The menu bar: "waui" and "0 windows".
+    // The menu bar: "waui", "0 windows", and the repo link (id-less, so it
+    // is in the view but never in a diff).
     assert!(summaries.iter().any(|s| s == "text:None:waui"));
     assert!(summaries.iter().any(|s| s == "text:Some(4):0 windows"));
+    assert!(summaries.iter().any(|s| s == "link:None:GitHub"));
     // The nine tiles, each an image + label + lang (the manifest's
     // presentation), the icon the manifest's canonical path.
     assert!(summaries

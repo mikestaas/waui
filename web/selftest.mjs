@@ -1,10 +1,12 @@
 // Headless verification of the web host's ABI layer (Node; the same code
 // the browser page uses). Exercises the counter's round-trip and diff
-// channel, the stopwatch's import side (now + tick), and the todo's text
-// input (on-text) and structural diff (add, remove, re-parent), against the
-// raw wasm modules.
+// channel, the stopwatch's import side (now + tick), the todo's text
+// input (on-text) and structural diff (add, remove, re-parent), and the
+// desktop's windowing imports (an empty registry) and its link node,
+// against the raw wasm modules.
 //
 //   node web/selftest.mjs [counter.wasm] [stopwatch.wasm] [todo.wasm]
+//                          [desktop.wasm]
 //
 // The paths default to the Rust components; passing other core modules
 // (e.g. the AssemblyScript builds, `make web-test-as`) runs the same checks
@@ -17,15 +19,16 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createApp } from './glue.js';
-import { counter, stopwatch, todo } from './expect.mjs';
+import { counter, stopwatch, todo, desktop } from './expect.mjs';
 
 // Resolve paths relative to the repository root (this file lives in web/);
 // absolute paths (a non-default target) pass through.
 const rel = (p) => (p.startsWith('/') ? p : fileURLToPath(new URL(`../${p}`, import.meta.url)));
-const [counterPath, stopwatchPath, todoPath] = [
+const [counterPath, stopwatchPath, todoPath, desktopPath] = [
   process.argv[2] ?? 'target/wasm32-unknown-unknown/release/demo_counter.wasm',
   process.argv[3] ?? 'target/wasm32-unknown-unknown/release/demo_stopwatch.wasm',
   process.argv[4] ?? 'target/wasm32-unknown-unknown/release/demo_todo.wasm',
+  process.argv[5] ?? 'target/wasm32-unknown-unknown/release/demo_desktop.wasm',
 ];
 
 // A container into the selftest's node string: `dir` and `align` always
@@ -62,6 +65,10 @@ function node(n) {
     return `button{id:${n.id},parent:${n.parent},label:"${n.label}",${style}}`;
   if (n.kind === 'input')
     return `input{id:${n.id},parent:${n.parent},content:"${n.content}",${style},width:${n.width}}`;
+  // A link's target rides with it (the DOM serializer reads the `href`
+  // attribute back, e2e/helpers.mjs).
+  if (n.kind === 'link')
+    return `link{id:${n.id},parent:${n.parent},label:"${n.label}",href:"${n.href}",${style}}`;
   return `text{id:${n.id},parent:${n.parent},content:"${n.content}",${style}}`;
 }
 
@@ -291,6 +298,50 @@ function mutation(m) {
     `view()/changes() leaked memory: ${before} -> ${app.memoryPages()} pages`,
   );
   console.log('todo: ok (text input + structural add/remove/re-parent + leak check)');
+}
+
+// ------------------------------------------------------------------ desktop
+
+{
+  const app = await createApp(readFileSync(rel(desktopPath)), {
+    // An empty registry: the grid stays empty, so the view is the menu bar
+    // and the empty grid area. The windowing hooks are wired as the browser
+    // page wires them; the empty registry never opens a window.
+    registry: [],
+    onOpenWindow: () => 10000,
+  });
+  const view = () => app.view().map(node);
+
+  // The menu bar: the name, the tagline, a spacer, the count, a hint, and
+  // the repo link (a `link` node: a label, an href, a style — id-less).
+  assert.deepEqual(view(), desktop.initial);
+
+  // The diff channel never carries the id-less nodes (the WIT's identity
+  // rule): a first-ever changes() exports the six id'd ones.
+  const app2 = await createApp(readFileSync(rel(desktopPath)), { registry: [] });
+  assert.equal(app2.changes().length, 6, "first-ever changes() should export the id'd nodes");
+
+  // view() resets the diff baseline: nothing new since.
+  assert.deepEqual(app.changes(), []);
+
+  // The link is the host's, not the component's: the host opens the href,
+  // and the component is never told (the WIT). An unknown id is the
+  // component's no-op branch: no diff.
+  app.click(99);
+  assert.deepEqual(app.changes(), []);
+
+  // No unbounded growth: 60 more view() and 60 changes() calls must not
+  // grow memory (both return guest-allocated buffers the host posts back).
+  const before = app.memoryPages();
+  for (let i = 0; i < 60; i++) {
+    app.view();
+    app.changes();
+  }
+  assert.ok(
+    app.memoryPages() - before < 4,
+    `view()/changes() leaked memory: ${before} -> ${app.memoryPages()} pages`,
+  );
+  console.log('desktop: ok (menu bar + link node + empty grid)');
 }
 
 console.log('web selftest: all checks passed');

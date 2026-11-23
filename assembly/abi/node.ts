@@ -3,13 +3,17 @@
 // components, and of what the hosts' decoders (e.g. `web/glue.js`) read.
 //
 //   `node` (a variant; 60 bytes, the widest case — the container):
-//     [0]       tag: 0 = text, 1 = button, 2 = container, 3 = input, 4 = image
+//     [0]       tag: 0 = text, 1 = button, 2 = container, 3 = input,
+//               4 = image, 5 = link
 //     [4]       id option flag        [8..12)   id
 //     [12]      parent option flag    [16..20)  parent
 //     text/button/input: [20..24) string pointer, [24..28) string length,
 //                         [28] style.color, [29] style.size
 //     image:      [20..24) src pointer, [24..28) src length,
 //                 [28..32) width, [32..36) height
+//     link:       [20..24) label pointer, [24..28) label length,
+//                 [28..32) href pointer, [32..36) href length,
+//                 [36] style.color, [37] style.size
 //     container:  [20] direction, [21] align, [22] positioned,
 //                 [24..28) x, [28..32) y, [32..36) w, [36..40) h,
 //                 [40..44) z, [44..48) gap, [48..52) padding,
@@ -33,6 +37,7 @@ export const TAG_BUTTON = 1;
 export const TAG_CONTAINER = 2;
 export const TAG_INPUT = 3;
 export const TAG_IMAGE = 4;
+export const TAG_LINK = 5;
 export const COLOR_NEUTRAL = 0;
 export const COLOR_ACCENT = 1;
 export const COLOR_POSITIVE = 2;
@@ -169,6 +174,31 @@ export function emitImage(
   store<i32>(rec + 32, height);
 }
 
+/// A `link` node record at `rec` (60 bytes). Its `[28..36)` is the href,
+/// not the two style bytes (as with an image); the style sits at `[36]` and
+/// `[37]`.
+export function emitLink(
+  rec: i32,
+  id: i32,
+  parent: i32,
+  labelPtr: i32,
+  labelLen: i32,
+  hrefPtr: i32,
+  hrefLen: i32,
+  color: i32,
+  size: i32,
+): void {
+  zero(rec, 60);
+  store<i8>(rec + 0, TAG_LINK);
+  putId(rec, id, parent);
+  store<i32>(rec + 20, labelPtr);
+  store<i32>(rec + 24, labelLen);
+  store<i32>(rec + 28, hrefPtr);
+  store<i32>(rec + 32, hrefLen);
+  store<i8>(rec + 36, color);
+  store<i8>(rec + 37, size);
+}
+
 /// A `container` node record at `rec` (60 bytes). The 19 WIT fields, in the
 /// record's order: the two option ids, then direction, align, positioned,
 /// the x/y/w/h/z geometry, gap and padding, and the seven chrome tokens.
@@ -286,6 +316,25 @@ export function emitChangedImage(
   zero(rec, 68);
   store<i32>(rec + 0, MUT_CHANGED);
   emitImage(rec + 4, id, parent, str, len, width, height);
+  store<i32>(rec + 64, index);
+}
+
+/// A `changed` mutation carrying a `link` node, at `rec` (68 bytes).
+export function emitChangedLink(
+  rec: i32,
+  id: i32,
+  parent: i32,
+  labelPtr: i32,
+  labelLen: i32,
+  hrefPtr: i32,
+  hrefLen: i32,
+  color: i32,
+  size: i32,
+  index: i32,
+): void {
+  zero(rec, 68);
+  store<i32>(rec + 0, MUT_CHANGED);
+  emitLink(rec + 4, id, parent, labelPtr, labelLen, hrefPtr, hrefLen, color, size);
   store<i32>(rec + 64, index);
 }
 

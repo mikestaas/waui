@@ -194,6 +194,15 @@
       .waui-image {
         display: block;
       }
+      /* The host's marker for a link: no decoration at rest, an underline on
+         hover (the site's `.menubar-link`). The color and size tokens ride
+         on it as on a text. */
+      .waui-link {
+        text-decoration: none;
+      }
+      .waui-link:hover {
+        text-decoration: underline;
+      }
       /* The component's semantic style tokens (waui:ui/widget), mapped onto
          this page's palette. The component says *what* it is, not *what
          color* it is: "negative" renders red here, ANSI red in the TUI,

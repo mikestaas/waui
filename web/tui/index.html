@@ -110,10 +110,13 @@
       }
 
       // The page owns the terminal; the host's run reads window.term and
-      // wires the keyboard and resize to it.
+      // wires the keyboard and resize to it. 33 rows: the desktop's frame
+      // (the hint bar, the menu bar, and a 23-row cascaded window) is the
+      // tallest the host draws, so a shorter buffer would clamp the window
+      // onto the menu bar.
       const term = new Terminal({
         cols: 80,
-        rows: 24,
+        rows: 33,
         fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
         fontSize: 14,
         cursorBlink: true,

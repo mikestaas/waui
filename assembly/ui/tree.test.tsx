@@ -3,8 +3,8 @@
 // (`make ui-test`); `run()` drives `viewOf`/`diffOf` through the structural
 // cases (bootstrap, value change, add, remove, re-parent, id-less, a
 // spliced list child, an input, a container align, an input width, an image,
-// an id-less label on the arena path, a container z), decodes the diff from
-// the arena, and
+// an id-less label on the arena path, a container z, a link), decodes the
+// diff from the arena, and
 // returns 0 on success (the first failing scenario's index otherwise).
 //
 // It is import-free after `../patch-env-abort.mjs`, so Node instantiates it
@@ -14,6 +14,7 @@ import { arenaReset } from '../abi/arena';
 import {
   ALIGN_CENTER,
   ALIGN_START,
+  COLOR_ACCENT,
   COLOR_NEGATIVE,
   COLOR_NEUTRAL,
   COLOR_POSITIVE,
@@ -21,9 +22,11 @@ import {
   MUT_REMOVED,
   SIZE_LARGE,
   SIZE_MEDIUM,
+  SIZE_SMALL,
   TAG_CONTAINER,
   TAG_IMAGE,
   TAG_INPUT,
+  TAG_LINK,
 } from '../abi/node';
 import { readUtf8 } from '../abi/utf8';
 import { diffOf, h, viewOf, Widget } from './tree';
@@ -137,6 +140,15 @@ function withImage(src: string, width: i32, height: i32): Widget {
   );
 }
 
+// A column (1) with a link (3): the sixth node kind, a label + href + style.
+function withLink(href: string): Widget {
+  return (
+    <column id={1}>
+      <link id={3} label="GitHub" href={href} color={COLOR_ACCENT} size={SIZE_SMALL} />
+    </column>
+  );
+}
+
 // A column (1) with an id'd readout (3) and an *id-less* sibling whose label
 // varies: the id-less label takes the result arena, fresh per build.
 function withIdlessArena(label: string): Widget {
@@ -165,6 +177,7 @@ class Mut {
   width: i32 = -1; // inputs and images (`changed` only)
   height: i32 = -1; // images only (`changed` only)
   label: string = ''; // the content, or an image's `src`
+  href: string = ''; // a link's target (`changed` only)
   index: i32 = -1; // sibling index (`changed` only)
 }
 
@@ -185,6 +198,17 @@ function decodeNodeFields(n: i32, m: Mut): void {
     m.width = load<i32>(n + 28);
     m.height = load<i32>(n + 32);
     m.label = str != 0 ? readUtf8(str, len) : '';
+  } else if (m.kind == TAG_LINK) {
+    // A link's [28..36) is the href, not the two style bytes (as with an
+    // image); the style sits at [36] and [37].
+    const str = load<i32>(n + 20);
+    const len = load<i32>(n + 24);
+    const h = load<i32>(n + 28);
+    const hl = load<i32>(n + 32);
+    m.color = load<i8>(n + 36);
+    m.size = load<i8>(n + 37);
+    m.label = str != 0 ? readUtf8(str, len) : '';
+    m.href = h != 0 ? readUtf8(h, hl) : '';
   } else {
     const str = load<i32>(n + 20);
     const len = load<i32>(n + 24);
@@ -451,6 +475,21 @@ export function run(): i32 {
       return c != null && c.kind == TAG_CONTAINER && c.z == 20 ? 0 : 14;
     });
     if (r != 0) return 14;
+  }
+
+  // 15. Link: the sixth node kind, a label + href + style; a re-target with
+  // the same label is one mutation, and the href rides along.
+  viewOf(withLink('https://a.example')); // the reference: the column (1), the link (3)
+  arenaReset();
+  {
+    const r = scenario(withLink('https://b.example'), (m) => {
+      if (m.length != 1) return 15;
+      const c = changed(m, 3);
+      return c != null && c.kind == TAG_LINK && c.label == 'GitHub' && c.href == 'https://b.example'
+        ? 0
+        : 15;
+    });
+    if (r != 0) return 15;
   }
 
   return 0;

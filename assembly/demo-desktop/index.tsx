@@ -43,6 +43,7 @@ import {
   BORDER_NONE,
   BORDER_RING,
   COLOR_ACCENT,
+  COLOR_DIM,
   COLOR_NEUTRAL,
   CURSOR_GRAB,
   CURSOR_POINTER,
@@ -61,7 +62,7 @@ import {
 } from '../abi/node';
 import { readUtf8, writeUtf8 } from '../abi/utf8';
 import { closeEntry, listEntries, openEntry, viewport } from '../abi/windowing';
-import { button, column, diffOf, image, row, text, viewOf, Widget } from '../ui/tree';
+import { button, column, diffOf, image, link, row, text, viewOf, Widget } from '../ui/tree';
 
 // The canonical-ABI post functions and the string allocator (../abi/arena).
 export { cabi_post_changes, cabi_post_view, cabi_realloc };
@@ -342,13 +343,17 @@ function tree(entries: EntryMeta[], windows: Win[]): Widget {
   return column(kids).id(1).align(ALIGN_START).stretch(STRETCH_BOTH).background(BACKGROUND_NONE);
 }
 
-/// The menu bar: the name, a spacer, and the window count.
+/// The menu bar: the name, a spacer, the window count, a hint, and the repo
+/// link. The id-less nodes never diff, so only the count (id 4) does.
 function menubar(nOpen: i32): Widget {
   const plural = nOpen == 1 ? '' : 's';
   const kids: Widget[] = new Array<Widget>();
   kids.push(text('waui', COLOR_ACCENT, SIZE_LARGE));
+  kids.push(text('wasm ui demos', COLOR_DIM, SIZE_SMALL));
   kids.push(row([]).id(3).stretch(STRETCH_MAIN));
-  kids.push(text(`${nOpen} window${plural}`, COLOR_NEUTRAL, SIZE_SMALL).id(4).reserve(16));
+  kids.push(text(`${nOpen} window${plural}`, COLOR_DIM, SIZE_SMALL).id(4).reserve(16));
+  kids.push(text('double-click an icon to open', COLOR_DIM, SIZE_SMALL));
+  kids.push(link('GitHub', 'https://github.com/mikestaas/waui', COLOR_ACCENT, SIZE_SMALL));
   return row(kids)
     .id(2)
     .align(ALIGN_CENTER)

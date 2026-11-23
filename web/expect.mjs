@@ -180,3 +180,20 @@ export const todo = {
     'button{id:10,parent:6,label:"clear done",style:negative:medium}',
   ],
 };
+
+// The desktop (crates/demo-desktop, assembly/demo-desktop, wat/demo-desktop),
+// with an empty registry: the menu bar and the empty grid area.
+export const desktop = {
+  initial: [
+    'container{id:1,parent:null,dir:column,align:start,stretch:both}',
+    'container{id:2,parent:1,dir:row,align:center,h:34,z:1000,gap:12,pad:16,stretch:main,bg:bar,border:line}',
+    'text{id:null,parent:2,content:"waui",style:accent:large}',
+    'text{id:null,parent:2,content:"wasm ui demos",style:dim:small}',
+    'container{id:3,parent:2,dir:row,align:center,stretch:main}',
+    'text{id:4,parent:2,content:"0 windows",style:dim:small}',
+    'text{id:null,parent:2,content:"double-click an icon to open",style:dim:small}',
+    'link{id:null,parent:2,label:"GitHub",href:"https://github.com/mikestaas/waui",style:accent:small}',
+    'container{id:6,parent:1,dir:row,align:center,stretch:both}',
+    'container{id:7,parent:6,dir:column,align:center,gap:28,stretch:cross}',
+  ],
+};

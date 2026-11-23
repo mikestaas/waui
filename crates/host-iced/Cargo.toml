@@ -76,6 +76,8 @@ futures = { version = "0.3", default-features = false, features = ["std", "execu
 wasm-bindgen = { workspace = true }
 # `now_ms` on wasm32: `performance.now()`, mirroring the `std::time` API.
 web-time = { workspace = true }
+# A link opens its `href` through the page's `window.open` (a new tab).
+web-sys = { workspace = true, features = ["Window"] }
 
 [dev-dependencies]
 waui-test = { path = "../waui-test" }

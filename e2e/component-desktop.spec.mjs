@@ -56,6 +56,18 @@ function defineDesktopTests(url) {
     await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('0 windows');
   });
 
+  // The menu bar's repo link: id-less, so the host's marker class is its
+  // address. The host owns the opening (a new tab); the component is never
+  // told (the WIT), so the link is out of the component's pointer model.
+  test('the menu bar carries the repo link', async ({ page }) => {
+    const link = page.locator('#app a.waui-link');
+    await expect(link).toHaveCount(1);
+    await expect(link).toHaveText('GitHub');
+    await expect(link).toHaveAttribute('href', 'https://github.com/mikestaas/waui');
+    await expect(link).toHaveAttribute('target', '_blank');
+    await expect(link).toHaveAttribute('rel', 'noopener');
+  });
+
   test('double-click opens a window with the embedded demo', async ({ page }) => {
     await page.locator('#app .waui-cursor-pointer').nth(0).dblclick(); // Counter, Rust
     const w = win(page, 10000);

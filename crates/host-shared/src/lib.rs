@@ -281,6 +281,9 @@ pub enum Tree {
     /// (widget id, the `src` path/asset name the host resolves, the width,
     /// the height — `0` is the host's default)
     Image(Option<u32>, String, u32, u32),
+    /// (widget id — `None` for a link a component did not give an id, the
+    /// label, the `href` the host opens, style)
+    Link(Option<u32>, String, String, Style),
     /// (widget id — `None` for a container a component did not give an id,
     /// the cross-axis alignment, the chrome and geometry, the children)
     Row(Option<u32>, Align, ContainerStyle, Vec<Tree>),
@@ -297,6 +300,7 @@ fn node_id(node: &Node) -> Option<u32> {
         Node::Button(b) => b.id,
         Node::Input(i) => i.id,
         Node::Image(i) => i.id,
+        Node::Link(l) => l.id,
         Node::Container(c) => c.id,
     }
 }
@@ -307,6 +311,7 @@ fn node_parent(node: &Node) -> Option<u32> {
         Node::Button(b) => b.parent,
         Node::Input(i) => i.parent,
         Node::Image(i) => i.parent,
+        Node::Link(l) => l.parent,
         Node::Container(c) => c.parent,
     }
 }
@@ -317,6 +322,7 @@ fn to_tree(node: &Node) -> Tree {
         Node::Button(b) => Tree::Button(b.id, b.label.clone(), b.style),
         Node::Input(i) => Tree::Input(i.id, i.content.clone(), i.width, i.style),
         Node::Image(i) => Tree::Image(i.id, i.src.clone(), i.width, i.height),
+        Node::Link(l) => Tree::Link(l.id, l.label.clone(), l.href.clone(), l.style),
         Node::Container(c) => {
             let style = ContainerStyle::from_node(c);
             if c.direction == Direction::Row {

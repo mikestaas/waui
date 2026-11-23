@@ -258,6 +258,21 @@ pub struct Image {
     pub height: u32,
 }
 
+/// A hyperlink. The host opens `href` (a new tab or window on the web host,
+/// the operating system's default handler elsewhere) and never reports the
+/// activation through `on-click`, so a link is unaddressable in the same
+/// way an image is.
+#[derive(Debug, Clone)]
+pub struct Link {
+    /// This node's id (see the crate docs, *Identity*).
+    pub id: Option<u32>,
+    /// The text the link displays.
+    pub label: String,
+    /// The URL the host opens.
+    pub href: String,
+    pub style: Style,
+}
+
 /// A horizontal or vertical container.
 ///
 /// Geometry is in the host's units (pixels on the web host); `0` leaves a
@@ -310,6 +325,7 @@ pub enum Tree {
     Button(Button),
     Input(Input),
     Image(Image),
+    Link(Link),
     Container(Container),
 }
 
@@ -352,6 +368,17 @@ impl Tree {
             src: src.into(),
             width: 0,
             height: 0,
+        })
+    }
+
+    /// A hyperlink (id-less until [`id`](Self::id) is called). The host
+    /// opens `href` and never reports the activation through `on-click`.
+    pub fn link(label: impl Into<String>, href: impl Into<String>, style: Style) -> Self {
+        Self::Link(Link {
+            id: None,
+            label: label.into(),
+            href: href.into(),
+            style,
         })
     }
 
@@ -465,6 +492,12 @@ impl Tree {
         self
     }
 
+    /// Replace a link's `href`. A no-op on other nodes.
+    pub fn href(mut self, href: impl Into<String>) -> Self {
+        self.set_href(href.into());
+        self
+    }
+
     /// Place a container at `(x, y)` relative to its parent (a no-op on a
     /// leaf; also marks it positioned).
     pub fn at(mut self, x: u32, y: u32) -> Self {
@@ -543,6 +576,7 @@ impl Tree {
             Self::Button(b) => b.id = Some(id),
             Self::Input(i) => i.id = Some(id),
             Self::Image(i) => i.id = Some(id),
+            Self::Link(l) => l.id = Some(id),
             Self::Container(c) => c.id = Some(id),
         }
     }
@@ -553,6 +587,7 @@ impl Tree {
             Self::Text(t) => t.style = style,
             Self::Button(b) => b.style = style,
             Self::Input(i) => i.style = style,
+            Self::Link(l) => l.style = style,
             Self::Image(_) => {}
             Self::Container(_) => {}
         }
@@ -583,6 +618,13 @@ impl Tree {
             Self::Image(i) => i.height = height,
             Self::Container(c) => c.h = height,
             _ => {}
+        }
+    }
+
+    /// Replace a link's `href` (in place). Other nodes have none.
+    pub fn set_href(&mut self, href: String) {
+        if let Self::Link(l) = self {
+            l.href = href;
         }
     }
 
@@ -688,6 +730,7 @@ impl Tree {
             Self::Button(b) => b.id,
             Self::Input(i) => i.id,
             Self::Image(i) => i.id,
+            Self::Link(l) => l.id,
             Self::Container(c) => c.id,
         }
     }
@@ -730,6 +773,13 @@ pub enum Flat {
         width: u32,
         height: u32,
     },
+    Link {
+        id: Option<u32>,
+        parent: Option<u32>,
+        label: String,
+        href: String,
+        style: Style,
+    },
     Container {
         id: Option<u32>,
         parent: Option<u32>,
@@ -760,7 +810,8 @@ impl Flat {
             Flat::Text { id, .. }
             | Flat::Button { id, .. }
             | Flat::Input { id, .. }
-            | Flat::Image { id, .. } => *id,
+            | Flat::Image { id, .. }
+            | Flat::Link { id, .. } => *id,
             Flat::Container { id, .. } => *id,
         }
     }
@@ -861,6 +912,13 @@ fn flat(node: &Tree, parent: Option<u32>) -> Flat {
             src: i.src.clone(),
             width: i.width,
             height: i.height,
+        },
+        Tree::Link(l) => Flat::Link {
+            id: l.id,
+            parent,
+            label: l.label.clone(),
+            href: l.href.clone(),
+            style: l.style,
         },
         Tree::Container(c) => Flat::Container {
             id: c.id,
@@ -1014,6 +1072,13 @@ mod tests {
                 width: i.width,
                 height: i.height,
             },
+            Tree::Link(l) => Flat::Link {
+                id: l.id,
+                parent,
+                label: l.label.clone(),
+                href: l.href.clone(),
+                style: l.style,
+            },
             Tree::Container(c) => Flat::Container {
                 id: c.id,
                 parent,
@@ -1044,7 +1109,8 @@ mod tests {
                 Flat::Text { id, parent, .. }
                 | Flat::Button { id, parent, .. }
                 | Flat::Input { id, parent, .. }
-                | Flat::Image { id, parent, .. } => (*id, *parent),
+                | Flat::Image { id, parent, .. }
+                | Flat::Link { id, parent, .. } => (*id, *parent),
                 Flat::Container { id, parent, .. } => (*id, *parent),
             })
             .collect()
@@ -1260,6 +1326,30 @@ mod tests {
     }
 
     #[test]
+    fn macro_builds_a_link() {
+        // The link lowers like a button: the `label` attribute and a style,
+        // plus the required `href`.
+        let tree = ui! {
+            column id = 1, {
+                link label = "GitHub", href = "https://github.com/mikestaas/waui", color = Color::Accent, size = Size::Small,
+            }
+        };
+        let flat = lower(&tree, to_flat);
+        assert_eq!(ids(&flat), vec![(Some(1), None), (None, Some(1))]);
+        match &flat[1] {
+            Flat::Link {
+                label, href, style, ..
+            } => {
+                assert_eq!(label, "GitHub");
+                assert_eq!(href, "https://github.com/mikestaas/waui");
+                assert_eq!(style.color, Color::Accent);
+                assert_eq!(style.size, Size::Small);
+            }
+            _ => panic!("expected a link node"),
+        }
+    }
+
+    #[test]
     fn macro_splices_an_iterator_child() {
         // The todo demo's shape: a column whose children are a `map`, not a
         // collected `Vec`.
@@ -1397,6 +1487,25 @@ mod tests {
         assert_eq!(out, vec![M::Changed(9, Some(1), 0)]);
     }
 
+    fn with_link(href: &str) -> Tree {
+        Tree::column(vec![Tree::link(
+            "GitHub",
+            href,
+            style(Color::Accent, Size::Small),
+        )
+        .id(2)])
+        .id(1)
+    }
+
+    #[test]
+    fn diff_reports_a_href_change() {
+        // The href is part of the link's record: a re-target with the same
+        // label is a `changed`.
+        let last = flat_list(&with_link("https://github.com/mikestaas/waui"));
+        let (out, _) = diff_with(&with_link("https://example.com"), Some(&last), proj);
+        assert_eq!(out, vec![M::Changed(2, Some(1), 0)]);
+    }
+
     #[test]
     fn diff_reports_removed_nodes() {
         let last = flat_list(&counter("0", Color::Neutral));
@@ -1505,13 +1614,13 @@ pub fn kid(c: impl Into<Kid>) -> Vec<Tree> {
 /// ```
 ///
 /// Tags: `text` (`content`), `button` (`label`), `input` (`content`),
-/// `row`, `column`, `container` (`direction`). Attributes in any order:
-/// `id`, `color`, `size`, `style`; an unstated color or size is
-/// [`Color::Neutral`] / [`Size::Medium`]. Inputs also take an optional
-/// `width` (in characters, default `0` = the host's default); a `width` on
-/// a `text` or `button` is a no-op. Containers also take an optional
-/// `align` (a [`Align`], default [`Align::Center`]). Containers take a
-/// `{ ... }` children block; children are tags or bare expressions,
+/// `link` (`label` + `href`), `row`, `column`, `container` (`direction`).
+/// Attributes in any order: `id`, `color`, `size`, `style`; an unstated
+/// color or size is [`Color::Neutral`] / [`Size::Medium`]. Inputs also take
+/// an optional `width` (in characters, default `0` = the host's default); a
+/// `width` on a `text` or `button` is a no-op. Containers also take an
+/// optional `align` (a [`Align`], default [`Align::Center`]). Containers
+/// take a `{ ... }` children block; children are tags or bare expressions,
 /// comma-separated.
 /// A bare expression whose first token is a tag name (a `Tree` named
 /// `text`, `row`, ...) is the expression. A bare expression that is a list
@@ -1582,6 +1691,9 @@ macro_rules! __ui_kids {
     ( $ctx:tt $acc:tt $t0:tt width $( $r:tt )* ) => {
         $crate::__ui_tag!($ctx $acc $t0 width $( $r )* )
     };
+    ( $ctx:tt $acc:tt $t0:tt href $( $r:tt )* ) => {
+        $crate::__ui_tag!($ctx $acc $t0 href $( $r )* )
+    };
     ( $ctx:tt $acc:tt $t0:tt direction $( $r:tt )* ) => {
         $crate::__ui_tag!($ctx $acc $t0 direction $( $r )* )
     };
@@ -1638,13 +1750,16 @@ macro_rules! __ui_cmb {
 #[doc(hidden)]
 macro_rules! __ui_tag {
     ( $ctx:tt $acc:tt text $t1:tt $( $r:tt )* ) => {
-        $crate::__ui_leaf!(text $ctx $acc () () () () () () $t1 $( $r )* )
+        $crate::__ui_leaf!(text $ctx $acc () () () () () () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt button $t1:tt $( $r:tt )* ) => {
-        $crate::__ui_leaf!(button $ctx $acc () () () () () () $t1 $( $r )* )
+        $crate::__ui_leaf!(button $ctx $acc () () () () () () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt input $t1:tt $( $r:tt )* ) => {
-        $crate::__ui_leaf!(input $ctx $acc () () () () () () $t1 $( $r )* )
+        $crate::__ui_leaf!(input $ctx $acc () () () () () () () $t1 $( $r )* )
+    };
+    ( $ctx:tt $acc:tt link $t1:tt $( $r:tt )* ) => {
+        $crate::__ui_leaf!(link $ctx $acc () () () () () () () $t1 $( $r )* )
     };
     ( $ctx:tt $acc:tt row $t1:tt $( $r:tt )* ) => {
         $crate::__ui_cont!(row $ctx $acc ( some $crate::Direction::Row) () () $t1 $( $r )* )
@@ -1711,59 +1826,66 @@ macro_rules! __ui_wrap {
     };
 }
 
-/// A leaf node: `text` / `button` / `input`. Slot order: label, id, color,
-/// size, style. The label must be present (a `content` / `label` attribute).
+/// A leaf node: `text` / `button` / `input` / `link`. Slot order: label, id,
+/// color, size, style, width, href. The label must be present (a `content` /
+/// `label` attribute); a `link`'s `href` must be too.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ui_leaf {
     // Attribute peels: each key consumes `key = <expr>,` and restates its
     // slot. The keys are literal in the pattern, so an unknown key or a
     // `label` on a `text` falls through to the terminals and fails there.
-    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt id = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!($kind $ctx $acc $l ( some $v) $c $s $st $w $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt id = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l ( some $v) $c $s $st $w $h $( $r )* )
     };
-    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt color = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!($kind $ctx $acc $l $i ( some $v) $s $st $w $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt color = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i ( some $v) $s $st $w $h $( $r )* )
     };
-    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt size = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!($kind $ctx $acc $l $i $c ( some $v) $st $w $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt size = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i $c ( some $v) $st $w $h $( $r )* )
     };
-    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt style = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!($kind $ctx $acc $l $i $c $s ( some $v) $w $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt style = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i $c $s ( some $v) $w $h $( $r )* )
     };
-    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt width = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!($kind $ctx $acc $l $i $c $s $st ( some $v) $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt width = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i $c $s $st ( some $v) $h $( $r )* )
     };
-    ( text $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt content = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!(text $ctx $acc ( some $v) $i $c $s $st $w $( $r )* )
+    ( $kind:tt $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt href = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!($kind $ctx $acc $l $i $c $s $st $w ( some $v) $( $r )* )
     };
-    ( button $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt label = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!(button $ctx $acc ( some $v) $i $c $s $st $w $( $r )* )
+    ( text $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt content = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(text $ctx $acc ( some $v) $i $c $s $st $w $h $( $r )* )
     };
-    ( input $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt content = $v:expr , $( $r:tt )* ) => {
-        $crate::__ui_leaf!(input $ctx $acc ( some $v) $i $c $s $st $w $( $r )* )
+    ( button $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt label = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(button $ctx $acc ( some $v) $i $c $s $st $w $h $( $r )* )
+    };
+    ( input $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt content = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(input $ctx $acc ( some $v) $i $c $s $st $w $h $( $r )* )
+    };
+    ( link $ctx:tt $acc:tt $l:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt label = $v:expr , $( $r:tt )* ) => {
+        $crate::__ui_leaf!(link $ctx $acc ( some $v) $i $c $s $st $w $h $( $r )* )
     };
     // Terminals: the label slot must be present (bound here, unwrapped);
     // the rest are optional.
-    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt ) => {
-        $crate::__ui_leafnode!($kind $i $c $s $st $w $l)
+    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt ) => {
+        $crate::__ui_leafnode!($kind $i $c $s $st $w $h $l)
     };
-    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt , ) => {
-        $crate::__ui_leafnode!($kind $i $c $s $st $w $l)
+    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt , ) => {
+        $crate::__ui_leafnode!($kind $i $c $s $st $w $h $l)
     };
-    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt , $x:tt $( $y:tt )* ) => {
+    ( $kind:tt top $acc:tt ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt , $x:tt $( $y:tt )* ) => {
         compile_error!("`ui!` takes a single root widget")
     };
-    ( $kind:tt kids ( $( $x:tt )* ) ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt $( $r:tt )* ) => {
+    ( $kind:tt kids ( $( $x:tt )* ) ( some $l:expr ) $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt $( $r:tt )* ) => {
         // The acc holds finished items only (each followed by its comma, or
         // empty); a bare `*` re-emits the trailing comma, a `,*` would
         // double it.
-        $crate::__ui_kids!(kids ( $( $x )* $crate::__ui_wrap!(kids $crate::__ui_leafnode!($kind $i $c $s $st $w $l)) , ) $( $r )* )
+        $crate::__ui_kids!(kids ( $( $x )* $crate::__ui_wrap!(kids $crate::__ui_leafnode!($kind $i $c $s $st $w $h $l)) , ) $( $r )* )
     };
     // A label-less leaf: whatever follows, the required `content` /
     // `label` attribute never appeared.
-    ( $kind:tt $ctx:tt $acc:tt () $i:tt $c:tt $s:tt $st:tt $w:tt $( $r:tt )* ) => {
-        compile_error!("`text` and `input` need a `content = ...` attribute; `button` needs a `label = ...` attribute")
+    ( $kind:tt $ctx:tt $acc:tt () $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt $( $r:tt )* ) => {
+        compile_error!("`text` and `input` need a `content = ...` attribute; `button` and `link` need a `label = ...` attribute")
     };
 }
 
@@ -1772,14 +1894,14 @@ macro_rules! __ui_leaf {
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ui_leafnode {
-    ( $kind:tt $i:tt $c:tt $s:tt $st:tt $w:tt $l:expr ) => {{
+    ( $kind:tt $i:tt $c:tt $s:tt $st:tt $w:tt $h:tt $l:expr ) => {{
         let style = $crate::__ui_opt!($st).unwrap_or_else(|| {
             $crate::Style::new(
                 $crate::__ui_opt!($c).unwrap_or_default(),
                 $crate::__ui_opt!($s).unwrap_or_default(),
             )
         });
-        let mut node = $crate::__ui_leafbuild!($kind, $l, style);
+        let mut node = $crate::__ui_leafbuild!($kind, $l, style, $h);
         if let Some(id) = $crate::__ui_opt!($i) {
             node.set_id(id);
         }
@@ -1790,18 +1912,35 @@ macro_rules! __ui_leafnode {
     }};
 }
 
-/// The builder call, once per tag.
+/// The builder call, once per tag. The href slot is a `()` / `( some ...)`
+/// group: a `link` unwraps it (a missing `href` is a compile error), the
+/// other kinds ignore it.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __ui_leafbuild {
-    ( text, $l:expr, $style:expr ) => {
+    ( text, $l:expr, $style:expr, $h:tt ) => {
         $crate::Tree::text($l, $style)
     };
-    ( button, $l:expr, $style:expr ) => {
+    ( button, $l:expr, $style:expr, $h:tt ) => {
         $crate::Tree::button($l, $style)
     };
-    ( input, $l:expr, $style:expr ) => {
+    ( input, $l:expr, $style:expr, $h:tt ) => {
         $crate::Tree::input($l, $style)
+    };
+    ( link, $l:expr, $style:expr, $h:tt ) => {
+        $crate::__ui_link!($l, $style, $h)
+    };
+}
+
+/// The `link` constructor, with the href slot unwrapped.
+#[macro_export]
+#[doc(hidden)]
+macro_rules! __ui_link {
+    ( $l:expr, $style:expr, ( some $h:expr ) ) => {
+        $crate::Tree::link($l, $h, $style)
+    };
+    ( $l:expr, $style:expr, () ) => {
+        compile_error!("a `link` needs an `href = ...` attribute")
     };
 }
 

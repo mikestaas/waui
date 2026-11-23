@@ -74,7 +74,8 @@
 //
 // The 60-byte node (all little-endian):
 //   bytes [0]       variant tag: 0 = text, 1 = button, 2 = container,
-//                   3 = input, 4 = image (the WIT case order in waui:ui/widget)
+//                   3 = input, 4 = image, 5 = link (the WIT case order in
+//                   waui:ui/widget)
 //   bytes [1..4]    padding
 //   bytes [4]       id option flag: 0 = none (an unaddressable node)
 //   bytes [5..8]    padding
@@ -104,8 +105,9 @@
 //   bytes [58]      container: cursor (u8: 0 = default, 1 = pointer,
 //                   2 = grab, 3 = grabbing, 4 = resize)
 //   bytes [59]      padding
-//   bytes [20..24]  text/button/input/image: string pointer
-//   bytes [24..28]  text/button/input/image: string length (UTF-8 bytes)
+//   bytes [20..24]  text/button/input/image/link: string pointer (a link's
+//                   is its label)
+//   bytes [24..28]  text/button/input/image/link: string length (UTF-8 bytes)
 //   bytes [28]      text/button/input: style.color (u8, WIT case order in
 //                   waui:ui/widget: 0 = neutral, 1 = accent, 2 = positive,
 //                   3 = negative, 4 = warning, 5 = dim)
@@ -115,6 +117,10 @@
 //   bytes [28..32]  image: width (u32, host units; 0 = the host's default)
 //   bytes [32..36]  input: width (u32, characters; 0 = the host's default)
 //                   image: height (u32, host units; 0 = the host's default)
+//                   link: href length (UTF-8 bytes)
+//   bytes [28..32]  link: href pointer
+//   bytes [36]      link: style.color (the same tokens as above)
+//   bytes [37]      link: style.size (the same tokens as above)
 //
 // The 68-byte mutation (a variant with a record- or u32-sized payload):
 //   bytes [0]       tag: 0 = changed, 1 = removed (one byte, like the node
@@ -301,6 +307,25 @@ function decodeNode(i32, u8, o) {
       src: s,
       width: i32[(o + 28) >> 2],
       height: i32[(o + 32) >> 2],
+    };
+  }
+  // A link's [28..36) is its href, not the style bytes (as with an image),
+  // so it branches there too; its style sits at [36]/[37]. The string slot
+  // is the label.
+  if (tag === 5) {
+    const hp = i32[(o + 28) >> 2];
+    const hl = i32[(o + 32) >> 2];
+    const href = new TextDecoder().decode(u8.subarray(hp, hp + hl));
+    return {
+      kind: 'link',
+      id,
+      parent,
+      label: s,
+      href,
+      style: {
+        color: COLORS[u8[o + 36]] ?? 'neutral',
+        size: SIZES[u8[o + 37]] ?? 'medium',
+      },
     };
   }
   const style = {

@@ -289,13 +289,13 @@ web-test: components
 # The same selftest against the AssemblyScript core modules.
 web-test-as: components-as
 	node web/selftest.mjs target/assembly/demo-counter-as.wasm target/assembly/demo-stopwatch-as.wasm \
-		target/assembly/demo-todo-as.wasm
+		target/assembly/demo-todo-as.wasm target/assembly/demo-desktop-as.wasm
 
 # The same selftest against the WAT core modules: the byte-parity gate's
 # third producer.
 web-test-wat: components-wat
 	node web/selftest.mjs target/wat/demo-counter.wasm target/wat/demo-stopwatch.wasm \
-		target/wat/demo-todo.wasm
+		target/wat/demo-todo.wasm target/wat/demo-desktop.wasm
 
 # The browser TUI host: the wasmtime host as wasm (Pulley interpreter).
 # Builds the cdylib (no crossterm, no native binary), runs wasm-bindgen,

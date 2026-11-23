@@ -3,9 +3,10 @@
 // The rendered DOM carries the same facts as the ABI node the Node selftest
 // decodes (web/glue.js): the widget id in data-id, the kind and the style
 // tokens as waui-* classes, the content as text or value, the input's width
-// in data-width, and the image's src and size. The serializer below turns
-// the rendered tree back into the selftest's node strings, so the suite and
-// the selftest assert on one shared set of expectations (web/expect.mjs).
+// in data-width, the image's src and size, and the link's label and href.
+// The serializer below turns the rendered tree back into the selftest's node
+// strings, so the suite and the selftest assert on one shared set of
+// expectations (web/expect.mjs).
 
 import { expect } from '@playwright/test';
 
@@ -102,6 +103,12 @@ export async function domTree(page, { panelHandles = [] } = {}) {
           // leaves carry none in the selftest's string.
           const width = kind === 'input' ? `,width:${Number(el.dataset.width ?? 0)}` : '';
           s = `${kind}{id:${id},parent:${parentId},${field}:"${value}",${style}${width}}`;
+        } else if (c.contains('waui-link')) {
+          // A link: the label (its text) and the target (the raw `href`
+          // attribute, as app.js sets it), plus the style tokens.
+          const style = `style:${token(c, 'waui-', colors, 'neutral')}:${token(c, 'waui-', sizes, 'medium')}`;
+          const href = el.getAttribute('href') ?? '';
+          s = `link{id:${id},parent:${parentId},label:"${el.textContent}",href:"${href}",${style}}`;
         } else {
           // dir and align are always present; the other fields only when
           // non-default (web/selftest.mjs's node(), the same split).

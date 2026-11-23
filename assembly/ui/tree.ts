@@ -28,11 +28,13 @@ import {
   TAG_CONTAINER,
   TAG_IMAGE,
   TAG_INPUT,
+  TAG_LINK,
   TAG_TEXT,
   emitButton,
   emitContainer,
   emitImage,
   emitInput,
+  emitLink,
   emitRemoved,
   emitText,
   makeList,
@@ -120,6 +122,12 @@ export class Widget {
   // Materialized by `lower` (valid from projection on):
   labelPtr: i32 = 0; // the partition's base (0 = no label)
   labelLen: i32 = 0; // UTF-8 bytes, clamped to the partition
+  /// A link's `href` UTF-16 source; materialized to the result arena at
+  /// projection (see `materializeHref`).
+  hrefSrc: string = '';
+  // Materialized by `lower` (valid from projection on):
+  hrefPtr: i32 = 0; // 0 = no href
+  hrefLen: i32 = 0; // UTF-8 bytes
 
   constructor(kind: i32, label: string = '', children: Widget[] = []) {
     this.kind = kind;
@@ -139,6 +147,13 @@ export class Widget {
   /// Replace the label (UTF-16 in; UTF-8 in the pool at projection).
   label(s: string): this {
     this.labelSrc = s;
+    return this;
+  }
+
+  /// Replace the href (a link only; UTF-16 in, UTF-8 in the arena at
+  /// projection).
+  href(s: string): this {
+    this.hrefSrc = s;
     return this;
   }
 
@@ -284,6 +299,22 @@ export function image(src: string, width: i32 = 0, height: i32 = 0): Widget {
   return w;
 }
 
+/// A hyperlink. `href` is the URL the host opens (a new tab or window on the
+/// web host, the operating system's default handler elsewhere); the host owns
+/// the opening and never reports the activation through `on-click`.
+export function link(
+  label: string,
+  href: string,
+  color: i32 = COLOR_NEUTRAL,
+  size: i32 = SIZE_MEDIUM,
+): Widget {
+  const w = new Widget(TAG_LINK, label);
+  w.hrefSrc = href;
+  w.color = color;
+  w.size = size;
+  return w;
+}
+
 /// A row container with its children already nested.
 export function row(children: Widget[]): Widget {
   const w = new Widget(TAG_CONTAINER, '', children);
@@ -307,6 +338,7 @@ export function column(children: Widget[]): Widget {
 export class Props {
   id: i32 = 0;
   label: string = '';
+  href: string = ''; // honored only by `link`
   color: i32 = COLOR_NEUTRAL;
   size: i32 = SIZE_MEDIUM;
   reserve: i32 = 0;
@@ -353,6 +385,8 @@ export function h(tag: string, props: Props | null, ...children: Object[]): Widg
     w = input('');
   } else if (tag == 'image') {
     w = image('');
+  } else if (tag == 'link') {
+    w = link('', '');
   } else if (tag == 'row') {
     w = row(kids);
   } else if (tag == 'column') {
@@ -365,6 +399,7 @@ export function h(tag: string, props: Props | null, ...children: Object[]): Widg
   if (props != null) {
     if (props.id != 0) w = w.id(props.id);
     if (props.label.length != 0) w = w.label(props.label);
+    if (props.href.length != 0) w = w.href(props.href);
     if (props.color != COLOR_NEUTRAL || props.size != SIZE_MEDIUM) {
       w = w.style(props.color, props.size);
     }
@@ -456,6 +491,35 @@ function materializeLabel(w: Widget): void {
   w.labelLen = writeUtf8(off, src, off + cap) - off;
 }
 
+/// Materialize a link's `href` bytes.
+///
+/// Unlike the label, the href always takes the **result arena**: fresh each
+/// build, freed with the rest of the result on the host's post. The label's
+/// pool is keyed by node id and the label already occupies that id's
+/// partition, so the href cannot share it; a changing href of a stable link
+/// re-allocates per build, which the arena's per-build lifetime makes safe.
+///
+/// No-op for an empty href; an exhausted arena renders an empty href rather
+/// than corrupt memory.
+function materializeHref(w: Widget): void {
+  const src = w.hrefSrc;
+  if (src.length == 0) {
+    w.hrefPtr = 0;
+    w.hrefLen = 0;
+    return;
+  }
+  const want = src.length * 4 + 8;
+  const off = arenaAllocFit(want);
+  if (off < 0) {
+    w.hrefPtr = 0;
+    w.hrefLen = 0;
+    return;
+  }
+  const cap = (want + 7) & ~7; // the arena allocated exactly this much
+  w.hrefPtr = off;
+  w.hrefLen = writeUtf8(off, src, off + cap) - off;
+}
+
 // ------------------------------------------------------------- projection
 
 /// Set once the component has exported its whole tree (`viewOf`, or a
@@ -488,6 +552,7 @@ class FlatRec {
   shadow: i32 = SHADOW_NONE;
   cursor: i32 = CURSOR_DEFAULT;
   label: string = ''; // the content, or an image's `src`
+  href: string = ''; // a link's target
 }
 
 /// The last export, as a flat list of records in depth-first pre-order — the
@@ -530,6 +595,7 @@ function flatten(w: Widget, parent: i32, out: FlatRec[]): void {
   r.shadow = w._shadow;
   r.cursor = w._cursor;
   r.label = w.labelSrc;
+  r.href = w.hrefSrc;
   out.push(r);
   const id = w._id;
   const c = w.children;
@@ -560,7 +626,8 @@ function isChanged(w: Widget, parent: i32, first: i32, last: FlatRec[]): i32 {
     // its direction, align, geometry, and chrome tokens (it carries no
     // style); an image's is its `src`, its width, and its height (it carries
     // no style); a text/button/input's is its label, its style, and — for an
-    // input — its width. AS compares strings by content.
+    // input — its width; a link's is its label, its href, and its style. AS
+    // compares strings by content.
     let differs = w.kind != r.kind || parent != r.parent;
     if (w.kind == TAG_CONTAINER) {
       differs = differs || w.direction != r.direction || w._align != r.align;
@@ -576,6 +643,7 @@ function isChanged(w: Widget, parent: i32, first: i32, last: FlatRec[]): i32 {
       differs = differs || w.color != r.color || w.size != r.size || w.labelSrc != r.label;
       // The WIT's `width` is an input field; the other leaves carry 0.
       if (w.kind == TAG_INPUT) differs = differs || w._width != r.width;
+      if (w.kind == TAG_LINK) differs = differs || w.hrefSrc != r.href;
     }
     return differs ? 1 : 0;
   }
@@ -616,6 +684,7 @@ function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMuta
   const rec = buf + off * stride;
   if (rec + stride > RESULT_END) return off;
   materializeLabel(w);
+  if (w.kind == TAG_LINK) materializeHref(w);
   const id = w._id;
   if (isMutation != 0) store<i32>(rec, MUT_CHANGED);
   // A `changed` mutation carries the node one word in (after the tag word);
@@ -632,6 +701,8 @@ function emitNode(w: Widget, parent: i32, index: i32, buf: i32, off: i32, isMuta
     emitInput(node, id, parent, w.labelPtr, w.labelLen, w.color, w.size, w._width);
   } else if (kind == TAG_IMAGE) {
     emitImage(node, id, parent, w.labelPtr, w.labelLen, w._width, w._height);
+  } else if (kind == TAG_LINK) {
+    emitLink(node, id, parent, w.labelPtr, w.labelLen, w.hrefPtr, w.hrefLen, w.color, w.size);
   } else {
     emitContainer(
       node,

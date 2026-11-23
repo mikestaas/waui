@@ -543,11 +543,15 @@ fn registry_args() -> Vec<String> {
 /// window's content is the entry's demo (the counter's readout and buttons;
 /// the stopwatch's, paused, a fixed 0 ms).
 fn assert_desktop_frame(path: &Path, producer: &str) {
+    // The menu bar (name, tagline, spacer, count, hint, link) is wider than
+    // the grid, so the auto width (the grid's) clips its tail: the scenario
+    // sizes the buffer to a conventional terminal width instead.
+    let width = Some(80);
     // One window: the counter, opened by a double-click on its tile.
     let mut args = registry_args();
     args.push("--double-click".to_string());
     args.push("100".to_string());
-    let frame = run_dump(path, &args, None, None);
+    let frame = run_dump(path, &args, None, width);
     let ls = lines(&frame);
     // The windowing hint (a window is open): every word stays visible.
     let mut words = Vec::new();
@@ -563,6 +567,12 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     assert!(
         ls.iter().any(|l| l.plain.contains("1 window")),
         "the menu bar should count one window: {:?}",
+        ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
+    );
+    // The repo link (accent, underlined) stays whole in the frame.
+    assert!(
+        ls.iter().any(|l| l.plain.contains("GitHub")),
+        "the menu bar's link should be visible: {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     // The title bar shows the entry's label (the manifest's, capitalized)
@@ -607,7 +617,7 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     args.push("100".to_string());
     args.push("--double-click".to_string());
     args.push("103".to_string());
-    let frame = run_dump(path, &args, None, None);
+    let frame = run_dump(path, &args, None, width);
     let ls = lines(&frame);
     assert!(
         ls.iter().any(|l| l.plain.contains("2 windows")),
@@ -642,7 +652,7 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     args.push("103".to_string());
     args.push("--click".to_string());
     args.push("410000".to_string());
-    let frame = run_dump(path, &args, None, None);
+    let frame = run_dump(path, &args, None, width);
     let ls = lines(&frame);
     assert!(
         ls.iter().any(|l| l.plain.contains("1 window")),
