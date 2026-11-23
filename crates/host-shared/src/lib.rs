@@ -84,6 +84,18 @@ pub fn read_manifest(path: &str) -> Result<Vec<EntrySpec>, String> {
     parse_manifest(path, &text)
 }
 
+/// Decode one base64 blob into bytes. `kind` and `path` name the blob in
+/// errors (the registry's icons, its components). Wasm-only: the browser has
+/// no filesystem, so the page hands file bytes over base64-encoded.
+#[cfg(target_arch = "wasm32")]
+pub fn decode_b64(kind: &str, path: &str, b64: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+
+    base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| format!("bad {kind} {path}: {e}"))
+}
+
 /// Decode the page's image assets: a JSON object mapping an asset path to its
 /// base64-encoded bytes. The browser has no filesystem, so the page fetches
 /// the registry's icons and hands them over; the `run`/`dump` exports take
@@ -91,19 +103,32 @@ pub fn read_manifest(path: &str) -> Result<Vec<EntrySpec>, String> {
 /// native host resolves an asset's `src` against the working directory.
 #[cfg(target_arch = "wasm32")]
 pub fn decode_assets(json: &str) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
-    use base64::Engine;
-
     let obj: std::collections::BTreeMap<String, String> =
         serde_json::from_str(json).map_err(|e| format!("bad assets: {e}"))?;
-    let engine = base64::engine::general_purpose::STANDARD;
     let mut assets = std::collections::BTreeMap::new();
     for (path, b64) in obj {
-        let bytes = engine
-            .decode(b64)
-            .map_err(|e| format!("bad assets {path}: {e}"))?;
-        assets.insert(path, bytes);
+        assets.insert(path.clone(), decode_b64("assets", &path, &b64)?);
     }
     Ok(assets)
+}
+
+/// Decode the page's entry components: a JSON object mapping a registry
+/// entry's `path` to its base64-encoded precompiled artifact. The browser has
+/// no filesystem, so the page fetches the registry's artifacts and hands
+/// them over; the `run`/`dump` exports take this text and decode it into the
+/// host's component map, which `open-entry` loads from. Wasm-only: the
+/// native host reads an entry's component from the filesystem.
+#[cfg(target_arch = "wasm32")]
+pub fn decode_components(
+    json: &str,
+) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+    let obj: std::collections::BTreeMap<String, String> =
+        serde_json::from_str(json).map_err(|e| format!("bad components: {e}"))?;
+    let mut components = std::collections::BTreeMap::new();
+    for (path, b64) in obj {
+        components.insert(path.clone(), decode_b64("components", &path, &b64)?);
+    }
+    Ok(components)
 }
 
 // --------------------------------------------------------------------------

@@ -160,3 +160,90 @@ for (const demo of demos) {
     });
   }
 }
+
+// The desktop: the registry's grid, and a window opened from a tile. The
+// page fetches the nine entry artifacts in the background (the host has no
+// filesystem); wait for them, then activate the first tile and expect the
+// window. One producer: the open path is the host's, the producer only
+// changes the desktop's own rendering.
+test('tui host: desktop (rust) opens a window', async ({ page }) => {
+  await page.goto('/tui/index.html?demo=desktop&producer=rust');
+  await expect(page.locator('#badge')).toHaveText('waui (tui host) — desktop (rust)', {
+    timeout: 30_000,
+  });
+  await page.waitForFunction(() => window.entriesReady === true, null, { timeout: 30_000 });
+  // The ring starts on the first tile; Enter on a tile synthesizes the
+  // double-click that opens its entry.
+  await press(page, 'Enter');
+  // The menu bar counts the open window.
+  await expect.poll(() => terminalText(page)).toContain('1 window');
+});
+
+test('iced host: desktop (rust) opens a window', async ({ page }) => {
+  await page.goto('/iced/index.html?demo=desktop&producer=rust');
+  const canvas = page.locator('canvas');
+  await canvas.waitFor({ timeout: 30_000 });
+  // The app canvas (960x600 at 1x), with the grid drawn.
+  await page.waitForFunction(
+    () => {
+      const c = document.querySelector('canvas');
+      if (!c || c.width < 960 || c.height < 600) return false;
+      const tmp = document.createElement('canvas');
+      tmp.width = c.width;
+      tmp.height = c.height;
+      const ctx = tmp.getContext('2d');
+      ctx.drawImage(c, 0, 0);
+      const d = ctx.getImageData(0, 0, c.width, c.height).data;
+      let nonBackground = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] === 0) continue;
+        if (Math.abs(d[i] - 26) > 8 || Math.abs(d[i + 1] - 27) > 8 || Math.abs(d[i + 2] - 38) > 8) {
+          nonBackground++;
+        }
+      }
+      return nonBackground > 0;
+    },
+    null,
+    { timeout: 30_000 },
+  );
+  // The entry artifacts land in the background; wait for them.
+  await page.waitForFunction(() => window.entriesReady === true, null, { timeout: 30_000 });
+  // The window's cascade slot (top-left, 24x48): background before the
+  // double-click, the window's body fill after. The canvas is the viewport,
+  // so layout coordinates scale by the buffer's device ratio.
+  const countContent = () =>
+    page.evaluate(() => {
+      const c = document.querySelector('canvas');
+      const s = c.width / window.innerWidth;
+      const tmp = document.createElement('canvas');
+      tmp.width = c.width;
+      tmp.height = c.height;
+      const ctx = tmp.getContext('2d');
+      ctx.drawImage(c, 0, 0);
+      const d = ctx.getImageData(
+        Math.floor(30 * s),
+        Math.floor(200 * s),
+        Math.floor(40 * s),
+        Math.floor(120 * s),
+      ).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] === 0) continue;
+        if (
+          Math.abs(d[i] - 26) > 15 ||
+          Math.abs(d[i + 1] - 27) > 15 ||
+          Math.abs(d[i + 2] - 38) > 15
+        ) {
+          n++;
+        }
+      }
+      return n;
+    });
+  expect(await countContent(), 'the probe box should be background before the open').toBe(0);
+  // The first tile (the counter): the grid is top-packed and centered, so
+  // its icon center sits at (464, 108) in the 1280-wide viewport. The whole
+  // tile is the double-click target; the point is its icon's center.
+  const box = await canvas.boundingBox();
+  await page.mouse.dblclick(box.x + 464, box.y + 108);
+  await expect.poll(countContent).toBeGreaterThan(0);
+});

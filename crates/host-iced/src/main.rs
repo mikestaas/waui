@@ -16,6 +16,7 @@
 //! `--now <base> <step>` fakes the host clock (each call advances `step` ms).
 
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 use wasmtime::component::Component;
 use wasmtime::Engine;
@@ -188,6 +189,9 @@ fn main() -> iced::Result {
             // The native host resolves an image's `src` against the
             // filesystem; the page's assets are a browser concern.
             BTreeMap::new(),
+            // The native host reads an entry's component from the
+            // filesystem; the page's components are a browser concern.
+            Arc::new(Mutex::new(BTreeMap::new())),
         );
         apply_pending(&mut state);
         return render_dump(&state, file);
@@ -215,6 +219,7 @@ fn boot() -> State {
         args.injected,
         args.now,
         BTreeMap::new(),
+        Arc::new(Mutex::new(BTreeMap::new())),
     )
 }
 

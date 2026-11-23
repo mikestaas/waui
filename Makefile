@@ -311,8 +311,10 @@ host-tui-wasm: components
 	@echo "wrote target/host-tui/pkg/ and target/components/*.cwasm"
 
 # The byte-parity gate: the wasm host's `dump` frame against the native
-# `host-tui --dump` frame, per demo (Node).
-host-tui-wasm-test: host-tui-wasm
+# `host-tui --dump` frame, per demo (Node). The desktop scenario opens a
+# window, so the page's background fetch must have landed: site-hosts
+# precompiles all twelve artifacts, which the selftest reads.
+host-tui-wasm-test: site-hosts
 	cargo build -p host-tui
 	node web/tui/selftest.mjs
 
@@ -332,32 +334,36 @@ host-iced-wasm: components
 	@echo "wrote target/host-iced/pkg/ and target/components/*.cwasm"
 
 # The byte-parity gate: the wasm host's `dump` PNG against the native
-# `host-iced --dump` PNG, per demo (Node).
-host-iced-wasm-test: host-iced-wasm
+# `host-iced --dump` PNG, per demo (Node). The desktop scenario opens a
+# window, so the page's background fetch must have landed: site-hosts
+# precompiles all twelve artifacts, which the selftest reads.
+host-iced-wasm-test: site-hosts
 	cargo build -p host-iced
 	node web/iced/selftest.mjs
 
 # The browser host pages, next to the site: each host's pkg (wasm-bindgen),
-# its page (web/tui, web/iced), and the nine precompiled artifacts the
+# its page (web/tui, web/iced), and the twelve precompiled artifacts the
 # pages fetch by ?demo= and ?producer= (the tui page also takes the
-# vendored xterm.js). The pages fetch, so they need a server, exactly like
-# the site's demo pages. Needs wasm-bindgen on the PATH.
+# vendored xterm.js). The artifacts are host-independent, so they live in
+# one shared components/ directory; the registry manifest lives at the site
+# root, one copy (the root desktop pages have it inlined at build time and
+# never fetch it); the icons are the site's root icons/ set (the `site`
+# target's copy), fetched by the host pages relative to the root. The pages
+# fetch, so they need a server, exactly like the site's demo pages. Needs
+# wasm-bindgen on the PATH.
 site-hosts: site host-tui-wasm host-iced-wasm
-	@mkdir -p target/site/tui/vendor target/site/tui/site/icons target/site/iced/site/icons
+	# Rebuild the three directories from scratch: the copies below are
+	# unconditional, so a stale file from an older layout would survive.
+	@rm -rf target/site/components target/site/tui target/site/iced
+	@mkdir -p target/site/components target/site/tui/vendor target/site/iced
 	@cp web/tui/index.html target/site/tui/
 	@cp web/tui/vendor/xterm.js web/tui/vendor/xterm.css web/tui/vendor/LICENSE target/site/tui/vendor/
 	@cp target/host-tui/pkg/host_tui.js target/host-tui/pkg/host_tui_bg.wasm target/site/tui/
 	@cp web/iced/index.html target/site/iced/
 	@cp target/host-iced/pkg/host_iced.js target/host-iced/pkg/host_iced_bg.wasm target/site/iced/
-	# The desktop's registry manifest and icons: the page fetches them (the
-	# browser has no filesystem), the icons at the manifest's `site/icons/`
-	# paths, relative to the page.
-	@cp registry.json target/site/tui/
-	@cp registry.json target/site/iced/
-	@cp site/icons/*.svg target/site/tui/site/icons/
-	@cp site/icons/*.svg target/site/iced/site/icons/
+	@cp registry.json target/site/
 	# The rust artifacts came with the host builds; precompile the other
-	# two producers (the pages take all nine, plus the desktop).
+	# two producers (the pages take all nine, plus the desktop's three).
 	@for c in $(COMPONENTS) demo-desktop; do \
 		for s in -as -wat; do \
 			echo "==> precompiling $$c$$s for pulley32"; \
@@ -366,11 +372,10 @@ site-hosts: site host-tui-wasm host-iced-wasm
 	done
 	@for d in counter stopwatch todo desktop; do \
 		for s in "" -as -wat; do \
-			cp target/components/demo-$$d$$s.cwasm target/site/tui/ || exit 1; \
-			cp target/components/demo-$$d$$s.cwasm target/site/iced/ || exit 1; \
+			cp target/components/demo-$$d$$s.cwasm target/site/components/ || exit 1; \
 		done; \
 	done
-	@echo "wrote target/site/tui/ and target/site/iced/"
+	@echo "wrote target/site/tui/, target/site/iced/, and target/site/components/"
 
 # The tree layer's diff channel, as a standalone module run via Node: the
 # structural cases (add, remove, re-parent) plus the bootstrap and id-less

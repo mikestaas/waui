@@ -323,6 +323,11 @@ struct WebHost {
 // require of the wasmtime `Store`/`App`.
 thread_local! {
     static HOST: RefCell<Option<WebHost>> = const { RefCell::new(None) };
+    /// The live host's component map, as a handle the page's
+    /// `components-add` export writes through (the map itself lives in the
+    /// host's store data; this is a clone of its arc).
+    static COMPONENTS: RefCell<Option<Arc<Mutex<std::collections::BTreeMap<String, Vec<u8>>>>>> =
+        const { RefCell::new(None) };
 }
 
 /// Run `f` with the live host, if `run` has been called.
@@ -651,13 +656,15 @@ impl WebHost {
 // The wasm-bindgen exports
 // --------------------------------------------------------------------------
 
-/// Apply the page's registry (the desktop): the manifest's entries and the
-/// icon bytes. Both are `None` for the non-desktop demos, which carry no
-/// registry and no images.
+/// Apply the page's registry (the desktop): the manifest's entries, the icon
+/// bytes, and the entry components' bytes. All are `None` for the
+/// non-desktop demos, which carry no registry, no images, and no entries to
+/// open.
 fn apply_registry(
     host: &mut Host,
     manifest: Option<&str>,
     assets: Option<&str>,
+    components: Option<&str>,
 ) -> Result<(), JsValue> {
     if let Some(text) = manifest {
         host.entries = host_shared::parse_manifest("the page's manifest", text)
@@ -666,16 +673,28 @@ fn apply_registry(
     if let Some(json) = assets {
         host.image.assets = host_shared::decode_assets(json).map_err(|e| JsValue::from_str(&e))?;
     }
+    if let Some(json) = components {
+        let decoded = host_shared::decode_components(json).map_err(|e| JsValue::from_str(&e))?;
+        *host.components.lock().unwrap() = decoded;
+    }
     Ok(())
 }
 
 /// Start the host: deserialize the precompiled component, instantiate it,
 /// open the xterm terminal, wire the keyboard, and draw the first frame.
 /// `bytes` is the artifact the `host-precompile` tool wrote. `manifest` (the
-/// desktop's registry JSON) and `assets` (the icons, base64) are `None` for
-/// the non-desktop demos.
+/// desktop's registry JSON), `assets` (the icons, base64), and `components`
+/// (the entry artifacts, base64, keyed by the manifest's `path`) are `None`
+/// for the non-desktop demos; the desktop passes `null` for `components` and
+/// adds them with [`components_add`] as its background fetches resolve, so
+/// the grid's first frame never waits for them.
 #[wasm_bindgen]
-pub fn run(bytes: &[u8], manifest: Option<String>, assets: Option<String>) -> Result<(), JsValue> {
+pub fn run(
+    bytes: &[u8],
+    manifest: Option<String>,
+    assets: Option<String>,
+    components: Option<String>,
+) -> Result<(), JsValue> {
     let engine = Engine::new(&host_shared::pulley_config())
         .map_err(|e| JsValue::from_str(&format!("engine: {e}")))?;
     let component = unsafe { Component::deserialize(&engine, bytes) }
@@ -687,7 +706,14 @@ pub fn run(bytes: &[u8], manifest: Option<String>, assets: Option<String>) -> Re
     let mut host = Host::default();
     host.engine = engine.clone();
     host.linker = linker.clone();
-    apply_registry(&mut host, manifest.as_deref(), assets.as_deref())?;
+    apply_registry(
+        &mut host,
+        manifest.as_deref(),
+        assets.as_deref(),
+        components.as_deref(),
+    )?;
+    // The page's `components-add` handle on the live host's component map.
+    COMPONENTS.with(|c| *c.borrow_mut() = Some(host.components.clone()));
     let mut store = Store::new(&engine, host);
     let app = App::instantiate(&mut store, &component, &linker)
         .map_err(|e| JsValue::from_str(&format!("instantiate: {e}")))?;
@@ -789,12 +815,30 @@ pub fn tick() {
     with_host(|host| host.tick());
 }
 
+/// One entry component's bytes, from the page's background fetch: `path` is
+/// the manifest's `path` (what `open-entry` looks up), `b64` the
+/// base64-encoded precompiled artifact. The live host's component map grows
+/// as the fetches resolve; a double-click that lands before its fetch does
+/// fails as a missing file does natively.
+#[wasm_bindgen]
+pub fn components_add(path: &str, b64: &str) -> Result<(), JsValue> {
+    let bytes = host_shared::decode_b64("components", path, b64)?;
+    let map = COMPONENTS
+        .with(|c| c.borrow().clone())
+        .ok_or_else(|| JsValue::from_str("components-add: run first"))?;
+    map.lock().unwrap().insert(path.to_string(), bytes);
+    Ok(())
+}
+
 /// The headless byte-parity surface: a fresh host (so the fake-clock call
 /// sequence matches the native `--dump`), the component deserialized from
-/// the precompiled artifact, the clicks applied, and one frame rendered to
-/// text. `width` sizes the buffer like a terminal of that width; `now_base`
-/// and `now_step` fake the host clock (the n-th `now` call returns
-/// `now_base + n * now_step`); `clicks` are widget ids, in order.
+/// the precompiled artifact, the clicks and double-clicks applied, and one
+/// frame rendered to text. `width` sizes the buffer like a terminal of that
+/// width; `now_base` and `now_step` fake the host clock (the n-th `now`
+/// call returns `now_base + n * now_step`); `clicks` and `double_clicks`
+/// are widget ids, in order (a double-clicked tile opens its entry);
+/// `components` is the entry artifacts' base64 map, for a desktop that
+/// opens one.
 #[wasm_bindgen]
 pub fn dump(
     bytes: &[u8],
@@ -802,8 +846,10 @@ pub fn dump(
     now_base: Option<u64>,
     now_step: Option<u64>,
     clicks: &[u32],
+    double_clicks: &[u32],
     manifest: Option<String>,
     assets: Option<String>,
+    components: Option<String>,
 ) -> Result<String, JsValue> {
     let engine = Engine::new(&host_shared::pulley_config())
         .map_err(|e| JsValue::from_str(&format!("engine: {e}")))?;
@@ -820,7 +866,12 @@ pub fn dump(
         (Some(base), Some(step)) => Some((base, step)),
         _ => None,
     };
-    apply_registry(&mut host, manifest.as_deref(), assets.as_deref())?;
+    apply_registry(
+        &mut host,
+        manifest.as_deref(),
+        assets.as_deref(),
+        components.as_deref(),
+    )?;
     let mut store = Store::new(&engine, host);
     let app = App::instantiate(&mut store, &component, &linker)
         .map_err(|e| JsValue::from_str(&format!("instantiate: {e}")))?;
@@ -831,14 +882,19 @@ pub fn dump(
         .map_err(|e| JsValue::from_str(&format!("view: {e}")))?;
     let mut retained = Retained::from_view(nodes);
     let mut tree = build_tree(retained.nodes());
-    // The clicks, in order, like a pointer would drive them.
+    // The clicks and double-clicks, in order, like a pointer would drive
+    // them (a double-clicked tile opens its entry as a window).
     for id in clicks {
         app.call_on_click(&mut store, *id)
             .map_err(|e| JsValue::from_str(&format!("on-click: {e}")))?;
     }
-    // The clicks may have changed the component's state: re-query the full
+    for id in double_clicks {
+        app.call_on_double_click(&mut store, *id)
+            .map_err(|e| JsValue::from_str(&format!("on-double-click: {e}")))?;
+    }
+    // The events may have changed the component's state: re-query the full
     // snapshot, as the native `--dump` does after its injected events.
-    if !clicks.is_empty() {
+    if !clicks.is_empty() || !double_clicks.is_empty() {
         let nodes = app
             .call_view(&mut store)
             .map_err(|e| JsValue::from_str(&format!("view: {e}")))?;

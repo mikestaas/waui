@@ -141,7 +141,9 @@ function manifestData(d) {
 function entrySrc(name) {
   const m = name.match(/^(.*)-(rust|as|wat)$/);
   const base = m ? m[1] : name;
-  const suffix = m ? `-${m[2]}` : '';
+  // rust carries no suffix (the site's file naming, as the host pages'
+  // artifacts): demo-counter.wasm, demo-counter-as.wasm, demo-counter-wat.wasm.
+  const suffix = m && m[2] !== 'rust' ? `-${m[2]}` : '';
   if (wasmUrl) return `demo-${base}${suffix}.wasm`;
   if (!m || m[2] === 'rust') return `target/${wasmTarget}/release/demo_${base}.wasm`;
   if (m[2] === 'as') return `target/assembly/demo-${base}-as.wasm`;

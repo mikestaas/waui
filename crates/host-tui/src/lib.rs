@@ -130,6 +130,12 @@ pub struct Host {
     /// The registry (`--entry`): a non-empty one makes this host a
     /// multi-window host.
     pub entries: Vec<EntrySpec>,
+    /// The entry components' bytes, as the page handed them over (the
+    /// browser: `run`'s snapshot, then `components-add` as its background
+    /// fetches resolve; the native host keeps it empty and reads from the
+    /// filesystem). An arc, shared with the windows' hosts and with the
+    /// live-host handle the page's `components-add` export writes through.
+    pub components: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     /// The image state: the draw mode, the page's assets, and the decoded
     /// images (the registry's icons, keyed by `src`).
     pub image: ImageState,
@@ -155,6 +161,7 @@ impl Default for Host {
             engine,
             linker,
             entries: Vec::new(),
+            components: Arc::new(Mutex::new(BTreeMap::new())),
             image: ImageState::default(),
             windows: Vec::new(),
             next_handle: HANDLE_BASE,
@@ -201,6 +208,9 @@ impl Host {
             engine: self.engine.clone(),
             linker: self.linker.clone(),
             entries: Vec::new(),
+            // The same component map (a window never opens entries itself,
+            // but its host stays self-contained).
+            components: self.components.clone(),
             // The same draw mode (a window's images, if a demo ever has
             // them, render like the app's); a fresh cache and no assets.
             image: ImageState {
@@ -253,13 +263,15 @@ impl AppImports for Host {
         let Some(spec) = self.entries.iter().find(|e| e.name == name).cloned() else {
             return Err(Error::NotFound);
         };
-        let component = match load_component(&self.engine, &spec.path) {
+        let components = self.components.lock().unwrap();
+        let component = match load_component(&self.engine, &components, &spec.path) {
             Ok(c) => c,
             Err(e) => {
                 eprintln!("open-entry: failed to load {}: {e}", spec.path);
                 return Err(Error::NotFound);
             }
         };
+        drop(components);
         let mut store = Store::new(&self.engine, self.window_host());
         let app = match App::instantiate(&mut store, &component, &self.linker) {
             Ok(a) => a,
@@ -299,17 +311,21 @@ impl AppImports for Host {
     }
 }
 
-/// Load the component at `path`. The native host reads it from the
-/// filesystem; the browser host has no filesystem, so it cannot load a
-/// registry entry's component by path (the standalone demo's registry is
-/// empty, so this is unreachable there).
-#[cfg(not(target_arch = "wasm32"))]
-fn load_component(engine: &Engine, path: &str) -> Result<Component, wasmtime::Error> {
-    Component::from_file(engine, path)
-}
-
-#[cfg(target_arch = "wasm32")]
-fn load_component(_engine: &Engine, _path: &str) -> Result<Component, wasmtime::Error> {
+/// Load the entry's component: from the host's component map when it has
+/// the bytes (the browser: the page fetches the artifacts and hands them
+/// over, in `run` and as its background fetches resolve), else from the
+/// filesystem (the native host; the map stays empty there).
+fn load_component(
+    engine: &Engine,
+    components: &BTreeMap<String, Vec<u8>>,
+    path: &str,
+) -> Result<Component, wasmtime::Error> {
+    if let Some(bytes) = components.get(path) {
+        return unsafe { Component::deserialize(engine, bytes) };
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    return Component::from_file(engine, path);
+    #[cfg(target_arch = "wasm32")]
     Err(wasmtime::Error::msg(
         "file loading is unavailable in the browser",
     ))

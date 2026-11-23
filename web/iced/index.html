@@ -4,13 +4,21 @@
   the browser as wasm. The component is a precompiled pulley32 artifact
   (the host-precompile tool; the browser has no JIT, so it only
   interprets), fetched by ?demo= and ?producer= — counter|stopwatch|todo
-  and rust|as|wat, so the nine demos share this one page.
+  and rust|as|wat, so the nine demos share this one page. The artifacts
+  live in the site's shared components/ directory (the tui page fetches
+  the same files), and the desktop's registry and icons at the site root.
 
-  The page owns the body: iced's Web runtime appends its canvas to it
-  (the canvas fills the body, so the body is the demo's 360x340 box,
-  centered). No terminal here — iced handles the pointer and the keyboard
-  on the canvas, and its own 50ms clock drives the host's tick. A failed
-  load leaves a message in the body instead of a blank one.
+  The desktop carries its nine entry artifacts too: the page fetches them
+  in the background after the first frame and hands each to the host as it
+  resolves (components_add), so a double-click opens its window once the
+  fetch has landed. window.entriesReady flips once all have settled.
+
+  The page owns the body: iced's Web runtime appends its canvas to it,
+  and the canvas fills the body (width/height 100%), so the body is the
+  viewport: every demo runs full-window. No terminal here — iced handles
+  the pointer and the keyboard on the canvas, and its own 50ms clock
+  drives the host's tick. A failed load leaves a message in the body
+  instead of a blank one.
 -->
 <html>
   <head>
@@ -18,24 +26,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>waui (iced host)</title>
     <style>
-      html {
+      html,
+      body {
+        margin: 0;
         height: 100%;
-        display: grid;
-        place-items: center;
+      }
+      html {
         background: #111;
       }
-      /* The host's standalone canvas, at 1x: the canvas iced appends
-         fills this box. */
+      /* The canvas iced appends fills the body (100% x 100%), so the
+         body is the viewport: every demo runs full-window. */
       body {
-        width: 360px;
-        height: 340px;
-        margin: 0;
+        width: 100%;
         background: #1a1b26;
         color: #c0caf5;
         font:
           13px ui-monospace,
           monospace;
-        padding: 12px;
         overflow: hidden;
       }
     </style>
@@ -46,20 +53,53 @@
       const demo = params.get('demo') ?? 'counter';
       const producer = params.get('producer') ?? 'rust';
       // The rust producer's artifact has no suffix (demo-counter.cwasm);
-      // the others do (demo-counter-as.cwasm, demo-counter-wat.cwasm).
+      // the others do (demo-counter-as.cwasm, demo-counter-wat.cwasm). The
+      // artifacts live in the site's shared components directory, one up
+      // from this page.
       const suffix = producer === 'rust' ? '' : `-${producer}`;
-      const artifact = `demo-${demo}${suffix}.cwasm`;
+      const artifact = `../components/demo-${demo}${suffix}.cwasm`;
 
       const fail = (message) => {
         document.body.textContent = `waui (iced host) — ${message} (${artifact})`;
       };
-      // ArrayBuffer to base64 (the page has no filesystem, so the icons are
-      // handed to the host as bytes).
+      // ArrayBuffer to base64 (the page has no filesystem, so the icons and
+      // the entry artifacts are handed to the host as bytes).
       const bufToBase64 = (bytes) => {
         let binary = '';
         for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
         return btoa(binary);
       };
+
+      // The desktop's nine entry artifacts, in the background: the page
+      // fetches each from the shared components directory and hands the
+      // bytes to the host as it resolves. The host's open-entry loads from
+      // that map, so a double-click that lands before its fetch resolves
+      // fails until the next one. window.entriesReady flips once all have
+      // settled, so a test (or a hurried user) can wait for them.
+      function prefetchComponents(mod, manifest) {
+        const entries = JSON.parse(manifest).entries;
+        let pending = entries.length;
+        const settled = () => {
+          if (--pending === 0) window.entriesReady = true;
+        };
+        for (const entry of entries) {
+          // The manifest's path is the native component file (demo-counter.
+          // component.wasm); the site serves the precompiled artifact under
+          // the same base name (demo-counter.cwasm).
+          const base = entry.path
+            .split('/')
+            .pop()
+            .replace(/\.component\.wasm$/, '.cwasm');
+          fetch(`../components/${base}`)
+            .then((r) => {
+              if (!r.ok) throw new Error(`HTTP ${r.status}`);
+              return r.arrayBuffer();
+            })
+            .then((buf) => mod.components_add(entry.path, bufToBase64(new Uint8Array(buf))))
+            .catch((e) => console.error(`components ${entry.path}: ${e.message}`))
+            .finally(settled);
+        }
+      }
 
       try {
         const mod = await import('./host_iced.js');
@@ -67,24 +107,32 @@
         const bytes = new Uint8Array(await (await fetch(artifact)).arrayBuffer());
         // The desktop carries the registry (the manifest) and the icons; the
         // browser has no filesystem, so the page fetches both and hands them
-        // over. Its canvas is the app's (960x600), not the standalone box, so
-        // the body grows to fit it. The other demos carry neither.
+        // over. The other demos carry neither. The manifest and the icons
+        // live at the site root, one directory up from this page.
         let manifest = null;
         let assets = null;
         if (demo === 'desktop') {
-          document.body.style.width = '960px';
-          document.body.style.height = '600px';
-          manifest = await (await fetch('registry.json')).text();
+          manifest = await (await fetch('../registry.json')).text();
           const obj = {};
           for (const entry of JSON.parse(manifest).entries) {
-            const resp = await fetch(entry.data.icon);
+            // The manifest's icon paths are the repo's (site/icons/); the
+            // site serves the same set from its root icons/ directory. The
+            // asset map keeps the manifest's key (the component's `src`).
+            const icon = entry.data.icon;
+            const url = icon.startsWith('site/') ? `../${icon.slice('site/'.length)}` : icon;
+            const resp = await fetch(url);
             if (resp.ok) {
-              obj[entry.data.icon] = bufToBase64(new Uint8Array(await resp.arrayBuffer()));
+              obj[icon] = bufToBase64(new Uint8Array(await resp.arrayBuffer()));
             }
           }
           assets = JSON.stringify(obj);
         }
-        mod.run(bytes, manifest, assets);
+        // `null` components: the grid's first frame never waits for the
+        // entry artifacts; they are added as the background fetches resolve.
+        mod.run(bytes, manifest, assets, null);
+        if (demo === 'desktop') {
+          prefetchComponents(mod, manifest);
+        }
       } catch (err) {
         fail(err.message);
       }

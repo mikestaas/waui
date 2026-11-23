@@ -49,9 +49,9 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; image → iced's `svg` (the file natively, the page's asset bytes in the browser); applies diffs, skips rebuild on empty diff; `--entry <name=path>` registers an entry, `--registry <manifest.json>` reads them from a file (the desktop's is `registry.json`) — a non-empty registry lets it run multi-component apps: `cursor: pointer` containers are double-clickable tiles, and an opened entry runs in its own store, seated in the launching component's content slot (it draws the window's chrome and geometry); no keyboard channel, so it never emits `on-key`; `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events, `--dump <file>` renders a headless PNG, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; image → ratatui-image (sixel/kitty/iterm2 in a supporting terminal, halfblocks otherwise; the `--dump` frame and the browser use the vendored halfblocks encoder — the crate does not compile for wasm); `--entry <name=path>` registers an entry, `--registry <manifest.json>` reads them from a file (the desktop's is `registry.json`) — a non-empty registry makes it a multi-window host: framed double-clickable tiles, and framed overlapping windows (the component draws the title bar and close; Tab/Shift+Tab raise/lower, Esc closes); `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events (Enter on a tile synthesizes a double-click), `--dump` prints one frame, `--width <n>` sizes the dump buffer, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
-| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); the `demo-desktop` pages (the same pair, with the entry registry) run the windowing side, one per producer; `expect.mjs` holds the expected views, shared with the selftest and the browser suite; the `tui/` and `iced/` subdirectories are the two wasmtime hosts in the browser (the host as wasm on the Pulley interpreter: `index.html` the page, `selftest.mjs` the byte-parity gate) |
+| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); the `demo-desktop` pages (the same pair, with the entry registry) run the windowing side, one per producer; `expect.mjs` holds the expected views, shared with the selftest and the browser suite; the `tui/` and `iced/` subdirectories are the two wasmtime hosts in the browser (the host as wasm on the Pulley interpreter: `index.html` the page, `selftest.mjs` the byte-parity gate; the iced page's canvas and the tui page's terminal fill the viewport) |
 | `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; plus the desktop as a component, in its three source languages; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
-| `e2e/`                   | the Playwright browser suite: the nine demo pages — each walking its states — in a 360x340 viewport (the iced window size), and both desktops (the static launcher, and the `demo-desktop` component in its three source languages), in chromium; the screenshot goldens are CI-only, the pixel-level producer parity runs everywhere |
+| `e2e/`                   | the Playwright browser suite: the nine demo pages — each walking its states — in a 360x340 viewport (the iced window size), both desktops (the static launcher, and the `demo-desktop` component in its three source languages), and the two browser host pages (their nine demos, and the desktop, whose window opens from a double-clicked tile), in chromium; the screenshot goldens are CI-only, the pixel-level producer parity runs everywhere |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests a refresh (the host never wakes it) |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one mutation |
 | `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component; the footer's input takes typed text, and "add" uses it (a preset label when it is empty) |
@@ -158,11 +158,16 @@ Enabling it needs one manual step: repository Settings → Pages → Source:
 and `target/site/iced/` (the iced host, its canvas page, and the host
 module). Each page runs the desktop and the nine demos, fetched by `?demo=`
 and `?producer=` (the precompiled pulley32 artifacts: the browser has no
-JIT, so it only interprets). The desktop page fetches `registry.json` and
-the icons and hands them to the host — the browser has no filesystem — so
-the grid renders with its icons; double-clicking a tile cannot open a
-window (the host cannot load the entry's component from a path), so the
-browser desktop is the grid, not the windows.
+JIT, so it only interprets). The artifacts are host-independent, so the
+twelve share one `target/site/components/` directory; the desktop's
+`registry.json` lives at the site root, one copy, and the icons are the
+site's root `icons/` set. The desktop page fetches the manifest, the icons,
+and the nine entry artifacts and hands them to the host — the browser has
+no filesystem — the manifest and the icons up front (the grid's first frame
+carries its icons), the artifacts in the background: the host adds each as
+its fetch resolves, so a double-clicked tile opens its window once the
+fetch has landed, and one that lands before it does fails until the next.
+The iced page's canvas and the tui page's terminal fill the viewport.
 
 ## Tests
 
@@ -222,9 +227,9 @@ browser desktop is the grid, not the windows.
   tui's text frame, the iced's PNG — must be byte-identical to the native
   host's `--dump`, per demo, the component on the Pulley interpreter against
   Cranelift. The scenarios mirror the native golden tests, plus the desktop
-  (the registry and the icons handed over as text, the browser's only source
-  for them; no windows, since the browser host cannot load an entry's
-  component).
+  (the registry, the icons, and the nine entry components handed over as
+  text, the browser's only source for them; a double-clicked tile opens a
+  window, as the live page does once its background fetch has landed).
 - `make ui-test`: the tree layer's diff channel, as a standalone module run
   via Node: the structural cases (add, remove, re-parent) plus the bootstrap,
   id-less, and input rules — the AS twin of the `component-ui` unit tests.
@@ -233,7 +238,11 @@ browser desktop is the grid, not the windows.
   `demo-desktop` component in its three source languages) in a real browser —
   the rendered DOM against the same expectations as the web selftest
   (`web/expect.mjs`), the computed styles, the in-place-vs-rebuild
-  behavior, and the window management (open, raise, drag, resize, close).
+  behavior, and the window management (open, raise, drag, resize, close) —
+  plus the two browser host pages (`browser-hosts.spec.mjs`): their nine
+  demos, and the desktop, whose window opens from a double-clicked tile
+  (the tui's by its menu bar's window count, the iced's by the pixels the
+  window draws where the background was).
   Screenshot goldens compare in CI only (font rendering is
   platform-specific): each demo page's states — the counter at 0, 1, and
   -3, the stopwatch paused and running, the todo seeded and after an add —
@@ -265,9 +274,6 @@ browser desktop is the grid, not the windows.
 
 ## Known limitations
 
-- **Browser hosts cannot open entries.** `open-entry` loads the entry's
-  component from a file path; the browser has no filesystem, so the
-  desktop's windows do not open there (the grid and its icons render).
 - **Rust heap fragmentation under text input.** Each `on-text` and `changes`
   round-trip allocates short-lived buffers of varying size, which fragment
   the Rust heap (dlmalloc). The Rust web todo demo traps after a few adds.
