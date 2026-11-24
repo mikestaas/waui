@@ -18,7 +18,7 @@ ICONS := crates/demo-counter/counter-rust.svg crates/demo-stopwatch/stopwatch-ru
          run-cli-wat run-stop-cli-wat run-todo-cli-wat run-tui-wat run-stop-tui-wat run-todo-tui-wat run-desktop-tui-wat \
          run-iced-wat run-stop-iced-wat run-todo-iced-wat run-desktop-iced-wat \
          web web-as web-wat web-test web-test-as web-test-wat \
-         host-tui-wasm host-tui-wasm-test host-iced-wasm host-iced-wasm-test site-hosts \
+         host-tui-wasm host-tui-wasm-test host-iced-wasm host-iced-wasm-test \
          site ui-test e2e goldens screenshots fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model. The
@@ -261,15 +261,18 @@ web-wat: components components-as components-wat
 
 # The GitHub Pages site: one index page — ?demo= and ?producer= select the
 # module (counter|stopwatch|todo|desktop, rust|as|wat; the default demo is
-# the desktop) — plus the twelve .wasm modules it fetches and the nine icons
-# (the site's root icons/ set: the demos' own files). The page fetches, so
-# the site needs a server (GitHub Pages, or python3 -m http.server).
+# the desktop) — plus the twelve .wasm modules it fetches, the nine icons
+# (the site's root icons/ set: the demos' own files), and the two browser
+# host pages (tui/, iced/) with the twelve precompiled pulley32 artifacts
+# they fetch (the shared components/ directory) and the registry.json at
+# the root. The pages fetch, so the site needs a server (GitHub Pages, or
+# python3 -m http.server).
 # .github/workflows/site.yml deploys it on push to main.
-site: components components-as components-wat
-	# Rebuild the directory from scratch: a stale file from an older layout
-	# would otherwise survive (site-hosts adds its three directories on top).
+site: components components-as components-wat host-tui-wasm host-iced-wasm
+	# Rebuild the directory from scratch: the copies below are unconditional,
+	# so a stale file from an older layout would otherwise survive.
 	@rm -rf target/site
-	@mkdir -p target/site/icons
+	@mkdir -p target/site/icons target/site/components target/site/tui/vendor target/site/iced
 	@cp $(ICONS) target/site/icons/
 	@for c in $(COMPONENTS); do \
 		lib=$$(printf '%s' "$$c" | tr '-' '_'); \
@@ -289,6 +292,31 @@ site: components components-as components-wat
 	# time (applied by the page only for the desktop).
 	@node web/build.mjs target/site/demo-desktop.wasm target/site/index.html \
 		--url-params --name demos --registry registry.json || exit 1
+	# The two browser host pages: each host's pkg (wasm-bindgen) and its
+	# page (the tui page also takes the vendored xterm.js), the registry
+	# manifest at the root (the root index page never fetches it), and the
+	# twelve precompiled artifacts the pages fetch by ?demo= and ?producer=
+	# (the artifacts are host-independent, so one shared components/
+	# directory).
+	@cp web/tui/index.html target/site/tui/
+	@cp web/tui/vendor/xterm.js web/tui/vendor/xterm.css web/tui/vendor/LICENSE target/site/tui/vendor/
+	@cp target/host-tui/pkg/host_tui.js target/host-tui/pkg/host_tui_bg.wasm target/site/tui/
+	@cp web/iced/index.html target/site/iced/
+	@cp target/host-iced/pkg/host_iced.js target/host-iced/pkg/host_iced_bg.wasm target/site/iced/
+	@cp registry.json target/site/
+	# The rust artifacts came with the host builds; precompile the other
+	# two producers (the pages take all nine, plus the desktop's three).
+	@for c in $(COMPONENTS) demo-desktop; do \
+		for s in -as -wat; do \
+			echo "==> precompiling $$c$$s for pulley32"; \
+			cargo run -p host-precompile -- target/components/$$c$$s.component.wasm target/components/$$c$$s.cwasm || exit 1; \
+		done; \
+	done
+	@for d in counter stopwatch todo desktop; do \
+		for s in "" -as -wat; do \
+			cp target/components/demo-$$d$$s.cwasm target/site/components/ || exit 1; \
+		done; \
+	done
 	@echo "wrote target/site/ — serve it over http; .github/workflows/site.yml deploys it"
 
 # Headless check of the web host's ABI layer (Node).
@@ -321,9 +349,9 @@ host-tui-wasm: components
 
 # The byte-parity gate: the wasm host's `dump` frame against the native
 # `host-tui --dump` frame, per demo (Node). The desktop scenario opens a
-# window, so the page's background fetch must have landed: site-hosts
+# window, so the page's background fetch must have landed: site
 # precompiles all twelve artifacts, which the selftest reads.
-host-tui-wasm-test: site-hosts
+host-tui-wasm-test: site
 	cargo build -p host-tui
 	node web/tui/selftest.mjs
 
@@ -344,47 +372,11 @@ host-iced-wasm: components
 
 # The byte-parity gate: the wasm host's `dump` PNG against the native
 # `host-iced --dump` PNG, per demo (Node). The desktop scenario opens a
-# window, so the page's background fetch must have landed: site-hosts
+# window, so the page's background fetch must have landed: site
 # precompiles all twelve artifacts, which the selftest reads.
-host-iced-wasm-test: site-hosts
+host-iced-wasm-test: site
 	cargo build -p host-iced
 	node web/iced/selftest.mjs
-
-# The browser host pages, next to the site: each host's pkg (wasm-bindgen),
-# its page (web/tui, web/iced), and the twelve precompiled artifacts the
-# pages fetch by ?demo= and ?producer= (the tui page also takes the
-# vendored xterm.js). The artifacts are host-independent, so they live in
-# one shared components/ directory; the registry manifest lives at the site
-# root, one copy (the root index page has it inlined at build time and never
-# fetches it); the icons are the site's root icons/ set (the `site` target's
-# copy of the demos' own files), fetched by the host pages relative to the
-# root. The pages fetch, so they need a server, exactly like the site's
-# index page. Needs wasm-bindgen on the PATH.
-site-hosts: site host-tui-wasm host-iced-wasm
-	# Rebuild the three directories from scratch: the copies below are
-	# unconditional, so a stale file from an older layout would survive.
-	@rm -rf target/site/components target/site/tui target/site/iced
-	@mkdir -p target/site/components target/site/tui/vendor target/site/iced
-	@cp web/tui/index.html target/site/tui/
-	@cp web/tui/vendor/xterm.js web/tui/vendor/xterm.css web/tui/vendor/LICENSE target/site/tui/vendor/
-	@cp target/host-tui/pkg/host_tui.js target/host-tui/pkg/host_tui_bg.wasm target/site/tui/
-	@cp web/iced/index.html target/site/iced/
-	@cp target/host-iced/pkg/host_iced.js target/host-iced/pkg/host_iced_bg.wasm target/site/iced/
-	@cp registry.json target/site/
-	# The rust artifacts came with the host builds; precompile the other
-	# two producers (the pages take all nine, plus the desktop's three).
-	@for c in $(COMPONENTS) demo-desktop; do \
-		for s in -as -wat; do \
-			echo "==> precompiling $$c$$s for pulley32"; \
-			cargo run -p host-precompile -- target/components/$$c$$s.component.wasm target/components/$$c$$s.cwasm || exit 1; \
-		done; \
-	done
-	@for d in counter stopwatch todo desktop; do \
-		for s in "" -as -wat; do \
-			cp target/components/demo-$$d$$s.cwasm target/site/components/ || exit 1; \
-		done; \
-	done
-	@echo "wrote target/site/tui/, target/site/iced/, and target/site/components/"
 
 # The tree layer's diff channel, as a standalone module run via Node: the
 # structural cases (add, remove, re-parent) plus the bootstrap and id-less
@@ -403,10 +395,10 @@ ui-test:
 
 # Browser E2E (Playwright, chromium): the site's index page (the nine demos
 # and the desktop, by ?demo=/?producer=) and the two browser host pages,
-# served from target/site/ (make site site-hosts). Needs `npm install`, a
+# served from target/site/ (make site). Needs `npm install`, a
 # one-time `npx playwright install chromium`, and wasm-bindgen on the PATH
 # (the host pages' builds).
-e2e: site site-hosts
+e2e: site
 	@test -d node_modules/@playwright/test || { echo "e2e needs node/npm — run: npm install"; exit 1; }
 	npx playwright test $(E2E_ARGS)
 

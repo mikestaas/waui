@@ -139,34 +139,32 @@ it runs from disk with no server and no network.
 ## GitHub Pages
 
 `make site` assembles the demo site in `target/site/`: one index page, the
-twelve `.wasm` modules it fetches, and the nine icons (the demos' own
-files, copied to the site's root `icons/` set). The index page takes
-`?demo=` and `?producer=` — `counter|stopwatch|todo|desktop` and
-`rust|as|wat`, as on the iced and tui host pages — the default demo the
-desktop: the `demo-desktop` component in the selected source language, its
-windows embedding the demo *components*, rendered in place. The other demos
-run standalone, as their self-contained `make web` pages do. The page
-fetches its `.wasm` file instead of inlining it, so the site needs a server
+twelve `.wasm` modules it fetches, the nine icons (the demos' own files,
+copied to the site's root `icons/` set), and the two browser host pages —
+`target/site/tui/` (the tui host, its xterm.js page, and the host module)
+and `target/site/iced/` (the iced host, its canvas page, and the host
+module) — with the twelve precompiled pulley32 artifacts they fetch (the
+shared `target/site/components/` directory: the artifacts are
+host-independent) and the desktop's `registry.json` at the root (one copy).
+The index page takes `?demo=` and `?producer=` —
+`counter|stopwatch|todo|desktop` and `rust|as|wat`, as on the iced and tui
+host pages — the default demo the desktop: the `demo-desktop` component in
+the selected source language, its windows embedding the demo *components*,
+rendered in place. The other demos run standalone, as their self-contained
+`make web` pages do. Each host page runs the desktop and the nine demos,
+fetched by `?demo=` and `?producer=` (the precompiled pulley32 artifacts:
+the browser has no JIT, so it only interprets). The desktop page fetches
+the manifest, the icons, and the nine entry artifacts and hands them to the
+host — the browser has no filesystem — the manifest and the icons up front
+(the grid's first frame carries its icons), the artifacts in the background:
+the host adds each as its fetch resolves, so a double-clicked tile opens
+its window once the fetch has landed, and one that lands before it does
+fails until the next. The iced page's canvas and the tui page's terminal
+fill the viewport. Everything on the site fetches (the index page its
+`.wasm` file, the host pages their artifacts), so the site needs a server
 (GitHub Pages, or `python3 -m http.server`). It is deployed to GitHub Pages
 by `.github/workflows/site.yml` on every push to main. Enabling it needs one
 manual step: repository Settings → Pages → Source: *GitHub Actions*.
-
-`make site-hosts` assembles the browser host pages, next to the site:
-`target/site/tui/` (the tui host, its xterm.js page, and the host module)
-and `target/site/iced/` (the iced host, its canvas page, and the host
-module). Each page runs the desktop and the nine demos, fetched by `?demo=`
-and `?producer=` (the precompiled pulley32 artifacts: the browser has no
-JIT, so it only interprets). The artifacts are host-independent, so the
-twelve share one `target/site/components/` directory; the desktop's
-`registry.json` lives at the site root, one copy, and the icons are the
-site's root `icons/` set (the demos' own files). The desktop page fetches
-the manifest, the icons,
-and the nine entry artifacts and hands them to the host — the browser has
-no filesystem — the manifest and the icons up front (the grid's first frame
-carries its icons), the artifacts in the background: the host adds each as
-its fetch resolves, so a double-clicked tile opens its window once the
-fetch has landed, and one that lands before it does fails until the next.
-The iced page's canvas and the tui page's terminal fill the viewport.
 
 ## Tests
 

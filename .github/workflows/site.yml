@@ -1,6 +1,8 @@
-# Deploys the demo site to GitHub Pages: the single index page (?demo= and
-# ?producer=, the default demo the desktop) plus the twelve .wasm modules
-# and the nine icons, assembled by `make site` in target/site/.
+# Deploys the demo site to GitHub Pages: the index page (?demo= and
+# ?producer=, the default demo the desktop), the twelve .wasm modules, the
+# nine icons, and the two browser host pages (tui/, iced/) with their
+# precompiled artifacts and the registry manifest, assembled by `make site`
+# in target/site/.
 #
 # Needs Pages enabled once: Settings → Pages → Source: GitHub Actions.
 
@@ -51,8 +53,8 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
           restore-keys: ${{ runner.os }}-node-
 
-      # wabt for the AS build's env.abort patch. The web build needs no
-      # iced link set: no host binaries here.
+      # wabt for the AS build's env.abort patch. The host cdylibs build for
+      # wasm32 with no default features, so no iced link set.
       - name: System packages
         run: |
           sudo apt-get update
@@ -62,6 +64,17 @@ jobs:
       - uses: bytecodealliance/actions/wasm-tools/setup@v1
         with:
           version: 1.261.0
+
+      # The wasm-bindgen CLI, version-matched to the lockfile (the browser
+      # host builds run it; a mismatched CLI writes glue the runtime rejects).
+      # The release tarball wraps its files in a directory; the extract
+      # strips it.
+      - name: Install wasm-bindgen
+        run: |
+          v=$(grep -A1 '^name = "wasm-bindgen"$' Cargo.lock | grep '^version' | head -1 | cut -d'"' -f2)
+          curl -sSfL "https://github.com/rustwasm/wasm-bindgen/releases/download/$v/wasm-bindgen-$v-x86_64-unknown-linux-musl.tar.gz" | tar xz --strip-components=1
+          install -m 755 wasm-bindgen "$HOME/.cargo/bin/wasm-bindgen"
+          wasm-bindgen --version
 
       - name: npm toolchain
         run: npm ci
