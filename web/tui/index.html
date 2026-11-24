@@ -3,10 +3,11 @@
   The browser TUI host: the same host as the native binary, running in the
   browser as wasm. The component is a precompiled pulley32 artifact (the
   host-precompile tool; the browser has no JIT, so it only interprets),
-  fetched by ?demo= and ?producer= — counter|stopwatch|todo and
-  rust|as|wat, so the nine demos share this one page. The artifacts live
-  in the site's shared components/ directory (the iced page fetches the
-  same files), and the desktop's registry and icons at the site root.
+  fetched by ?demo= and ?producer= — counter|stopwatch|todo|desktop and
+  rust|as|wat, so the nine demos and the desktop share this one page. The
+  default demo is the desktop, as on the site's index page. The artifacts
+  live in the site's shared components/ directory (the iced page fetches
+  the same files), and the desktop's registry and icons at the site root.
 
   The desktop carries its nine entry artifacts too: the page fetches them
   in the background after the first frame and hands each to the host as it
@@ -57,7 +58,7 @@
     <script src="vendor/xterm.js"></script>
     <script type="module">
       const params = new URLSearchParams(location.search);
-      const demo = params.get('demo') ?? 'counter';
+      const demo = params.get('demo') ?? 'desktop';
       const producer = params.get('producer') ?? 'rust';
       // The rust producer's artifact has no suffix (demo-counter.cwasm);
       // the others do (demo-counter-as.cwasm, demo-counter-wat.cwasm). The
