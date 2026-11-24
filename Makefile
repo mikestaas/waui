@@ -3,6 +3,15 @@ COMPONENTS    := demo-counter demo-stopwatch demo-todo
 AS_COMPONENTS := demo-counter demo-stopwatch demo-todo
 WAT_COMPONENTS := demo-counter demo-stopwatch demo-todo
 
+# The desktop's nine icons, in their demos' source trees (the registry's
+# canonical paths): the site and the web pages copy them to their own flat
+# icons/ set.
+ICONS := crates/demo-counter/counter-rust.svg crates/demo-stopwatch/stopwatch-rust.svg \
+	crates/demo-todo/todo-rust.svg \
+	assembly/demo-counter/counter-as.svg assembly/demo-stopwatch/stopwatch-as.svg \
+	assembly/demo-todo/todo-as.svg \
+	wat/counter-wat.svg wat/stopwatch-wat.svg wat/todo-wat.svg
+
 .PHONY: components components-as components-wat run-cli run-stop-cli run-todo-cli run-tui run-stop-tui run-todo-tui run-desktop-tui \
          run-iced run-stop-iced run-todo-iced run-desktop-iced run-cli-as run-stop-cli-as run-todo-cli-as \
          run-tui-as run-stop-tui-as run-todo-tui-as run-desktop-tui-as run-iced-as run-stop-iced-as run-todo-iced-as run-desktop-iced-as \
@@ -207,11 +216,12 @@ run-desktop-iced: components components-as components-wat
 # Web host: one self-contained HTML page per component (the wasm module
 # inlined as base64), plus the desktop page (the registry manifest's nine
 # entries). The pages run straight from disk — no server, no npm. The
-# desktop page's icons come from the site's set, copied to target/web/icons/.
+# desktop page's icons are the demos' own files, copied to target/web/icons/.
 web: components components-as components-wat
 	@mkdir -p target/web
 	@rm -rf target/web/icons
-	@cp -R site/icons target/web/
+	@mkdir -p target/web/icons
+	@cp $(ICONS) target/web/icons/
 	@for c in $(COMPONENTS); do \
 		lib=$$(printf '%s' "$$c" | tr '-' '_'); \
 		node web/build.mjs target/$(WASM_TARGET)/release/$$lib.wasm target/web/$$c.html || exit 1; \
@@ -226,7 +236,8 @@ web: components components-as components-wat
 web-as: components components-as components-wat
 	@mkdir -p target/web
 	@rm -rf target/web/icons
-	@cp -R site/icons target/web/
+	@mkdir -p target/web/icons
+	@cp $(ICONS) target/web/icons/
 	@for c in $(AS_COMPONENTS); do \
 		node web/build.mjs target/assembly/$$c-as.wasm target/web/$$c-as.html || exit 1; \
 	done
@@ -239,7 +250,8 @@ web-as: components components-as components-wat
 web-wat: components components-as components-wat
 	@mkdir -p target/web
 	@rm -rf target/web/icons
-	@cp -R site/icons target/web/
+	@mkdir -p target/web/icons
+	@cp $(ICONS) target/web/icons/
 	@for c in $(WAT_COMPONENTS); do \
 		node web/build.mjs target/wat/$$c.wasm target/web/$$c-wat.html || exit 1; \
 	done
@@ -247,39 +259,36 @@ web-wat: components components-as components-wat
 		--registry registry.json --wasm-target $(WASM_TARGET) || exit 1
 	@echo "wrote target/web/*-wat.html — open them directly (no server needed)"
 
-# The GitHub Pages site: the desktop launcher (site/) plus the nine demo
-# pages, the three desktop pages, and their wasm modules, assembled in
-# target/site/. The pages fetch the modules as blobs, so the site needs a
-# server (GitHub Pages, or python3 -m http.server); the launcher itself runs
-# from disk.
+# The GitHub Pages site: one index page — ?demo= and ?producer= select the
+# module (counter|stopwatch|todo|desktop, rust|as|wat; the default demo is
+# the desktop) — plus the twelve .wasm modules it fetches and the nine icons
+# (the site's root icons/ set: the demos' own files). The page fetches, so
+# the site needs a server (GitHub Pages, or python3 -m http.server).
 # .github/workflows/site.yml deploys it on push to main.
 site: components components-as components-wat
+	# Rebuild the directory from scratch: a stale file from an older layout
+	# would otherwise survive (site-hosts adds its three directories on top).
+	@rm -rf target/site
 	@mkdir -p target/site/icons
-	@cp site/index.html site/desktop.js site/desktop.css target/site/
-	@cp site/icons/*.svg target/site/icons/
+	@cp $(ICONS) target/site/icons/
 	@for c in $(COMPONENTS); do \
 		lib=$$(printf '%s' "$$c" | tr '-' '_'); \
 		cp target/$(WASM_TARGET)/release/$$lib.wasm target/site/$$c.wasm || exit 1; \
-		node web/build.mjs target/$(WASM_TARGET)/release/$$lib.wasm target/site/$$c.html --url $$c.wasm || exit 1; \
 	done
 	@for c in $(AS_COMPONENTS); do \
 		cp target/assembly/$$c-as.wasm target/site/$$c-as.wasm || exit 1; \
-		node web/build.mjs target/assembly/$$c-as.wasm target/site/$$c-as.html --url $$c-as.wasm || exit 1; \
 	done
 	@for c in $(WAT_COMPONENTS); do \
 		cp target/wat/$$c.wasm target/site/$$c-wat.wasm || exit 1; \
-		node web/build.mjs target/wat/$$c.wasm target/site/$$c-wat.html --url $$c-wat.wasm || exit 1; \
 	done
-	# The desktop page, per producer (the demo-desktop core module, the
-	# windowing host): desktop.html (Rust), desktop-as.html, desktop-wat.html.
-	# Each carries the registry manifest (registry.json) — the same nine
-	# entries the native hosts read, the icons remapped to the page's set.
 	@cp target/$(WASM_TARGET)/release/demo_desktop.wasm target/site/demo-desktop.wasm || exit 1
-	@node web/build.mjs target/site/demo-desktop.wasm target/site/desktop.html --url demo-desktop.wasm --registry registry.json || exit 1
 	@cp target/assembly/demo-desktop-as.wasm target/site/demo-desktop-as.wasm || exit 1
-	@node web/build.mjs target/site/demo-desktop-as.wasm target/site/desktop-as.html --url demo-desktop-as.wasm --registry registry.json || exit 1
 	@cp target/wat/demo-desktop.wasm target/site/demo-desktop-wat.wasm || exit 1
-	@node web/build.mjs target/site/demo-desktop-wat.wasm target/site/desktop-wat.html --url demo-desktop-wat.wasm --registry registry.json || exit 1
+	# The single index page: the module URL from ?demo=/?producer= (the iced
+	# and tui host pages take the same pair), the registry inlined at build
+	# time (applied by the page only for the desktop).
+	@node web/build.mjs target/site/demo-desktop.wasm target/site/index.html \
+		--url-params --name demos --registry registry.json || exit 1
 	@echo "wrote target/site/ — serve it over http; .github/workflows/site.yml deploys it"
 
 # Headless check of the web host's ABI layer (Node).
@@ -346,11 +355,11 @@ host-iced-wasm-test: site-hosts
 # pages fetch by ?demo= and ?producer= (the tui page also takes the
 # vendored xterm.js). The artifacts are host-independent, so they live in
 # one shared components/ directory; the registry manifest lives at the site
-# root, one copy (the root desktop pages have it inlined at build time and
-# never fetch it); the icons are the site's root icons/ set (the `site`
-# target's copy), fetched by the host pages relative to the root. The pages
-# fetch, so they need a server, exactly like the site's demo pages. Needs
-# wasm-bindgen on the PATH.
+# root, one copy (the root index page has it inlined at build time and never
+# fetches it); the icons are the site's root icons/ set (the `site` target's
+# copy of the demos' own files), fetched by the host pages relative to the
+# root. The pages fetch, so they need a server, exactly like the site's
+# index page. Needs wasm-bindgen on the PATH.
 site-hosts: site host-tui-wasm host-iced-wasm
 	# Rebuild the three directories from scratch: the copies below are
 	# unconditional, so a stale file from an older layout would survive.
@@ -392,10 +401,10 @@ ui-test:
 	node assembly/patch-env-abort.mjs target/assembly/tree-test.raw.wasm target/assembly/tree-test.core.wasm || exit 1; \
 	node assembly/ui/tree.test.mjs target/assembly/tree-test.core.wasm
 
-# Browser E2E (Playwright, chromium): the nine demo pages, the site
-# desktop, and the two browser host pages, served from target/site/
-# (make site site-hosts). Needs `npm install`, a one-time
-# `npx playwright install chromium`, and wasm-bindgen on the PATH
+# Browser E2E (Playwright, chromium): the site's index page (the nine demos
+# and the desktop, by ?demo=/?producer=) and the two browser host pages,
+# served from target/site/ (make site site-hosts). Needs `npm install`, a
+# one-time `npx playwright install chromium`, and wasm-bindgen on the PATH
 # (the host pages' builds).
 e2e: site site-hosts
 	@test -d node_modules/@playwright/test || { echo "e2e needs node/npm — run: npm install"; exit 1; }

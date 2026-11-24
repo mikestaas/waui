@@ -44,9 +44,9 @@ const FAKE_NOW: (u64, u64) = (1_000, 50);
 fn run_dump(path: &Path, args: &[String], now: Option<(u64, u64)>, width: Option<u16>) -> String {
     let bin = env!("CARGO_BIN_EXE_host-tui");
     let mut cmd = Command::new(bin);
-    // The registry manifest's entry paths are relative to the repo root, so
-    // the host runs from there (an opened entry loads its component from
-    // one).
+    // The registry manifest's entry paths and icon paths are relative to
+    // the repo root, so the host runs from there (an opened entry loads
+    // its component from one).
     cmd.current_dir(waui_root());
     cmd.arg("--dump");
     if let Some(w) = width {

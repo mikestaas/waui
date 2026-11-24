@@ -45,12 +45,14 @@ test.describe('demo pages', () => {
 
 test('desktop with two windows', async ({ page }) => {
   await page.goto('/');
-  const tiles = page.locator('#grid .tile');
+  // The grid is the component's tree: nine tiles (the cursor-pointer nodes).
+  const tiles = page.locator('#app .waui-cursor-pointer');
   await tiles.nth(0).dblclick(); // Counter (Rust)
   await tiles.nth(7).dblclick(); // Todo (AssemblyScript)
-  // Both windows' demos are static at rest; wait for the top one to boot.
-  await expect(
-    page.locator('.window').last().frameLocator('iframe').locator('[data-id="2"]'),
-  ).toHaveText('todos');
+  // Both windows' demos are static at rest; wait for the top one's tree to
+  // seat in its content slot (the container whose id is the host handle:
+  // the first window is 10000, the second 10001).
+  await expect(page.locator('[data-id="10001"] [data-id="2"]')).toHaveText('todos');
+  await settle(page);
   await expect(page).toHaveScreenshot('desktop.png');
 });

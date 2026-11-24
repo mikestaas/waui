@@ -168,8 +168,9 @@ const NEGATIVE: [u8; 3] = [0xf7, 0x76, 0x8e];
 const ACCENT: [u8; 3] = [0x7a, 0xa2, 0xf7];
 const WARNING: [u8; 3] = [0xe0, 0xaf, 0x68];
 
-// The desktop's window chrome (site/desktop.css): the panel's fill is the
-// button's, the title bar is darker, and the border is the line color.
+// The desktop's window chrome (the web page's palette, web/index.html):
+// the panel's fill is the button's, the title bar is darker, and the
+// border is the line color.
 const TITLEBAR: [u8; 3] = [0x1e, 0x21, 0x30];
 const BORDER: [u8; 3] = [0x41, 0x48, 0x68];
 

@@ -1,4 +1,4 @@
-# Prettier's scope is the JS in assembly/, web/, site/, and e2e/
+# Prettier's scope is the JS in assembly/, web/, and e2e/
 # (see .prettierrc). Everything else — docs, config, the Rust
 # workspace, the hand-rolled WAT — is hand-formatted.
 *.md

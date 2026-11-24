@@ -1,8 +1,8 @@
-// The component desktop (web/desktop.html): the `demo-desktop` component on
-// the windowing side of the `app` world, with the windowing host. Unlike the
-// static launcher (desktop.spec.mjs, `/`), each window's content is a demo
-// *component* running in its own sandbox, its tree seated in the window's
-// content slot (the container whose id is the host handle).
+// The component desktop (the site's index page, ?demo=desktop): the
+// `demo-desktop` component on the windowing side of the `app` world, with
+// the windowing host. Each window's content is a demo *component* running in
+// its own sandbox, its tree seated in the window's content slot (the
+// container whose id is the host handle).
 //
 // The grid is the component's tree: nine tiles (the cursor-pointer nodes,
 // ids 100 and up), each an icon, a label, and a caption. The window count is
@@ -21,9 +21,9 @@ import { expect, test } from '@playwright/test';
 
 // The desktop page per producer (helpers' desktopPages).
 const PAGES = [
-  ['/desktop.html', 'Rust'],
-  ['/desktop-as.html', 'AssemblyScript'],
-  ['/desktop-wat.html', 'WAT'],
+  ['/index.html?demo=desktop&producer=rust', 'Rust'],
+  ['/index.html?demo=desktop&producer=as', 'AssemblyScript'],
+  ['/index.html?demo=desktop&producer=wat', 'WAT'],
 ];
 
 // The window management and grid contract, for one producer's page.

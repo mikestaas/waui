@@ -115,11 +115,12 @@
           manifest = await (await fetch('../registry.json')).text();
           const obj = {};
           for (const entry of JSON.parse(manifest).entries) {
-            // The manifest's icon paths are the repo's (site/icons/); the
-            // site serves the same set from its root icons/ directory. The
-            // asset map keeps the manifest's key (the component's `src`).
+            // The manifest's icon paths are the repo's (each demo's source
+            // tree); the site serves the same set from its root icons/
+            // directory. The asset map keeps the manifest's key (the
+            // component's `src`).
             const icon = entry.data.icon;
-            const url = icon.startsWith('site/') ? `../${icon.slice('site/'.length)}` : icon;
+            const url = icon.includes('/') ? `../icons/${icon.split('/').pop()}` : icon;
             const resp = await fetch(url);
             if (resp.ok) {
               obj[icon] = bufToBase64(new Uint8Array(await resp.arrayBuffer()));

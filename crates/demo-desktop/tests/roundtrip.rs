@@ -147,12 +147,10 @@ fn assert_desktop_roundtrip(app: &mut App, mut store: &mut Store<Host>) {
     // presentation), the icon the manifest's canonical path.
     assert!(summaries
         .iter()
-        .any(|s| s == "image:None:site/icons/counter-rust.svg"));
+        .any(|s| s == "image:None:crates/demo-counter/counter-rust.svg"));
     assert!(summaries.iter().any(|s| s == "text:None:Counter"));
     assert!(summaries.iter().any(|s| s == "text:None:Rust"));
-    assert!(summaries
-        .iter()
-        .any(|s| s == "image:None:site/icons/todo-wat.svg"));
+    assert!(summaries.iter().any(|s| s == "image:None:wat/todo-wat.svg"));
 
     // Nothing has changed since the view: an empty diff.
     assert!(app

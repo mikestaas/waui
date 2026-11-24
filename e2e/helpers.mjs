@@ -201,20 +201,37 @@ export async function widgetStyle(page, id) {
   }, id);
 }
 
-// The demo pages, per demo: the three producers, in order (the Rust page,
-// the AssemblyScript one, the WAT one).
+// The site's single index page, per demo: the three producers, in order
+// (the Rust page, the AssemblyScript one, the WAT one). ?demo= and
+// ?producer= select the module, as on the iced and tui host pages.
 export const demoPages = {
-  counter: ['/demo-counter.html', '/demo-counter-as.html', '/demo-counter-wat.html'],
-  stopwatch: ['/demo-stopwatch.html', '/demo-stopwatch-as.html', '/demo-stopwatch-wat.html'],
-  todo: ['/demo-todo.html', '/demo-todo-as.html', '/demo-todo-wat.html'],
+  counter: [
+    '/index.html?demo=counter&producer=rust',
+    '/index.html?demo=counter&producer=as',
+    '/index.html?demo=counter&producer=wat',
+  ],
+  stopwatch: [
+    '/index.html?demo=stopwatch&producer=rust',
+    '/index.html?demo=stopwatch&producer=as',
+    '/index.html?demo=stopwatch&producer=wat',
+  ],
+  todo: [
+    '/index.html?demo=todo&producer=rust',
+    '/index.html?demo=todo&producer=as',
+    '/index.html?demo=todo&producer=wat',
+  ],
 };
 
 // The producer labels, in demoPages order.
 export const producers = ['Rust', 'AssemblyScript', 'WAT'];
 
-// The desktop page, per producer: the `demo-desktop` component, in its three
-// source languages, on the windowing host.
-export const desktopPages = ['/desktop.html', '/desktop-as.html', '/desktop-wat.html'];
+// The desktop, per producer: the `demo-desktop` component (the index page's
+// default demo), in its three source languages, on the windowing host.
+export const desktopPages = [
+  '/index.html?demo=desktop&producer=rust',
+  '/index.html?demo=desktop&producer=as',
+  '/index.html?demo=desktop&producer=wat',
+];
 
 // Wait for the desktop page's grid to populate (the boot is async: the
 // demos are pre-compiled, then the component runs). The tiles are the

@@ -44,14 +44,13 @@ AssemblyScript uses [`assembly/ui/tree`](assembly/ui/tree.ts), documented in
 | path                     | what it is                                                                                          |
 | ------------------------ | --------------------------------------------------------------------------------------------------- |
 | `wit/`                   | the WIT contract (`widget` + `app`)                                                                 |
-| `registry.json`          | the desktop's entry registry (the nine demos, three languages): the hosts' `--registry` file, the web build's manifest, and the round-trip test's input; each entry's `data` carries the icon (`site/icons/`), the label, and the window's default size |
+| `registry.json`          | the desktop's entry registry (the nine demos, three languages): the hosts' `--registry` file, the web build's manifest, and the round-trip test's input; each entry's `data` carries the icon (in the demo's source tree), the label, and the window's default size |
 | `crates/host-shared`     | wasmtime host core: the bindings, the list→tree rebuild, the retained tree diffs apply against; the registry manifest parser (both targets), and the browser's asset decode (wasm) |
 | `crates/host-iced`       | windowed host (iced): a real text input; style → palette colors + point sizes; image → iced's `svg` (the file natively, the page's asset bytes in the browser); applies diffs, skips rebuild on empty diff; `--entry <name=path>` registers an entry, `--registry <manifest.json>` reads them from a file (the desktop's is `registry.json`) — a non-empty registry lets it run multi-component apps: `cursor: pointer` containers are double-clickable tiles, and an opened entry runs in its own store, seated in the launching component's content slot (it draws the window's chrome and geometry); no keyboard channel, so it never emits `on-key`; `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events, `--dump <file>` renders a headless PNG, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-tui`        | terminal host (ratatui): real layout, framed buttons, an editable input, a host-local focus ring; style → ANSI colors + weight; image → ratatui-image (sixel/kitty/iterm2 in a supporting terminal, halfblocks otherwise; the `--dump` frame and the browser use the vendored halfblocks encoder — the crate does not compile for wasm); `--entry <name=path>` registers an entry, `--registry <manifest.json>` reads them from a file (the desktop's is `registry.json`) — a non-empty registry makes it a multi-window host: framed double-clickable tiles, and framed overlapping windows (the component draws the title bar and close; Tab/Shift+Tab raise/lower, Esc closes); `--click <id>`, `--double-click <id>`, and `--close <handle>` inject those events (Enter on a tile synthesizes a double-click), `--dump` prints one frame, `--width <n>` sizes the dump buffer, `--now <base> <step>` fakes the clock (test-only) |
 | `crates/host-cli`        | terminal host, ASCII tree, clicks and text lines via stdin; ignores `style`, `align`, the diff channel, and `schedule` |
-| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed (the site's mode); the `demo-desktop` pages (the same pair, with the entry registry) run the windowing side, one per producer; `expect.mjs` holds the expected views, shared with the selftest and the browser suite; the `tui/` and `iced/` subdirectories are the two wasmtime hosts in the browser (the host as wasm on the Pulley interpreter: `index.html` the page, `selftest.mjs` the byte-parity gate; the iced page's canvas and the tui page's terminal fill the viewport) |
-| `site/`                  | the GitHub Pages site: a desktop of demo icons; double-clicking one opens the demo in a small window, several at once; plus the desktop as a component, in its three source languages; the pages fetch their `.wasm` files, so the site needs a server; deployed by `.github/workflows/site.yml` |
-| `e2e/`                   | the Playwright browser suite: the nine demo pages — each walking its states — in a 360x340 viewport (the iced window size), both desktops (the static launcher, and the `demo-desktop` component in its three source languages), and the two browser host pages (their nine demos, and the desktop, whose window opens from a double-clicked tile), in chromium; the screenshot goldens are CI-only, the pixel-level producer parity runs everywhere |
+| `web/`                   | web host: one self-contained HTML page per component (`glue.js` + `app.js` + base64 wasm), or a page that fetches the `.wasm` file when `--url` is passed, or one selected by `?demo=`/`?producer=` when `--url-params` is passed (the site's index, `make site`); the `demo-desktop` pages (the same pair, with the entry registry) run the windowing side, one per producer; `expect.mjs` holds the expected views, shared with the selftest and the browser suite; the `tui/` and `iced/` subdirectories are the two wasmtime hosts in the browser (the host as wasm on the Pulley interpreter: `index.html` the page, `selftest.mjs` the byte-parity gate; the iced page's canvas and the tui page's terminal fill the viewport) |
+| `e2e/`                   | the Playwright browser suite: the site's index page — the nine demos, each walking its states, in a 360x340 viewport (the iced window size), and the desktop (the `demo-desktop` component in its three source languages, the index page's default demo) — and the two browser host pages (their nine demos, and the desktop, whose window opens from a double-clicked tile), in chromium; the screenshot goldens are CI-only, the pixel-level producer parity runs everywhere |
 | `crates/demo-counter`    | the counter: only the readout depends on state, so a click reports one mutation; it never requests a refresh (the host never wakes it) |
 | `crates/demo-stopwatch`  | the stopwatch: polls `now()` and requests a 250ms refresh while running; a running wake reports one mutation |
 | `crates/demo-todo`       | the todo list: the structural demo — the diff's add, remove, and re-parent through a real component; the footer's input takes typed text, and "add" uses it (a preset label when it is empty) |
@@ -138,20 +137,18 @@ it runs from disk with no server and no network.
 
 ## GitHub Pages
 
-`make site` assembles the demo site in `target/site/`: the desktop launcher
-(`site/`), the three desktop pages (`desktop.html` and its `-as`/`-wat`
-twins, the `demo-desktop` component in each source language), the nine demo
-pages, and their `.wasm` modules. The launcher is a desktop — an icon per
-demo, title underneath; double-clicking one opens the demo in a small window
-(an iframe over the page), and several windows may be open at once. The
-desktop pages run the same desktop as a component: their windows embed the
-demo *components*, rendered in place rather than in iframes. The pages fetch
-their `.wasm` file instead of inlining it, so the site needs a server
-(GitHub Pages, or `python3 -m http.server`); the launcher itself runs from
-disk, its demo windows do not (their fetch fails on file://). It is deployed
-to GitHub Pages by `.github/workflows/site.yml` on every push to main.
-Enabling it needs one manual step: repository Settings → Pages → Source:
-*GitHub Actions*.
+`make site` assembles the demo site in `target/site/`: one index page, the
+twelve `.wasm` modules it fetches, and the nine icons (the demos' own
+files, copied to the site's root `icons/` set). The index page takes
+`?demo=` and `?producer=` — `counter|stopwatch|todo|desktop` and
+`rust|as|wat`, as on the iced and tui host pages — the default demo the
+desktop: the `demo-desktop` component in the selected source language, its
+windows embedding the demo *components*, rendered in place. The other demos
+run standalone, as their self-contained `make web` pages do. The page
+fetches its `.wasm` file instead of inlining it, so the site needs a server
+(GitHub Pages, or `python3 -m http.server`). It is deployed to GitHub Pages
+by `.github/workflows/site.yml` on every push to main. Enabling it needs one
+manual step: repository Settings → Pages → Source: *GitHub Actions*.
 
 `make site-hosts` assembles the browser host pages, next to the site:
 `target/site/tui/` (the tui host, its xterm.js page, and the host module)
@@ -161,7 +158,8 @@ and `?producer=` (the precompiled pulley32 artifacts: the browser has no
 JIT, so it only interprets). The artifacts are host-independent, so the
 twelve share one `target/site/components/` directory; the desktop's
 `registry.json` lives at the site root, one copy, and the icons are the
-site's root `icons/` set. The desktop page fetches the manifest, the icons,
+site's root `icons/` set (the demos' own files). The desktop page fetches
+the manifest, the icons,
 and the nine entry artifacts and hands them to the host — the browser has
 no filesystem — the manifest and the icons up front (the grid's first frame
 carries its icons), the artifacts in the background: the host adds each as
@@ -234,22 +232,23 @@ The iced page's canvas and the tui page's terminal fill the viewport.
   via Node: the structural cases (add, remove, re-parent) plus the bootstrap,
   id-less, and input rules — the AS twin of the `component-ui` unit tests.
 - `make e2e`: the Playwright browser suite (chromium) against the built
-  site: the nine demo pages and both desktops (the static launcher, and the
-  `demo-desktop` component in its three source languages) in a real browser —
-  the rendered DOM against the same expectations as the web selftest
-  (`web/expect.mjs`), the computed styles, the in-place-vs-rebuild
-  behavior, and the window management (open, raise, drag, resize, close) —
-  plus the two browser host pages (`browser-hosts.spec.mjs`): their nine
-  demos, and the desktop, whose window opens from a double-clicked tile
-  (the tui's by its menu bar's window count, the iced's by the pixels the
-  window draws where the background was).
+  site: the site's index page — the nine demos and the desktop (the
+  `demo-desktop` component in its three source languages), by `?demo=` and
+  `?producer=` — in a real browser: the rendered DOM against the same
+  expectations as the web selftest (`web/expect.mjs`), the computed styles,
+  the in-place-vs-rebuild behavior, and the window management (open, raise,
+  drag, resize, close) — plus the two browser host pages
+  (`browser-hosts.spec.mjs`): their nine demos, and the desktop, whose
+  window opens from a double-clicked tile (the tui's by its menu bar's
+  window count, the iced's by the pixels the window draws where the
+  background was).
   Screenshot goldens compare in CI only (font rendering is
-  platform-specific): each demo page's states — the counter at 0, 1, and
-  -3, the stopwatch paused and running, the todo seeded and after an add —
-  in a 360x340 viewport (the iced window size), plus the desktop at
-  1280x720. The parity spec (`e2e/parity.spec.mjs`) asserts the pixel-level
-  twin of the DOM parity: the three producers of each demo render each state
-  identically, and the three desktop pages do the same (the grid, the window
+  platform-specific): each demo's states — the counter at 0, 1, and -3, the
+  stopwatch paused and running, the todo seeded and after an add — in a
+  360x340 viewport (the iced window size), plus the desktop at 1280x720.
+  The parity spec (`e2e/parity.spec.mjs`) asserts the pixel-level twin of
+  the DOM parity: the three producers of each demo render each state
+  identically, and the three desktops do the same (the grid, the window
   count, and the open windows) — within one browser, so it runs locally and
   in CI. Locally a one-time `npx playwright install chromium` is needed.
 - `make fmt-check`: all sources are formatter-clean (`cargo fmt --check`
