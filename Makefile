@@ -19,7 +19,7 @@ ICONS := crates/demo-counter/counter-rust.svg crates/demo-stopwatch/stopwatch-ru
          run-iced-wat run-stop-iced-wat run-todo-iced-wat run-desktop-iced-wat \
          web web-as web-wat web-test web-test-as web-test-wat \
          host-tui-wasm host-tui-wasm-test host-iced-wasm host-iced-wasm-test site-hosts \
-         site ui-test e2e screenshots fmt fmt-check hooks test
+         site ui-test e2e goldens screenshots fmt fmt-check hooks test
 
 # Build the demo components and lift them into the component model. The
 # desktop (demo-desktop) is the multi-component host's component: it is
@@ -409,6 +409,16 @@ ui-test:
 e2e: site site-hosts
 	@test -d node_modules/@playwright/test || { echo "e2e needs node/npm — run: npm install"; exit 1; }
 	npx playwright test $(E2E_ARGS)
+
+# Regenerate the goldens on the CI platform: dispatch the CI workflow with
+# its update_snapshots input. The e2e screenshots must render on the runner
+# (font rendering is platform-specific), so they cannot be generated
+# locally; the run commits the changed goldens to the branch. Needs the gh
+# CLI, authenticated.
+goldens:
+	@command -v gh >/dev/null 2>&1 || { echo "goldens needs the gh CLI (https://cli.github.com/), authenticated"; exit 1; }
+	@gh workflow run ci.yml -f update_snapshots=true
+	@echo "when green, the run commits the changed goldens to the branch — review the commit; a cancelled run commits nothing (re-dispatch)"
 
 # The README's tui frames, rendered to PNGs via freeze. The web and iced
 # frames link straight to their committed goldens. Needs: brew install

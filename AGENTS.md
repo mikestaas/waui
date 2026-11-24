@@ -32,6 +32,11 @@ Before calling a change done: `make components-as`, `make components`,
 `host-cli` smoke run on the built components.
 Changes touching `web/` or `site/` also need `make e2e` (the Playwright
 browser suite).
+The e2e screenshot goldens render on the CI platform (chromium's font
+rendering is platform-specific): never regenerate them locally — dispatch
+the workflow with `update_snapshots` (`make goldens`); the run commits
+the changed goldens. The cargo dump goldens are platform-stable and
+regenerate locally with `UPDATE_GOLDENS=1 cargo test`.
 The web selftest is the byte-parity gate between the Rust, AssemblyScript,
 and WAT demos. Do not weaken an assertion to make a failing check pass;
 extending the gate to cover a new contract field is allowed. The component

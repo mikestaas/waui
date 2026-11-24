@@ -32,10 +32,12 @@ on:
   workflow_dispatch:
     inputs:
       # Regenerate all the goldens on the CI platform (the cargo dump
-      # goldens and the e2e screenshots). The cargo goldens are
-      # platform-stable (bundled fonts); the e2e screenshots are
-      # chromium-rendered, so run this after a runner image change shifts
-      # the browser's font rendering.
+      # goldens and the e2e screenshots) and commit the changed ones to
+      # the branch. The e2e screenshots are chromium-rendered, so they
+      # must render on the runner (font rendering is platform-specific);
+      # the cargo goldens are platform-stable (bundled fonts) and ride
+      # along. Run this after a runner image change shifts the browser's
+      # font rendering.
       update_snapshots:
         description: Regenerate all the goldens
         type: boolean
@@ -49,6 +51,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # The update_snapshots dispatch run pushes the regenerated goldens
+    # back to the branch.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -152,18 +158,17 @@ jobs:
       # pixel-level producer parity (runs everywhere), and the screenshot
       # goldens (the demos' states; CI-only, because font rendering is
       # platform-specific).
-      - name: Browser E2E (Playwright)
+      - id: e2e
+        name: Browser E2E (Playwright)
         run: |
           npx playwright install --with-deps chromium
           make e2e E2E_ARGS=${{ inputs.update_snapshots && '--update-snapshots' || '' }}
 
-      # The regenerated goldens, for download and commit (the
-      # update_snapshots input): the cargo dump goldens and the e2e
-      # screenshots. `success() || failure()` uploads them when the e2e
-      # step completed either way (a bare `if:` is ANDed with the implicit
-      # success check, so a failing parity test would skip the upload);
-      # both are false when the step was skipped or the run cancelled, so
-      # unregenerated or partial goldens stay put.
+      # The regenerated goldens, for download: the fallback for a
+      # dispatch run the commit step below skips (a red run).
+      # `success() || failure()` uploads when the e2e step completed
+      # either way; a cancelled run skips the upload, so unregenerated
+      # or partial goldens stay put.
       - name: Upload the regenerated goldens
         if: inputs.update_snapshots && (success() || failure())
         uses: actions/upload-artifact@v4
@@ -173,6 +178,25 @@ jobs:
             crates/host-tui/tests/goldens
             crates/host-iced/tests/goldens
             e2e/screenshots
+
+      # The regenerated goldens, committed and pushed. The input is
+      # settable only by a manual dispatch, and the implicit success
+      # check covers the whole run, so this runs only on a green
+      # dispatch run; the e2e outcome is stated for clarity (the goldens
+      # must come from a run that actually ran the suite). Unchanged
+      # goldens (a regen that renders identically) commit nothing.
+      - name: Commit the regenerated goldens
+        if: inputs.update_snapshots && steps.e2e.outcome == 'success'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add crates/host-tui/tests/goldens crates/host-iced/tests/goldens e2e/screenshots
+          if git diff --cached --quiet; then
+            echo "no golden changes"
+          else
+            git commit -m "goldens: regenerate on the CI platform"
+            git push
+          fi
 
       # The e2e failure evidence (the parity spec's screenshots and DOM
       # dumps, the Playwright traces), for inspection.

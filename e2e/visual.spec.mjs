@@ -3,8 +3,9 @@
 // Font rendering is platform-specific, so these compare only in CI (the
 // committed goldens were generated on the CI runner's image); locally the
 // file skips. Regenerate after a runner image change with the workflow's
-// update_snapshots input. A local `--update-snapshots` run writes this
-// machine's rendering — do not commit it.
+// update_snapshots input (`make goldens`): the run renders on the runner
+// and commits the changed goldens. A local `--update-snapshots` run writes
+// this machine's rendering — do not commit it.
 //
 // The demo pages render in a 360x340 viewport — the iced host's window
 // size (crates/host-iced's WINDOW_WIDTH/HEIGHT) — so the goldens show the

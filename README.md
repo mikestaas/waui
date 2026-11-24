@@ -112,6 +112,7 @@ make web                  # self-contained HTML pages in target/web/
 make site                 # the demo site in target/site/ (GitHub Pages)
 make web-test             # headless (Node) check of the web host's ABI layer
 make e2e                  # the Playwright browser suite (needs `npx playwright install chromium`)
+make goldens              # dispatch CI to regenerate the goldens on the runner; the run commits them
 make test                 # cargo test, all crates
 make fmt                  # format all sources (rustfmt + prettier)
 make hooks                # point git at .githooks (the pre-commit gate)
@@ -213,9 +214,10 @@ The iced page's canvas and the tui page's terminal fill the viewport.
   mismatch writes the actual frame next to the golden (`.actual`).
   `UPDATE_GOLDENS=1 cargo test` regenerates the goldens; the cargo ones
   are platform-stable, so any machine's render matches. The e2e
-  screenshots are chromium-rendered and platform-specific — the
-  workflow's `update_snapshots` input regenerates them on the CI platform
-  (and the cargo goldens with them) for download and commit.
+  screenshots are chromium-rendered and platform-specific, so they must
+  render on the runner — the workflow's `update_snapshots` input (or
+  `make goldens`, the dispatch) regenerates them on the CI platform (and
+  the cargo goldens with them) and commits the changed ones to the branch.
 - `make web-test` (and `-as`, `-wat`): the same assertions from Node, against
   the core modules, through the same `glue.js` the browser page uses: the
   views, the mutations, the text events, and the pointer and key channels
