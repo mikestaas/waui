@@ -23,6 +23,8 @@
   loops; state the call once and proceed.
 - Ask only when the choice changes the result and the code cannot settle it.
   Otherwise decide, proceed, and name what you chose.
+- If you need to inspect something visually, use vision, not decoding pixels
+  and doing geometry.
 
 ## Verification
 
