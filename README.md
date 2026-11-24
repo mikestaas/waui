@@ -269,9 +269,10 @@ The iced page's canvas and the tui page's terminal fill the viewport.
   worst on the hand-rolled AS side.
 - **Grid layout.** The contract's containers are rows and columns (one axis
   each); a grid — placing children on two axes at once — has no token.
-- **Stretch / equal-width.** `align` places children on the cross axis but
-  never stretches them to fill it or equalizes their sizes; a host that does
-  so is applying its own layout, not the contract's.
+- **Sibling size ratios.** `align` places children on both axes, and a
+  child's `stretch` fills the space the container gives it (filling siblings
+  share it equally), but the contract has no per-child weight; a host that
+  weights siblings differently is applying its own layout, not the contract's.
 
 ## Known limitations
 

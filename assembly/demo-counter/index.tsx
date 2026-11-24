@@ -17,6 +17,7 @@ import {
   COLOR_POSITIVE,
   SIZE_LARGE,
   SIZE_MEDIUM,
+  STRETCH_BOTH,
 } from '../abi/node';
 import { Widget, diffOf, h, text, viewOf } from '../ui/tree';
 
@@ -45,7 +46,7 @@ function applyReadout(v: i32): void {
 function tree(v: i32): Widget {
   applyReadout(v);
   return (
-    <column id={BOX}>
+    <column id={BOX} stretch={STRETCH_BOTH}>
       <button id={INC} label="+" color={COLOR_POSITIVE} size={SIZE_MEDIUM} />
       {readout}
       <button id={DEC} label="-" color={COLOR_NEGATIVE} size={SIZE_MEDIUM} />

@@ -17,14 +17,14 @@
 export const counter = {
   // The initial view: the readout at zero.
   zero: [
-    'container{id:1,parent:null,dir:column,align:center}',
+    'container{id:1,parent:null,dir:column,align:center,stretch:both}',
     'button{id:2,parent:1,label:"+",style:positive:medium}',
     'text{id:3,parent:1,content:"0",style:neutral:large}',
     'button{id:4,parent:1,label:"-",style:negative:medium}',
   ],
   // After two decrements: the readout's content and color both change.
   minusOne: [
-    'container{id:1,parent:null,dir:column,align:center}',
+    'container{id:1,parent:null,dir:column,align:center,stretch:both}',
     'button{id:2,parent:1,label:"+",style:positive:medium}',
     'text{id:3,parent:1,content:"-1",style:negative:large}',
     'button{id:4,parent:1,label:"-",style:negative:medium}',
@@ -35,7 +35,7 @@ export const counter = {
 export const stopwatch = {
   // The initial view: stopped at zero.
   idle: [
-    'container{id:1,parent:null,dir:column,align:center}',
+    'container{id:1,parent:null,dir:column,align:center,stretch:both}',
     'text{id:2,parent:1,content:"0 ms",style:neutral:large}',
     'button{id:3,parent:1,label:"start",style:positive:medium}',
   ],
@@ -45,7 +45,7 @@ export const stopwatch = {
 // the selftest's sequence: seed, type, add, toggle, remove, clear done.
 
 const todoSeeded = [
-  'container{id:1,parent:null,dir:column,align:center}',
+  'container{id:1,parent:null,dir:column,align:center,stretch:both}',
   'text{id:2,parent:1,content:"todos",style:accent:large}',
   'container{id:3,parent:1,dir:column,align:start}',
   'container{id:4,parent:3,dir:column,align:start}',
@@ -79,7 +79,7 @@ export const todo = {
   // "add" with the typed text: the new row at the top of the active column,
   // the count, the cleared field.
   added: [
-    'container{id:1,parent:null,dir:column,align:center}',
+    'container{id:1,parent:null,dir:column,align:center,stretch:both}',
     'text{id:2,parent:1,content:"todos",style:accent:large}',
     'container{id:3,parent:1,dir:column,align:start}',
     'container{id:4,parent:3,dir:column,align:start}',
@@ -109,7 +109,7 @@ export const todo = {
   // "walk the dog" toggled: re-added under a new id (504) in the done
   // column, its children re-parented, the count, the old row removed.
   afterToggle: [
-    'container{id:1,parent:null,dir:column,align:center}',
+    'container{id:1,parent:null,dir:column,align:center,stretch:both}',
     'text{id:2,parent:1,content:"todos",style:accent:large}',
     'container{id:3,parent:1,dir:column,align:start}',
     'container{id:4,parent:3,dir:column,align:start}',
@@ -138,7 +138,7 @@ export const todo = {
   ],
   // "buy milk" removed: the count, then the row and its children.
   afterRemove: [
-    'container{id:1,parent:null,dir:column,align:center}',
+    'container{id:1,parent:null,dir:column,align:center,stretch:both}',
     'text{id:2,parent:1,content:"todos",style:accent:large}',
     'container{id:3,parent:1,dir:column,align:start}',
     'container{id:4,parent:3,dir:column,align:start}',
@@ -164,7 +164,7 @@ export const todo = {
   // "clear done": only the done rows — the count (the active list) is
   // unchanged, so it is not reported.
   afterClear: [
-    'container{id:1,parent:null,dir:column,align:center}',
+    'container{id:1,parent:null,dir:column,align:center,stretch:both}',
     'text{id:2,parent:1,content:"todos",style:accent:large}',
     'container{id:3,parent:1,dir:column,align:start}',
     'container{id:4,parent:3,dir:column,align:start}',

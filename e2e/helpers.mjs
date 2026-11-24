@@ -197,6 +197,7 @@ export async function widgetStyle(page, id) {
       borderColor: cs.borderColor,
       flexDirection: cs.flexDirection,
       alignItems: cs.alignItems,
+      justifyContent: cs.justifyContent,
     };
   }, id);
 }

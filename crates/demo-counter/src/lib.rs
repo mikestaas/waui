@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicI32, Ordering};
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
-use component_ui::{ui, Color, Size, Tree};
+use component_ui::{ui, Color, Size, Stretch, Tree};
 use waui::ui::widget as wit;
 
 static VALUE: AtomicI32 = AtomicI32::new(0);
@@ -34,7 +34,7 @@ fn readout(value: i32) -> Tree {
 /// The counter's whole UI, nested.
 fn tree(value: i32) -> Tree {
     ui! {
-        column id = 1, {
+        column id = 1, stretch = Stretch::Both, {
             button label = "+", id = 2, color = Color::Positive, size = Size::Medium,
             readout(value),
             button label = "-", id = 4, color = Color::Negative, size = Size::Medium,

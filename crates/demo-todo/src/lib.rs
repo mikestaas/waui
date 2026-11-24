@@ -39,7 +39,7 @@ use std::sync::Mutex;
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
-use component_ui::{ui, Align, Color, Size, Tree};
+use component_ui::{ui, Align, Color, Size, Stretch, Tree};
 use waui::ui::widget as wit;
 
 /// One todo. `idx` is its creation index, the source of its node ids (never
@@ -146,7 +146,7 @@ fn footer(left: usize, input: &str) -> Tree {
 /// per row).
 fn tree(active: &[Todo], done: &[Todo], input: &str) -> Tree {
     ui! {
-        column id = 1, {
+        column id = 1, stretch = Stretch::Both, {
             text content = "todos", id = 2, color = Color::Accent, size = Size::Large,
             column id = 3, align = Align::Start, {
                 column id = 4, align = Align::Start, { active.iter().map(row) }

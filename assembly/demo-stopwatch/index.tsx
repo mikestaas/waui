@@ -22,6 +22,7 @@ import {
   COLOR_WARNING,
   SIZE_LARGE,
   SIZE_MEDIUM,
+  STRETCH_BOTH,
 } from '../abi/node';
 import { now, schedule } from '../abi/root';
 import { Widget, button, diffOf, h, text, viewOf } from '../ui/tree';
@@ -74,7 +75,7 @@ function apply(e: i64, r: i32): void {
 function tree(e: i64, r: i32): Widget {
   apply(e, r);
   return (
-    <column id={BOX}>
+    <column id={BOX} stretch={STRETCH_BOTH}>
       {readout}
       {control}
     </column>

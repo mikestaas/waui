@@ -55,6 +55,7 @@ import {
   SIZE_LARGE,
   SIZE_MEDIUM,
   SIZE_SMALL,
+  STRETCH_BOTH,
 } from '../abi/node';
 import { readUtf8 } from '../abi/utf8';
 import { button, diffOf, h, input, text, viewOf, Widget } from '../ui/tree';
@@ -193,7 +194,7 @@ function tree(): Widget {
   applyCount(active.length);
   inputField.label(inputText);
   return (
-    <column id={BOX}>
+    <column id={BOX} stretch={STRETCH_BOTH}>
       <text id={HEADER} label="todos" color={COLOR_ACCENT} size={SIZE_LARGE} />
       <column id={WRAPPER} align={ALIGN_START}>
         <column id={ACTIVE_COL} align={ALIGN_START}>

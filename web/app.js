@@ -82,9 +82,9 @@ function elFor(n, childrenOf, elements) {
   let el;
   if (n.kind === 'container') {
     el = document.createElement('div');
-    // The direction sets the axis; the align token the cross-axis placement.
-    // The other tokens ride as classes, always: the e2e DOM serializer reads
-    // them back, and the defaults are no-ops in the stylesheet, so a
+    // The direction sets the axis; the align token the placement on both
+    // axes. The other tokens ride as classes, always: the e2e DOM serializer
+    // reads them back, and the defaults are no-ops in the stylesheet, so a
     // container with all-default tokens renders as a plain row/column.
     el.className = [
       'waui',

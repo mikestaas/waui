@@ -31,6 +31,11 @@ for (let i = 0; i < 3; i++) {
     expect((await widgetStyle(page, 2)).color).toBe(palette.positive);
     expect((await widgetStyle(page, 4)).color).toBe(palette.negative);
 
+    // The root's `align` token: both axes (the contract's child placement).
+    const root = await widgetStyle(page, 1);
+    expect(root.alignItems).toBe('center');
+    expect(root.justifyContent).toBe('center');
+
     // A content-only change restyles in place: the readout element survives
     // the click.
     await page.evaluate(() => {

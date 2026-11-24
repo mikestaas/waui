@@ -84,9 +84,10 @@ export class Widget {
   size: i32 = SIZE_MEDIUM;
   /// Containers only.
   direction: i32 = DIRECTION_ROW;
-  /// Containers only: the cross-axis placement of the children. The storage
-  /// is `_align`, set with `.align()` (Rust's `Tree` has an `align` builder):
-  /// AssemblyScript cannot name a field and a method alike the way Rust can.
+  /// Containers only: the placement of the children, on both axes. The
+  /// storage is `_align`, set with `.align()` (Rust's `Tree` has an `align`
+  /// builder): AssemblyScript cannot name a field and a method alike the way
+  /// Rust can.
   _align: i32 = ALIGN_CENTER;
   /// The width: an input's field width in characters, an image's width, or a
   /// container's `w` — in the host's units for the latter two (all `0` = the
@@ -172,7 +173,7 @@ export class Widget {
     return this;
   }
 
-  /// Replace a container's cross-axis placement (a no-op on a leaf).
+  /// Replace a container's placement, both axes (a no-op on a leaf).
   align(v: i32): this {
     this._align = v;
     return this;
@@ -344,6 +345,7 @@ export class Props {
   reserve: i32 = 0;
   direction: i32 = DIRECTION_ROW; // honored only by `container`
   align: i32 = ALIGN_CENTER; // honored by `row`/`column`/`container`
+  stretch: i32 = STRETCH_NONE; // honored by `row`/`column`/`container`
   width: i32 = 0; // honored by `input` (characters) and `image` (host units)
   height: i32 = 0; // honored only by `image` (host units)
 }
@@ -406,11 +408,14 @@ export function h(tag: string, props: Props | null, ...children: Object[]): Widg
     if (props.reserve != 0) w = w.reserve(props.reserve);
     // Only `container` takes its direction from the props: `row`/`column`
     // fix it in their constructor, and applying the props default here would
-    // silently flip them. `align` is orthogonal to direction, so all three
-    // container tags take it (the props default is center, matching the
-    // factory default, so an unstated one is a no-op).
+    // silently flip them. `align` and `stretch` are orthogonal to direction,
+    // so all three container tags take them (the props defaults match the
+    // factory defaults, so an unstated one is a no-op).
     if (tag == 'container') w.direction = props.direction;
-    if (tag == 'row' || tag == 'column' || tag == 'container') w._align = props.align;
+    if (tag == 'row' || tag == 'column' || tag == 'container') {
+      w._align = props.align;
+      w._stretch = props.stretch;
+    }
     // The WIT's `width` is an input field (characters) or an image (host
     // units); a `width` on any other tag is ignored, as in the Rust `ui!`.
     // `height` is an image field only.

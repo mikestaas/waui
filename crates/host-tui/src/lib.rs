@@ -675,6 +675,18 @@ fn cross_offset(align: WAlign, extent: u16, child: u16) -> u16 {
     }
 }
 
+/// The stack's main-axis offset within the container's main extent: the
+/// token's start/center/end. `occupied` is the main space the whole stack
+/// takes (the children and their gaps), so `start` reproduces the old flush
+/// layout and `center`/`end` place a stack that does not fill the axis.
+fn main_offset(align: WAlign, extent: u16, occupied: u16) -> u16 {
+    match align {
+        WAlign::Start => 0,
+        WAlign::Center => extent.saturating_sub(occupied) / 2,
+        WAlign::End => extent.saturating_sub(occupied),
+    }
+}
+
 /// A node's stretch token (containers only; a leaf never stretches).
 fn stretch_of(node: &Tree) -> WStretch {
     match node {
@@ -801,8 +813,8 @@ fn content_main_cross(node: &Tree, row: bool, has_registry: bool) -> (u16, u16) 
 }
 
 /// Each child's rect, in draw order: the in-flow children first (stacked in
-/// order along the main axis with the container's `gap`, placed on the cross
-/// axis per `align`), then the positioned children (at their `x`/`y`, scaled
+/// order along the main axis with the container's `gap`, placed per `align`
+/// on both axes), then the positioned children (at their `x`/`y`, scaled
 /// to cells) sorted by `z` — the later drawn wins, so a higher `z` sits on
 /// top. The container's `padding` insets the whole layout.
 ///
@@ -873,10 +885,15 @@ fn child_rects(
     } else {
         0
     };
+    // The main space the whole stack takes: the fixed children and the gaps,
+    // plus the stretch shares. The `align` token places the stack within the
+    // container's main extent on that axis.
+    let total_main = fixed_main + stretch_share * n_stretch;
 
-    // Pass 2: place the in-flow children in order.
+    // Pass 2: place the in-flow children in order, the stack offset per
+    // `align` on the main axis.
     let mut out = Vec::with_capacity(children.len());
-    let mut main = 0u16;
+    let mut main = main_offset(align, main_size, total_main);
     let mut placed_any = false;
     for &i in &in_flow {
         let child = &children[i];
@@ -1223,9 +1240,8 @@ pub fn hint_rows(width: u16, has_windows: bool) -> u16 {
 }
 
 /// The root's area within `area`: it fills the space along a stretched axis
-/// (the app's root is `stretch: both`, filling the terminal) and is centered
-/// along the rest; a non-stretched root (the demos) is centered at its
-/// content size, as before.
+/// (a `stretch: both` root fills the terminal) and is centered along the
+/// rest; a non-stretched root is centered at its content size.
 fn root_area(root: &Tree, area: Rect, has_registry: bool) -> Rect {
     let (w, h) = match root {
         Tree::Row(_, _, style, _) => {

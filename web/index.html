@@ -76,18 +76,22 @@
         flex-direction: row;
         align-items: center;
       }
-      /* The container's cross-axis placement (the contract's `align` token):
-         start/center/end on the axis perpendicular to `direction` (a column
-         places its children left/center/right, a row top/center/bottom).
-         These follow the direction rules so they override the center default. */
+      /* The container's child placement (the contract's `align` token):
+         start/center/end on both axes — `align-items` on the axis
+         perpendicular to `direction`, `justify-content` on the `direction`
+         axis. These follow the direction rules so they override the center
+         default. */
       .waui-align-start {
         align-items: start;
+        justify-content: start;
       }
       .waui-align-center {
         align-items: center;
+        justify-content: center;
       }
       .waui-align-end {
         align-items: end;
+        justify-content: end;
       }
       /* The contract's `stretch` token on a container's children: `main` is
          the container's `direction` axis, `cross` the other. Flexbox sizes

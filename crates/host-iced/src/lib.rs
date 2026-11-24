@@ -1184,15 +1184,6 @@ fn iced_cursor(c: WCursor) -> Option<iced::mouse::Interaction> {
     })
 }
 
-/// Whether a container carries any visible chrome (a background, a border,
-/// or a shadow): a container with none of them is drawn as a plain
-/// row/column, as before.
-fn has_chrome(style: &ContainerStyle) -> bool {
-    style.background != WBackground::None
-        || style.border != WBorder::None
-        || style.shadow != WShadow::None
-}
-
 /// A container's chrome as a iced container style (its background, border,
 /// radius, and shadow).
 fn container_style(style: &ContainerStyle) -> iced::widget::container::Style {
@@ -1239,14 +1230,69 @@ fn is_row(node: &Tree) -> bool {
     matches!(node, Tree::Row(..))
 }
 
-/// A container: its in-flow children in a row/column (the component's
-/// `gap`/`padding`/`align`/`stretch`), its chrome, and its positioned
-/// children (a window's grip) stacked on top at their `(x, y)`. A content
-/// slot (a container an opened entry's handle is the id of) seats the
-/// entry's tree. An id'd container is addressable (a press over it is a
-/// pointer event; a tile, `cursor: pointer`, is double-clickable). A
-/// container with all-default tokens (the demos) renders as a plain
-/// row/column, as before.
+/// A container's size as iced lengths, per axis: the explicit `w`/`h` (its
+/// pixels, 1:1 on this host) when set, else the stretch (a `Fill` axis), else
+/// content (`Shrink`). An explicit size wins on the same axis (a container
+/// that sets both is sized, not filled). The stretch is per axis (`main` and
+/// `cross`, relative to `direction`); the explicit `w`/`h` are always
+/// width/height.
+fn container_lengths(node: &Tree) -> (iced::Length, iced::Length) {
+    let (row, style) = match node {
+        Tree::Row(_, _, s, _) => (true, *s),
+        Tree::Column(_, _, s, _) => (false, *s),
+        _ => unreachable!("a container is a row or a column"),
+    };
+    let mut w = iced::Length::Shrink;
+    let mut h = iced::Length::Shrink;
+    if row {
+        if matches!(style.stretch, WStretch::Main | WStretch::Both) {
+            w = iced::Length::Fill;
+        }
+        if matches!(style.stretch, WStretch::Cross | WStretch::Both) {
+            h = iced::Length::Fill;
+        }
+    } else {
+        if matches!(style.stretch, WStretch::Main | WStretch::Both) {
+            h = iced::Length::Fill;
+        }
+        if matches!(style.stretch, WStretch::Cross | WStretch::Both) {
+            w = iced::Length::Fill;
+        }
+    }
+    if style.w > 0 {
+        w = iced::Length::Fixed(style.w as f32);
+    }
+    if style.h > 0 {
+        h = iced::Length::Fixed(style.h as f32);
+    }
+    (w, h)
+}
+
+/// Whether an in-flow child is `Fill` on an axis (its width or its height).
+/// Only a container can fill; a leaf is always content-sized.
+fn child_fills(node: &Tree, width: bool) -> bool {
+    let (w, h) = match node {
+        Tree::Row(..) | Tree::Column(..) => container_lengths(node),
+        _ => return false,
+    };
+    let len = if width { w } else { h };
+    len.is_fill()
+}
+
+/// A container: a `widget::container` (its size, its `align` token on both
+/// axes, its chrome) around a row/column (its in-flow children, the
+/// component's `gap`/`padding`), with its positioned children (a window's
+/// grip) stacked on top at their `(x, y)`. A content slot (a container an
+/// opened entry's handle is the id of) seats the entry's tree. An id'd
+/// container is addressable (a press over it is a pointer event; a tile,
+/// `cursor: pointer`, is double-clickable).
+///
+/// The outer placement is the contract's `align` on both axes. The inner
+/// block is content-sized on an axis only when no child fills it, so the
+/// placement places the block there; a child that fills an axis makes the
+/// inner fill it and the placement a no-op on it. A content-sized container
+/// renders as before. The outer style is always set (transparent for a
+/// chrome-less container), so a theme default never shows through.
 ///
 /// A positioned container (a window) is *not* wrapped here: [`map_tree`]
 /// wraps it in the host's fixed-position widget.
@@ -1279,21 +1325,26 @@ fn map_container<'a>(
 
     // The in-flow children, in a row/column. The component's `gap` (its
     // pixels, 1:1 on this host) or the host's default (8px) when it is `0`;
-    // its `padding` when set.
-    let in_flow: Vec<iced::Element<'_, Message>> = if let Some(panel) = slot {
-        vec![map_tree(
-            &panel.tree,
-            Surface::Panel(panel.handle),
-            false,
-            &EMPTY_PANELS,
-            assets,
-        )]
+    // its `padding` when set. The nodes are kept for the inner block's
+    // per-axis size below.
+    let (in_flow, in_flow_nodes) = if let Some(panel) = slot {
+        (
+            vec![map_tree(
+                &panel.tree,
+                Surface::Panel(panel.handle),
+                false,
+                &EMPTY_PANELS,
+                assets,
+            )],
+            vec![&panel.tree],
+        )
     } else {
-        children
+        let nodes: Vec<&Tree> = children.iter().filter(|c| !is_positioned(c)).collect();
+        let els = nodes
             .iter()
-            .filter(|c| !is_positioned(c))
             .map(|c| map_tree(c, surface, has_registry, panels, assets))
-            .collect()
+            .collect();
+        (els, nodes)
     };
     let spacing = if style.gap > 0 { style.gap as f32 } else { 8.0 };
     let padding = if style.padding > 0 {
@@ -1301,54 +1352,34 @@ fn map_container<'a>(
     } else {
         0.0
     };
-    // For a row the main axis is the width, for a column the height.
-    // The row/column's size: the component's explicit `w`/`h` (its pixels,
-    // 1:1 on this host) when set, else the stretch (a `Fill` axis), else
-    // content. An explicit size wins on the same axis (a container that sets
-    // both is sized, not filled). For a row the main axis is the width, for
-    // a column the height; the explicit `w`/`h` are always width/height.
-    let (w_len, h_len) = if row {
-        let mut w = Length::Shrink;
-        let mut h = Length::Shrink;
-        if matches!(style.stretch, WStretch::Main | WStretch::Both) {
-            w = Length::Fill;
-        }
-        if matches!(style.stretch, WStretch::Cross | WStretch::Both) {
-            h = Length::Fill;
-        }
-        if style.w > 0 {
-            w = Length::Fixed(style.w as f32);
-        }
-        if style.h > 0 {
-            h = Length::Fixed(style.h as f32);
-        }
-        (w, h)
+    // The outer container's size (see [`container_lengths`]).
+    let (w_len, h_len) = container_lengths(node);
+    // The inner row/column: the content block. Per axis, `Fill` when the
+    // container has a definite size there and a child fills it — a `Fill`
+    // child in a shrink flex collapses to zero in iced — else `Shrink`
+    // (content-sized), so the outer container's `align` places the block on
+    // that axis. The `align` token also places the children within the block
+    // on the cross axis.
+    let inner_w = if w_len == Length::Shrink || !in_flow_nodes.iter().any(|c| child_fills(c, true))
+    {
+        Length::Shrink
     } else {
-        let mut w = Length::Shrink;
-        let mut h = Length::Shrink;
-        if matches!(style.stretch, WStretch::Main | WStretch::Both) {
-            h = Length::Fill;
-        }
-        if matches!(style.stretch, WStretch::Cross | WStretch::Both) {
-            w = Length::Fill;
-        }
-        if style.w > 0 {
-            w = Length::Fixed(style.w as f32);
-        }
-        if style.h > 0 {
-            h = Length::Fixed(style.h as f32);
-        }
-        (w, h)
+        Length::Fill
     };
-    let mut base: iced::Element<'_, Message> = if row {
+    let inner_h = if h_len == Length::Shrink || !in_flow_nodes.iter().any(|c| child_fills(c, false))
+    {
+        Length::Shrink
+    } else {
+        Length::Fill
+    };
+    let inner: iced::Element<'_, Message> = if row {
         let mut r = widget::row(in_flow)
             .spacing(spacing)
             .align_y(row_align(align));
         if padding > 0.0 {
             r = r.padding(padding);
         }
-        r = r.width(w_len).height(h_len);
-        r.into()
+        r.width(inner_w).height(inner_h).into()
     } else {
         let mut c = widget::column(in_flow)
             .spacing(spacing)
@@ -1356,19 +1387,21 @@ fn map_container<'a>(
         if padding > 0.0 {
             c = c.padding(padding);
         }
-        c = c.width(w_len).height(h_len);
-        c.into()
+        c.width(inner_w).height(inner_h).into()
     };
 
-    // The chrome, when the container has any (a background, a border, or a
-    // shadow). A container with none of them is drawn as a plain row/column.
-    // The chrome sizes to its content (the row/column, which is already
-    // sized), so the background spans it.
-    if has_chrome(&style) {
-        base = widget::container(base)
-            .style(move |_: &iced::Theme| container_style(&style))
-            .into();
-    }
+    // The outer container: the container's size, the `align` token on both
+    // axes, and the chrome. The `align` places the inner block on an axis
+    // where it is content-sized; a filling inner makes it a no-op there. The
+    // style is always set (transparent for a chrome-less container), so a
+    // theme default never shows through.
+    let mut base: iced::Element<'_, Message> = widget::container(inner)
+        .width(w_len)
+        .height(h_len)
+        .align_x(column_align(align))
+        .align_y(row_align(align))
+        .style(move |_: &iced::Theme| container_style(&style))
+        .into();
 
     // A node with an id is addressable: a press over it is reported
     // (`on-pointer-down`, the component raises a window and starts a drag or

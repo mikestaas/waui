@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 // `Node` and `Mutation` are emitted by `generate!` at this scope; the
 // ergonomic tree and its token mirrors come from the shared component-side
 // crate, and the generated records/variants live in the package module.
-use component_ui::{ui, Color, Size, Tree};
+use component_ui::{ui, Color, Size, Stretch, Tree};
 use waui::ui::widget as wit;
 
 const NOT_RUNNING: u64 = 0;
@@ -65,7 +65,7 @@ fn button(running: bool) -> Tree {
 /// The stopwatch's whole UI, nested.
 fn tree(elapsed: u64, running: bool) -> Tree {
     ui! {
-        column id = 1, {
+        column id = 1, stretch = Stretch::Both, {
             readout(elapsed, running),
             button(running),
         }
