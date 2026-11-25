@@ -1279,20 +1279,452 @@ fn child_fills(node: &Tree, width: bool) -> bool {
     len.is_fill()
 }
 
-/// A container: a `widget::container` (its size, its `align` token on both
-/// axes, its chrome) around a row/column (its in-flow children, the
-/// component's `gap`/`padding`), with its positioned children (a window's
+/// A container as the web host's border-box: the box is the component's
+/// `w`/`h` (or its stretch), the children sit in its `padding` with its
+/// `gap`, placed by its `align` token on both axes, and the chrome is the
+/// contract's tokens.
+///
+/// The content keeps its natural size when it exceeds the box's content area
+/// (overflowing past it, clipped at the box's padding edge on draw) — the
+/// CSS box model. Iced's `container`+`row` instead clamps a content-sized
+/// child to the content area: a 34px bar with 16px padding leaves a 2px
+/// area, so a 16px label squashes to 2px (its hit area with it) and a 30px
+/// label spills past the bar's bottom edge.
+struct Box<'a, Message> {
+    /// The flow axis: `true` for a row (children flow left to right).
+    row: bool,
+    children: Vec<iced::Element<'a, Message>>,
+    /// Per child, per axis (width, height): whether it fills the axis. A
+    /// filling child takes the content area; the rest keep their natural
+    /// size and overflow it.
+    fills: Vec<(bool, bool)>,
+    gap: f32,
+    padding: f32,
+    width: iced::Length,
+    height: iced::Length,
+    align_x: iced::alignment::Horizontal,
+    align_y: iced::alignment::Vertical,
+    style: iced::widget::container::Style,
+}
+
+impl<'a, Message> iced_core::Widget<Message, iced::Theme, iced::Renderer> for Box<'a, Message>
+where
+    Message: 'a,
+{
+    fn size(&self) -> iced_core::Size<iced_core::Length> {
+        iced_core::Size {
+            width: self.width,
+            height: self.height,
+        }
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut iced_core::widget::Tree,
+        renderer: &iced::Renderer,
+        limits: &iced_core::layout::Limits,
+    ) -> iced_core::layout::Node {
+        use iced_core::layout::{Limits, Node};
+        use iced_core::{Length, Point, Size};
+
+        let row = self.row;
+        let gap = self.gap;
+        let padding = self.padding;
+        let width = self.width;
+        let height = self.height;
+        let align_x = self.align_x;
+        let align_y = self.align_y;
+
+        let limits = limits.width(width).height(height);
+        let max = limits.max();
+        let (main_max, cross_max) = if row {
+            (max.width, max.height)
+        } else {
+            (max.height, max.width)
+        };
+        let (len_main, len_cross) = if row {
+            (width, height)
+        } else {
+            (height, width)
+        };
+        // A child size as (main, cross) extents, on the flow axis.
+        let main_cross = |s: Size| -> (f32, f32) {
+            if row {
+                (s.width, s.height)
+            } else {
+                (s.height, s.width)
+            }
+        };
+        // The box's size per axis, given the content's extent per axis.
+        // `Fixed` and `Fill` resolve as iced's `resolve` does; `Shrink`
+        // sizes to the content (plus the padding) and overflows the limits
+        // when the content does — a content-sized box overflows its parent
+        // in the web host's CSS, it is not squashed.
+        let box_len = |len: Length, content: f32, parent: f32| -> f32 {
+            match len {
+                Length::Fixed(n) => n.min(parent),
+                Length::Fill | Length::FillPortion(_) => parent,
+                Length::Shrink => content + 2.0 * padding,
+            }
+        };
+        // The content area per axis: the box minus the padding, floored at
+        // 0. In a content-sized box the area is the parent's available space
+        // (minus the padding): a filling child grows to fill the parent, as
+        // in the web host's flex.
+        let area = |len: Length, size: f32, parent: f32| -> f32 {
+            let source = if matches!(len, Length::Shrink) {
+                parent
+            } else {
+                size
+            };
+            (source - 2.0 * padding).max(0.0)
+        };
+
+        // A definite axis resolves its box size without the content.
+        let definite = |len: Length| !matches!(len, Length::Shrink);
+        let box_main = if definite(len_main) {
+            box_len(len_main, 0.0, main_max)
+        } else {
+            0.0
+        };
+        let box_cross = if definite(len_cross) {
+            box_len(len_cross, 0.0, cross_max)
+        } else {
+            0.0
+        };
+
+        let n = self.children.len();
+        let total_spacing = gap * (n as f32 - 1.0).max(0.0);
+        // The main space a filling child may still take: the content area
+        // minus the laid-out children and the gaps.
+        let mut available = area(len_main, box_main, main_max) - total_spacing;
+        let mut main_sum: f32 = 0.0;
+        let mut cross: f32 = 0.0;
+
+        let mut nodes: Vec<Node> = Vec::with_capacity(n);
+        nodes.resize(n, Node::default());
+
+        // The children that do not fill the main axis. They are laid out
+        // unbounded on the main axis (a content-sized child keeps its
+        // natural size and overflows the content area); on the cross axis a
+        // filling child takes the content area, the rest stay unbounded.
+        for (i, (child, child_tree)) in self
+            .children
+            .iter_mut()
+            .zip(tree.children.iter_mut())
+            .enumerate()
+        {
+            let (fill_w, fill_h) = self.fills[i];
+            let (fill_main, fill_cross) = if row {
+                (fill_w, fill_h)
+            } else {
+                (fill_h, fill_w)
+            };
+            if fill_main {
+                continue;
+            }
+            let max_cross = if fill_cross {
+                area(len_cross, box_cross, cross_max)
+            } else {
+                f32::INFINITY
+            };
+            let max_size = if row {
+                Size::new(f32::INFINITY, max_cross)
+            } else {
+                Size::new(max_cross, f32::INFINITY)
+            };
+            let node = child.as_widget_mut().layout(
+                child_tree,
+                renderer,
+                &Limits::new(Size::ZERO, max_size),
+            );
+            let (m, c) = main_cross(node.size());
+            available -= m;
+            main_sum += m;
+            cross = cross.max(c);
+            nodes[i] = node;
+        }
+
+        // The children that fill the main axis share the remaining main
+        // space (the content area minus the laid-out children and the gaps,
+        // floored at 0: an overflowing group leaves them nothing).
+        let n_fill = self
+            .fills
+            .iter()
+            .filter(|(fw, fh)| if row { *fw } else { *fh })
+            .count();
+        if n_fill > 0 {
+            let share = available.max(0.0) / n_fill as f32;
+            for (i, (child, child_tree)) in self
+                .children
+                .iter_mut()
+                .zip(tree.children.iter_mut())
+                .enumerate()
+            {
+                let (fill_w, fill_h) = self.fills[i];
+                let (fill_main, fill_cross) = if row {
+                    (fill_w, fill_h)
+                } else {
+                    (fill_h, fill_w)
+                };
+                if !fill_main {
+                    continue;
+                }
+                let max_cross = if fill_cross {
+                    area(len_cross, box_cross, cross_max)
+                } else {
+                    f32::INFINITY
+                };
+                let (min_size, max_size) = if row {
+                    (Size::new(share, 0.0), Size::new(share, max_cross))
+                } else {
+                    (Size::new(0.0, share), Size::new(max_cross, share))
+                };
+                let node = child.as_widget_mut().layout(
+                    child_tree,
+                    renderer,
+                    &Limits::new(min_size, max_size),
+                );
+                let (m, c) = main_cross(node.size());
+                main_sum += m;
+                cross = cross.max(c);
+                nodes[i] = node;
+            }
+        }
+
+        // The box's size: the content's extent plus the padding on a
+        // content-sized axis, the resolved size on a definite one.
+        let flow = main_sum + total_spacing;
+        let box_main = box_len(len_main, flow, main_max);
+        let box_cross = box_len(len_cross, cross, cross_max);
+
+        // The content area of the final box (the alignment space): the box
+        // minus the padding, floored at 0. It may be smaller than the
+        // content (an overflow): the children keep their size and the box
+        // clips them on draw.
+        let main_area = (box_main - 2.0 * padding).max(0.0);
+        let cross_area = (box_cross - 2.0 * padding).max(0.0);
+        let main_factor = if row {
+            align_factor_h(align_x)
+        } else {
+            align_factor_v(align_y)
+        };
+        let cross_factor = if row {
+            align_factor_v(align_y)
+        } else {
+            align_factor_h(align_x)
+        };
+
+        // The main flow, aligned as a group within the content area (a
+        // centered overflow spills on both sides, as `justify-content:
+        // center` does); each child, aligned on the cross axis.
+        let mut cursor = padding + (main_area - flow) * main_factor;
+        for node in &mut nodes {
+            let (m, c) = main_cross(node.size());
+            let cross_pos = padding + (cross_area - c) * cross_factor;
+            let (x, y) = if row {
+                (cursor, cross_pos)
+            } else {
+                (cross_pos, cursor)
+            };
+            node.move_to_mut(Point::new(x, y));
+            cursor += m + gap;
+        }
+
+        let size = if row {
+            Size::new(box_main, box_cross)
+        } else {
+            Size::new(box_cross, box_main)
+        };
+        Node::with_children(size, nodes)
+    }
+
+    fn children(&self) -> Vec<iced_core::widget::Tree> {
+        self.children
+            .iter()
+            .map(iced_core::widget::Tree::new)
+            .collect()
+    }
+
+    fn diff(&self, tree: &mut iced_core::widget::Tree) {
+        tree.diff_children(&self.children);
+    }
+
+    fn draw(
+        &self,
+        tree: &iced_core::widget::Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &iced_core::renderer::Style,
+        layout: iced_core::Layout<'_>,
+        cursor: iced_core::mouse::Cursor,
+        viewport: &iced_core::Rectangle,
+    ) {
+        use iced_core::Renderer;
+        let bounds = layout.bounds();
+        if bounds.intersection(viewport).is_none() {
+            return;
+        }
+        iced::widget::container::draw_background(renderer, &self.style, bounds);
+        // The web host clips every container at its padding box (the border
+        // stays crisp on top of the content); iced draws unclipped, so the
+        // overflowing content is clipped here.
+        let b = self.style.border.width;
+        let clip = iced_core::Rectangle {
+            x: bounds.x + b,
+            y: bounds.y + b,
+            width: (bounds.width - 2.0 * b).max(0.0),
+            height: (bounds.height - 2.0 * b).max(0.0),
+        };
+        if clip.width > 0.0 && clip.height > 0.0 {
+            renderer.with_layer(clip, |renderer| {
+                for ((child, child_tree), child_layout) in self
+                    .children
+                    .iter()
+                    .zip(&tree.children)
+                    .zip(layout.children())
+                {
+                    if child_layout.bounds().intersects(viewport) {
+                        child.as_widget().draw(
+                            child_tree,
+                            renderer,
+                            theme,
+                            style,
+                            child_layout,
+                            cursor,
+                            viewport,
+                        );
+                    }
+                }
+            });
+        }
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut iced_core::widget::Tree,
+        layout: iced_core::Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn iced_core::widget::Operation,
+    ) {
+        operation.container(None, layout.bounds());
+        operation.traverse(&mut |operation| {
+            self.children
+                .iter_mut()
+                .zip(&mut tree.children)
+                .zip(layout.children())
+                .for_each(|((child, state), child_layout)| {
+                    child
+                        .as_widget_mut()
+                        .operate(state, child_layout, renderer, operation);
+                });
+        });
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut iced_core::widget::Tree,
+        event: &iced_core::Event,
+        layout: iced_core::Layout<'_>,
+        cursor: iced_core::mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn iced_core::Clipboard,
+        shell: &mut iced_core::Shell<'_, Message>,
+        viewport: &iced_core::Rectangle,
+    ) {
+        for ((child, child_tree), child_layout) in self
+            .children
+            .iter_mut()
+            .zip(&mut tree.children)
+            .zip(layout.children())
+        {
+            child.as_widget_mut().update(
+                child_tree,
+                event,
+                child_layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &iced_core::widget::Tree,
+        layout: iced_core::Layout<'_>,
+        cursor: iced_core::mouse::Cursor,
+        viewport: &iced_core::Rectangle,
+        renderer: &iced::Renderer,
+    ) -> iced_core::mouse::Interaction {
+        self.children
+            .iter()
+            .zip(&tree.children)
+            .zip(layout.children())
+            .map(|((child, child_tree), child_layout)| {
+                child.as_widget().mouse_interaction(
+                    child_tree,
+                    child_layout,
+                    cursor,
+                    viewport,
+                    renderer,
+                )
+            })
+            .max()
+            .unwrap_or_default()
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut iced_core::widget::Tree,
+        layout: iced_core::Layout<'b>,
+        renderer: &iced::Renderer,
+        viewport: &iced_core::Rectangle,
+        translation: iced_core::Vector,
+    ) -> Option<iced_core::overlay::Element<'b, Message, iced::Theme, iced::Renderer>> {
+        iced_core::overlay::from_children(
+            &mut self.children,
+            tree,
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+/// The contract's placement token on a horizontal axis, as a 0..1 factor
+/// (the child's position within the alignment space).
+fn align_factor_h(a: iced::alignment::Horizontal) -> f32 {
+    match a {
+        iced::alignment::Horizontal::Left => 0.0,
+        iced::alignment::Horizontal::Center => 0.5,
+        iced::alignment::Horizontal::Right => 1.0,
+    }
+}
+
+/// The contract's placement token on a vertical axis, as a 0..1 factor.
+fn align_factor_v(a: iced::alignment::Vertical) -> f32 {
+    match a {
+        iced::alignment::Vertical::Top => 0.0,
+        iced::alignment::Vertical::Center => 0.5,
+        iced::alignment::Vertical::Bottom => 1.0,
+    }
+}
+
+/// A container: a [`Box`] (its size, its `align` token on both axes, its
+/// chrome, its in-flow children) with its positioned children (a window's
 /// grip) stacked on top at their `(x, y)`. A content slot (a container an
 /// opened entry's handle is the id of) seats the entry's tree. An id'd
 /// container is addressable (a press over it is a pointer event; a tile,
 /// `cursor: pointer`, is double-clickable).
 ///
-/// The outer placement is the contract's `align` on both axes. The inner
-/// block is content-sized on an axis only when no child fills it, so the
-/// placement places the block there; a child that fills an axis makes the
-/// inner fill it and the placement a no-op on it. A content-sized container
-/// renders as before. The outer style is always set (transparent for a
-/// chrome-less container), so a theme default never shows through.
+/// The `align` token places the children on both axes within the box's
+/// content area (the web host's `justify-content`/`align-items`). The style
+/// is always set (transparent for a chrome-less container), so a theme
+/// default never shows through.
 ///
 /// A positioned container (a window) is *not* wrapped here: [`map_tree`]
 /// wraps it in the host's fixed-position widget.
@@ -1305,7 +1737,6 @@ fn map_container<'a>(
     assets: &'a BTreeMap<String, Vec<u8>>,
 ) -> iced::Element<'a, Message> {
     use iced::widget;
-    use iced::Length;
     let style = match node {
         Tree::Row(_, _, s, _) | Tree::Column(_, _, s, _) => *s,
         _ => unreachable!("a container is a row or a column"),
@@ -1323,10 +1754,10 @@ fn map_container<'a>(
     // its id): the entry's tree seats there, in the slot's place.
     let slot = id_of(node).and_then(|id| panels.iter().find(|p| p.handle == id));
 
-    // The in-flow children, in a row/column. The component's `gap` (its
-    // pixels, 1:1 on this host) or the host's default (8px) when it is `0`;
-    // its `padding` when set. The nodes are kept for the inner block's
-    // per-axis size below.
+    // The in-flow children, in order (the positioned ones — a window's grip —
+    // stack on top, below). The component's `gap` (its pixels, 1:1 on this
+    // host) or the host's default (8px) when it is `0`; its `padding` when
+    // set. The nodes are kept for the box's per-child fill detection.
     let (in_flow, in_flow_nodes) = if let Some(panel) = slot {
         (
             vec![map_tree(
@@ -1352,56 +1783,27 @@ fn map_container<'a>(
     } else {
         0.0
     };
-    // The outer container's size (see [`container_lengths`]).
+    // The box's size (see [`container_lengths`]) and its `align` token on
+    // both axes. Per child, whether it fills each axis: a filling child
+    // takes the content area, the rest keep their natural size (see [`Box`]).
     let (w_len, h_len) = container_lengths(node);
-    // The inner row/column: the content block. Per axis, `Fill` when the
-    // container has a definite size there and a child fills it — a `Fill`
-    // child in a shrink flex collapses to zero in iced — else `Shrink`
-    // (content-sized), so the outer container's `align` places the block on
-    // that axis. The `align` token also places the children within the block
-    // on the cross axis.
-    let inner_w = if w_len == Length::Shrink || !in_flow_nodes.iter().any(|c| child_fills(c, true))
-    {
-        Length::Shrink
-    } else {
-        Length::Fill
-    };
-    let inner_h = if h_len == Length::Shrink || !in_flow_nodes.iter().any(|c| child_fills(c, false))
-    {
-        Length::Shrink
-    } else {
-        Length::Fill
-    };
-    let inner: iced::Element<'_, Message> = if row {
-        let mut r = widget::row(in_flow)
-            .spacing(spacing)
-            .align_y(row_align(align));
-        if padding > 0.0 {
-            r = r.padding(padding);
-        }
-        r.width(inner_w).height(inner_h).into()
-    } else {
-        let mut c = widget::column(in_flow)
-            .spacing(spacing)
-            .align_x(column_align(align));
-        if padding > 0.0 {
-            c = c.padding(padding);
-        }
-        c.width(inner_w).height(inner_h).into()
-    };
+    let fills = in_flow_nodes
+        .iter()
+        .map(|c| (child_fills(c, true), child_fills(c, false)))
+        .collect();
 
-    // The outer container: the container's size, the `align` token on both
-    // axes, and the chrome. The `align` places the inner block on an axis
-    // where it is content-sized; a filling inner makes it a no-op there. The
-    // style is always set (transparent for a chrome-less container), so a
-    // theme default never shows through.
-    let mut base: iced::Element<'_, Message> = widget::container(inner)
-        .width(w_len)
-        .height(h_len)
-        .align_x(column_align(align))
-        .align_y(row_align(align))
-        .style(move |_: &iced::Theme| container_style(&style))
-        .into();
+    let mut base: iced::Element<'_, Message> = iced::Element::new(Box {
+        row,
+        children: in_flow,
+        fills,
+        gap: spacing,
+        padding,
+        width: w_len,
+        height: h_len,
+        align_x: column_align(align),
+        align_y: row_align(align),
+        style: container_style(&style),
+    });
 
     // A node with an id is addressable: a press over it is reported
     // (`on-pointer-down`, the component raises a window and starts a drag or
@@ -1422,8 +1824,8 @@ fn map_container<'a>(
     }
 
     // The positioned children (a window, a grip): stacked on top at their
-    // `(x, y)`. The stack sizes to its base layer (the row/column, already
-    // sized), so the positioned children place without resizing it.
+    // `(x, y)`. The stack sizes to its base layer (the box, already sized),
+    // so the positioned children place without resizing it.
     let positioned: Vec<&Tree> = children.iter().filter(|c| is_positioned(c)).collect();
     if positioned.is_empty() {
         return base;
