@@ -93,7 +93,7 @@ jobs:
           ids=$(gh api repos/"$GITHUB_REPOSITORY"/actions/runs/"$GITHUB_RUN_ID"/artifacts \
             --jq '.artifacts[] | select(.name == "github-pages") | .id' || true)
           for id in $ids; do
-            gh api -X DELETE repos/"$GITHUB_REPOSITORY"/actions/runs/"$GITHUB_RUN_ID"/artifacts/"$id"
+            gh api -X DELETE repos/"$GITHUB_REPOSITORY"/actions/artifacts/"$id"
           done
 
       - uses: actions/upload-pages-artifact@v3
@@ -102,29 +102,15 @@ jobs:
 
       # The deploy step looks the artifact up on the internal results
       # service without retry, which can run before the upload's metadata
-      # indexes (a "0 artifacts" failure): poll the same endpoint until it
-      # reports exactly one github-pages artifact.
+      # indexes (a "0 artifacts" failure): wait for the artifact to appear
+      # in the run's artifact list before deploying.
       - name: Wait for the pages artifact to index
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          set -eu
-          # The backend ids for the internal ListArtifacts call come from
-          # the runtime token's Actions.Results scope.
-          payload=$(printf '%s' "$ACTIONS_RUNTIME_TOKEN" | cut -d. -f2)
-          pad=$(( (4 - ${#payload} % 4) % 4 ))
-          for ((i = 0; i < pad; i++)); do payload="$payload="; done
-          scp=$(printf '%s' "$payload" | tr '_-' '/+' | base64 -d | jq -r .scp)
-          scope=$(printf '%s' "$scp" | tr ' ' '\n' | grep '^Actions.Results:' | head -n1)
-          [ -n "$scope" ] || { echo "::error::no Actions.Results scope in the runtime token"; exit 1; }
-          run_id=$(printf '%s' "$scope" | cut -d: -f2)
-          job_id=$(printf '%s' "$scope" | cut -d: -f3)
-          origin=$(printf '%s' "$ACTIONS_RESULTS_URL" | awk -F/ '{print $1"/"$2"/"$3}')
           for _ in $(seq 1 30); do
-            n=$(curl -s -X POST \
-                -H "Authorization: bearer $ACTIONS_RUNTIME_TOKEN" \
-                -H "Content-Type: application/json" \
-                -d "{\"workflowRunBackendId\":\"$run_id\",\"workflowJobRunBackendId\":\"$job_id\"}" \
-                "$origin/twirp/github.actions.results.api.v1.ArtifactService/ListArtifacts" \
-              | jq '[.artifacts[]? | select(.name == "github-pages")] | length')
+            n=$(gh api repos/"$GITHUB_REPOSITORY"/actions/runs/"$GITHUB_RUN_ID"/artifacts \
+              --jq '[.artifacts[] | select(.name == "github-pages")] | length' || echo 0)
             if [ "$n" = "1" ]; then exit 0; fi
             sleep 10
           done
