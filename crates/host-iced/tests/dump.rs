@@ -17,9 +17,9 @@
 //! running state runs on a fake clock that advances (`--now <base> <step>`).
 //!
 //! The multi-component scenario (`--registry` manifest, `--double-click`
-//! tiles, `--click` the window's close button) runs the desktop app, which
+//! tiles, `--click` the window's close marker) runs the desktop app, which
 //! draws the whole desktop — the menu bar, the icon grid, and each window's
-//! chrome (title bar, close button, cascade) — as its own widget tree. The
+//! chrome (title bar, close marker, cascade) — as its own widget tree. The
 //! host seats each opened entry's content in the window's content slot and
 //! routes the pointer and key events to the app. The manifest's nine
 //! entries span all three producers, so the scenario builds all three
@@ -506,7 +506,7 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     save_producer_golden(&bytes, producer, "desktop-2.png");
 
     // Close the first window (the counter, under the stopwatch): click its
-    // close button (the app's own, id = handle + the close offset). The
+    // close marker (the app's own, id = handle + the close offset). The
     // surviving window's chrome is all that remains.
     let mut args = registry_args();
     args.push("--double-click".to_string());

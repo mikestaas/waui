@@ -5,7 +5,7 @@
 //! border, shadow — and their geometry). It draws the windows itself, with the
 //! contract's geometry tokens, and drives them through the pointer and key
 //! channels: a title-bar drag moves a window, a grip drag resizes it, a press
-//! raises it, the close button (and Escape) closes it, and a double-clicked
+//! raises it, the close marker (and Escape) closes it, and a double-clicked
 //! tile opens its entry.
 //!
 //! The *content* of an opened window is not this component's: it is a separate
@@ -460,8 +460,19 @@ fn window(w: &Window) -> Tree {
             .id(base + OFF_SPACER)
             .stretch(Stretch::Main),
     );
+    // The close marker as a text, not a button: a button node would draw the
+    // host's button chrome (fill, border, padding). The container carries the
+    // id (the click target) and a size (the hit area); with no chrome tokens
+    // it draws nothing but the glyph.
     bar.push(
-        Tree::button("\u{2715}", Style::new(Color::Neutral, Size::Medium)).id(base + OFF_CLOSE),
+        Tree::row(vec![Tree::text(
+            "\u{2715}",
+            Style::new(Color::Neutral, Size::Medium),
+        )])
+        .id(base + OFF_CLOSE)
+        .align(Align::Center)
+        .width(48)
+        .height(32),
     );
     let titlebar = Tree::row(bar)
         .id(base + OFF_TITLEBAR)
@@ -643,7 +654,7 @@ impl Guest for Desktop {
         })
     }
 
-    // A single click: a close button closes its window; a tile selects it
+    // A single click: the close marker closes its window; a tile selects it
     // (its ring).
     fn on_click(id: u32) {
         let handle = {
@@ -701,7 +712,7 @@ impl Guest for Desktop {
                 start_w: w.w,
                 start_h: w.h,
             }),
-            // A press on the window, its content, or the close button only
+            // A press on the window, its content, or the close marker only
             // raises (the close is a click, not a drag).
             _ => None,
         };
@@ -795,7 +806,7 @@ impl Guest for Desktop {
     fn on_tick() {}
 
     // A host-side close (a host-drawn chrome): drop the window. The just-an-app
-    // desktop closes via its own button, so this is a no-op for it, but a
+    // desktop closes via its own marker, so this is a no-op for it, but a
     // host-chrome component would use it.
     fn on_window_close(window: u32) {
         WINDOWS.lock().unwrap().retain(|w| w.handle != window);

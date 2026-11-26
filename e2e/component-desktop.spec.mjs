@@ -117,13 +117,13 @@ function defineDesktopTests(url) {
     expect(await z(counter)).toBeGreaterThan(await z(stop));
   });
 
-  test('close button and Escape close windows', async ({ page }) => {
+  test('close marker and Escape close windows', async ({ page }) => {
     const tiles = page.locator('#app .waui-cursor-pointer');
     await tiles.nth(0).dblclick();
     await tiles.nth(3).dblclick();
     await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('2 windows');
 
-    // The frontmost (last opened) closes by its button.
+    // The frontmost (last opened) closes by its marker.
     await win(page, 10001).locator('[data-id="410001"]').click();
     await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('1 window');
 

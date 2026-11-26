@@ -10,7 +10,7 @@
 ;; their geometry, their stacking order). It draws the windows itself with
 ;; the contract's geometry tokens, and drives them through the pointer and
 ;; key channels: a press raises a window, a title-bar drag moves it, a grip
-;; drag resizes it, the close button and Escape close it, and a
+;; drag resizes it, the close marker and Escape close it, and a
 ;; double-clicked tile opens its entry.
 ;;
 ;; The *content* of an opened window is not this component's: it is a
@@ -782,8 +782,8 @@
           (loop $lp
             (br_if $done (i32.ge_u (local.get $i) (global.get $win-len)))
             (local.set $w (ref.cast (ref $win) (array.get $wins (local.get $wins) (local.get $i))))
-            ;; The window's seven fixed nodes (the icon, when any, is the eighth).
-            (local.set $total (i32.add (local.get $total) (i32.const 7)))
+            ;; The window's eight fixed nodes (the icon, when any, is the ninth).
+            (local.set $total (i32.add (local.get $total) (i32.const 8)))
             (if (i32.eqz (ref.is_null (struct.get $win $icon (local.get $w))))
               (then (local.set $total (i32.add (local.get $total) (i32.const 1)))))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -1088,9 +1088,22 @@
                 (i32.const 0)
                 (ref.null $bytes) (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 1))))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
+            ;; The close marker: a container (the id, the hit area) around an
+            ;; id-less text. A button node would draw the host's button chrome.
             (array.set $flats (local.get $arr) (local.get $pos)
               (struct.new $flat
-                (i32.const 1) (i32.add (local.get $base) (i32.const 400000)) (i32.add (local.get $base) (i32.const 200000))
+                (i32.const 2) (i32.add (local.get $base) (i32.const 400000)) (i32.add (local.get $base) (i32.const 200000))
+                (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 1)
+                (i32.const 48) (i32.const 32)
+                (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+                (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+                (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+                (i32.const 0)
+                (ref.null $bytes) (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 2))))
+            (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
+            (array.set $flats (local.get $arr) (local.get $pos)
+              (struct.new $flat
+                (i32.const 0) (i32.const 0) (i32.add (local.get $base) (i32.const 400000))
                 (i32.const 0) (i32.const 1) (i32.const 0) (i32.const 0)
                 (i32.const 0) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
@@ -1098,7 +1111,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0)
                 (call $label (i32.const 65591) (i32.const 3))
-                (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 2))))
+                (ref.null $bytes) (i32.const 0)))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             ;; The content slot: its id is the handle itself (the host seats
             ;; the opened component's tree there).
@@ -1962,7 +1975,7 @@
     (call $make-list (local.get $buf) (local.get $n))
   )
 
-  ;; A single click: a close button closes its window; a tile selects it
+  ;; A single click: the close marker closes its window; a tile selects it
   ;; (its ring).
   (func (export "on-click") (param $id i32)
     (local $idx i32)
@@ -2057,7 +2070,7 @@
             (global.set $drag-sh (struct.get $win $h (local.get $w)))
           )
           (else
-            ;; A press on the window, its content, or the close button only
+            ;; A press on the window, its content, or the close marker only
             ;; raises (the close is a click, not a drag).
             (global.set $drag-active (i32.const 0))))))
   )

@@ -7,7 +7,7 @@
 // title bar, close, grip, panel, border, shadow — and their geometry). It draws
 // the windows itself, with the contract's geometry tokens, and drives them
 // through the pointer and key channels: a title-bar drag moves a window, a grip
-// drag resizes it, a press raises it, the close button (and Escape) closes it,
+// drag resizes it, a press raises it, the close marker (and Escape) closes it,
 // and a double-clicked tile opens its entry.
 //
 // The *content* of an opened window is not this component's: it is a separate
@@ -28,7 +28,8 @@
 // the chrome is offset by a wide stride (window +100000, title bar +200000,
 // spacer +300000, close +400000, grip +500000) so they never collide across
 // handles. A tile's icon, label, and caption are id-less (display-only); the
-// title bar's label is id-less too (the host makes id'd nodes addressable).
+// title bar's label is id-less too (the host makes id'd nodes addressable),
+// and the close glyph is id-less (its id rides on its container).
 //
 // It never calls `schedule` (it changes only on a pointer or key event).
 
@@ -62,7 +63,7 @@ import {
 } from '../abi/node';
 import { readUtf8, writeUtf8 } from '../abi/utf8';
 import { closeEntry, listEntries, openEntry, viewport } from '../abi/windowing';
-import { button, column, diffOf, image, link, row, text, viewOf, Widget } from '../ui/tree';
+import { column, diffOf, image, link, row, text, viewOf, Widget } from '../ui/tree';
 
 // The canonical-ABI post functions and the string allocator (../abi/arena).
 export { cabi_post_changes, cabi_post_view, cabi_realloc };
@@ -421,7 +422,17 @@ function window(w: Win): Widget {
       .id(base + OFF_SPACER)
       .stretch(STRETCH_MAIN),
   );
-  bar.push(button('✕', COLOR_NEUTRAL, SIZE_MEDIUM).id(base + OFF_CLOSE));
+  // The close marker as a text, not a button: a button node would draw the
+  // host's button chrome (fill, border, padding). The container carries the
+  // id (the click target) and a size (the hit area); with no chrome tokens
+  // it draws nothing but the glyph.
+  bar.push(
+    row([text('✕', COLOR_NEUTRAL, SIZE_MEDIUM)])
+      .id(base + OFF_CLOSE)
+      .align(ALIGN_CENTER)
+      .width(48)
+      .height(32),
+  );
   const titlebar = row(bar)
     .id(base + OFF_TITLEBAR)
     .align(ALIGN_CENTER)
@@ -589,7 +600,7 @@ export function changes(): i32 {
   return diffOf(currentTree());
 }
 
-/// A single click: a close button closes its window; a tile selects it (its
+/// A single click: the close marker closes its window; a tile selects it (its
 /// ring).
 export function onclick(id: i32): void {
   const wi = findWindowNode(id);
@@ -638,7 +649,7 @@ export function onpointerdown(id: i32, x: i32, y: i32): void {
     d.startH = w.h;
     drag = d;
   } else {
-    // A press on the window, its content, or the close button only raises
+    // A press on the window, its content, or the close marker only raises
     // (the close is a click, not a drag).
     drag = null;
   }
@@ -729,7 +740,7 @@ export function ontext(_id: i32, ptr: i32, len: i32): void {
 export function ontick(): void {}
 
 /// A host-side close (a host-drawn chrome): drop the window. The just-an-app
-/// desktop closes via its own button, so this is a no-op for it, but a
+/// desktop closes via its own marker, so this is a no-op for it, but a
 /// host-chrome component would use it.
 export function onwindowclose(window: i32): void {
   closeWindow(window);

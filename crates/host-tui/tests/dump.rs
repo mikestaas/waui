@@ -8,7 +8,7 @@
 //! hand-rolled ABI), and its hand-rolled WAT one. The assertions are shared.
 //!
 //! The desktop scenario (`--registry` manifest, `--double-click` tiles,
-//! `--click` a window's close button) runs the desktop app, which draws the
+//! `--click` a window's close marker) runs the desktop app, which draws the
 //! whole desktop — the menu bar, the icon grid, and each window's chrome and
 //! placement — as its own tree. The host seats each opened entry's content in
 //! the window's content slot and routes the events to the app. The
@@ -626,7 +626,7 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     );
     // The cascade (28 px, a few cells on this host) puts the second
     // window's top edge on the first's title bar, so only the top window's
-    // title bar (and close button) is visible; the lower window shows its
+    // title bar (and close marker) is visible; the lower window shows its
     // border and a sliver of its title.
     assert!(
         ls.iter().any(|l| l.plain.contains("Stopwatch")),
@@ -635,14 +635,14 @@ fn assert_desktop_frame(path: &Path, producer: &str) {
     );
     assert!(
         ls.iter().filter(|l| l.plain.contains(CLOSE_MARK)).count() == 1,
-        "only the top window's close button should be visible (the cascade covers the lower one): {:?}",
+        "only the top window's close marker should be visible (the cascade covers the lower one): {:?}",
         ls.iter().map(|l| l.plain.as_str()).collect::<Vec<_>>()
     );
     assert_frame_golden(&frame, "desktop-2.txt");
     save_producer_golden(&frame, producer, "desktop-2.txt");
 
     // Close the first window (the counter, under the stopwatch): click its
-    // close button (the app's own, id = handle + the close offset). The
+    // close marker (the app's own, id = handle + the close offset). The
     // count drops back to one, and the surviving window stays at its
     // cascade position.
     let mut args = registry_args();
