@@ -17,9 +17,15 @@ function int(value, fallback) {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
-const artifactName = process.env.INPUT_ARTIFACT_NAME || '';
-const timeoutSeconds = int(process.env.INPUT_TIMEOUT_SECONDS, 300);
-const pollSeconds = int(process.env.INPUT_POLL_SECONDS, 10);
+// The runner exposes each input as INPUT_<name> (uppercased, spaces to
+// underscores, dashes preserved) — the same scheme @actions/core uses.
+function getInput(name) {
+  return process.env[`INPUT_${name.replace(/ /g, '_').toUpperCase()}`] || '';
+}
+
+const artifactName = getInput('artifact-name');
+const timeoutSeconds = int(getInput('timeout-seconds'), 300);
+const pollSeconds = int(getInput('poll-seconds'), 10);
 
 // The runtime token is a JWT; its payload (base64url) carries the `scp`
 // claim, a space-separated list of scopes. The Actions.Results scope is
@@ -39,6 +45,10 @@ function backendIdsFromToken(token) {
   throw new Error('no Actions.Results scope in the runtime token');
 }
 
+// A hung request must not block the wait: abort a single poll after this
+// long so the loop's overall timeout still bounds the step.
+const requestTimeoutMs = 30000;
+
 async function listArtifacts() {
   const token = process.env.ACTIONS_RUNTIME_TOKEN;
   const resultsUrl = process.env.ACTIONS_RESULTS_URL;
@@ -50,15 +60,23 @@ async function listArtifacts() {
     '/twirp/github.actions.results.api.v1.ArtifactService/ListArtifacts',
     new URL(resultsUrl).origin,
   ).href;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      authorization: `bearer ${token}`,
-      'content-type': 'application/json',
-      'user-agent': '@actions/artifact-2.1.3',
-    },
-    body: JSON.stringify(ids),
-  });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), requestTimeoutMs);
+  let res;
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        authorization: `bearer ${token}`,
+        'content-type': 'application/json',
+        'user-agent': '@actions/artifact-2.1.3',
+      },
+      body: JSON.stringify(ids),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     throw new Error(`ListArtifacts HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
   }
