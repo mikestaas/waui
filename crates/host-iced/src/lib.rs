@@ -1994,19 +1994,19 @@ fn map_tree<'a>(
                 }
             }
         }
-        // A link: its label, underlined (the host's marker for a URL). iced
-        // has no url widget, so a mouse area wraps the label and the host
-        // opens the `href` on a press; the press's capture keeps it off the
-        // component's pointer channel.
+        // A link: no decoration at rest, an underline on hover (the web
+        // host's `.waui-link`), a pointer cursor. Iced's `Rich` link opens
+        // the `href` on a press released over it, and captures the press so
+        // it stays off the component's pointer channel.
         Tree::Link(_, label, href, style) => {
             let color = iced_color(style.color).unwrap_or_else(|| theme::style().text_color);
-            let span: widget::text::Span<'_, (), iced::Font> =
+            let span: widget::text::Span<'_, String, iced::Font> =
                 widget::text::Span::new(label.as_str())
                     .size(size_pt(style.size))
                     .color(color)
-                    .underline(true);
-            widget::mouse_area(widget::rich_text(vec![span]))
-                .on_press(Message::OpenUrl(href.clone()))
+                    .link(href.clone());
+            widget::rich_text(vec![span])
+                .on_link_click(|href| Message::OpenUrl(href))
                 .into()
         }
         // A container: its in-flow children, its chrome, and its positioned
