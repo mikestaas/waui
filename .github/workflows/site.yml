@@ -108,7 +108,7 @@ jobs:
       # service needs, so it polls the same ListArtifacts lookup deploy runs
       # and waits for exactly one artifact.
       - name: Wait for the pages artifact to index
-        uses: ./actions/wait-for-artifact
+        uses: ./.github/actions/wait-for-artifact
         with:
           artifact-name: github-pages
 
