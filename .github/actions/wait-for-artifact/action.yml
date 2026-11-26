@@ -1,0 +1,26 @@
+# Polls the internal results service — the same ListArtifacts lookup the
+# deploy-pages action runs — until it reports exactly one artifact with the
+# given name, so the following deploy-pages step can find it.
+#
+# This must be a node action, not a `run:` shell step: the internal service
+# needs the short-lived runtime token the runner injects only into node and
+# container action handlers.
+name: Wait for an artifact to index
+description: >-
+  Wait until the internal results service reports exactly one artifact with
+  the given name, so a following deploy-pages step can find it.
+inputs:
+  artifact-name:
+    description: The artifact name to wait for (for example github-pages).
+    required: true
+  timeout-seconds:
+    description: Give up after this many seconds.
+    required: false
+    default: '300'
+  poll-seconds:
+    description: Pause between polls, in seconds.
+    required: false
+    default: '10'
+runs:
+  using: node20
+  main: index.js
