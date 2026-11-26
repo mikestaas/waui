@@ -139,8 +139,10 @@
         border: 1px solid #414868;
       }
       .waui-border-ring {
-        /* A selection ring: an outline, so it never shifts the layout. */
-        outline: 2px solid #7aa2f7;
+        /* A selection ring: an inset shadow, so it never shifts the layout.
+           An outline paints outside the box, and a parent with the default
+           overflow clip (a row exactly the tile's height) would clip it. */
+        box-shadow: inset 0 0 0 2px #7aa2f7;
       }
       .waui-radius-small {
         border-radius: 4px;
@@ -150,6 +152,12 @@
       }
       .waui-shadow-raised {
         box-shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+      }
+      /* Both tokens on one container: one declaration carries both. */
+      .waui-border-ring.waui-shadow-raised {
+        box-shadow:
+          inset 0 0 0 2px #7aa2f7,
+          0 8px 24px rgb(0 0 0 / 0.5);
       }
       .waui-cursor-pointer {
         cursor: pointer;
