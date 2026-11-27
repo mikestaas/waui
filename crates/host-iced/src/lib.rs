@@ -902,27 +902,38 @@ fn slot_in_tree(node: &Tree, handle: u32) -> bool {
 }
 
 pub fn view(state: &State) -> iced::Element<'_, Message> {
+    let host = state.store.data();
+    view_tree(
+        &state.tree,
+        !host.entries.is_empty(),
+        &host.panels,
+        &host.assets,
+    )
+}
+
+/// The canvas for one component tree, independent of the app's state: the
+/// tree, the registry flag (the tile rule), the panels, and the image
+/// assets. `view` feeds it the state's copies; the cursor test feeds it a
+/// hand-built tree.
+fn view_tree<'a>(
+    tree: &'a Tree,
+    has_registry: bool,
+    panels: &'a [Panel],
+    assets: &'a BTreeMap<String, Vec<u8>>,
+) -> iced::Element<'a, Message> {
     use iced::alignment;
     use iced::widget;
     use iced::Length;
-    let host = state.store.data();
-    let has_registry = !host.entries.is_empty();
     // Fill the canvas and center the app. A standalone app (no registry)
     // keeps the page's 2rem padding: a cosmetic margin, and the size the
     // committed goldens were drawn at. A multi-component app has no padding:
     // its canvas is the component's drawing area whole, so `viewport` (the
     // canvas) is what the component's clamping math expects.
-    let mut main = widget::container(map_tree(
-        &state.tree,
-        Surface::Main,
-        has_registry,
-        &host.panels,
-        &host.assets,
-    ))
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .align_x(alignment::Horizontal::Center)
-    .align_y(alignment::Vertical::Center);
+    let mut main = widget::container(map_tree(tree, Surface::Main, has_registry, panels, assets))
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_x(alignment::Horizontal::Center)
+        .align_y(alignment::Vertical::Center);
     if !has_registry {
         main = main.padding(32.0);
     }
@@ -934,21 +945,23 @@ pub fn view(state: &State) -> iced::Element<'_, Message> {
         .on_release(Message::PointerUp);
     let mut layers = vec![main.into()];
     // A panel the app did not seat (a host-chrome component, which leaves
-    // the window's chrome to the host): centered, without chrome.
-    for panel in &host.panels {
-        if !slot_in_tree(&state.tree, panel.handle) {
+    // the window's chrome to the host): centered, without chrome. The panel
+    // is a window: opaque to the mouse, the rule `map_container` applies to
+    // the component's own windows.
+    for panel in panels {
+        if !slot_in_tree(tree, panel.handle) {
             let content = widget::container(map_tree(
                 &panel.tree,
                 Surface::Panel(panel.handle),
                 false,
                 &EMPTY_PANELS,
-                &host.assets,
+                assets,
             ))
             .width(Length::Fill)
             .height(Length::Fill)
             .align_x(alignment::Horizontal::Center)
             .align_y(alignment::Vertical::Center);
-            layers.push(widget::stack(vec![content.into()]).into());
+            layers.push(widget::opaque(widget::stack(vec![content.into()])));
         }
     }
     // A host with no panels is the standalone view of today: the stack with
@@ -1834,7 +1847,17 @@ fn map_container<'a>(
     let mut pos: Vec<(u32, &Tree)> = positioned.iter().map(|c| (z_of(c), *c)).collect();
     pos.sort_by_key(|&(z, _)| z);
     for (_, c) in pos {
-        layers.push(map_tree(c, surface, has_registry, panels, assets));
+        // A positioned container is a window: opaque to the mouse, as the
+        // web host's div is. Iced's stack passes a `None` layer to the
+        // layers below, so without this a window with no cursor token (its
+        // body) would leak the tile's pointer through it.
+        layers.push(widget::opaque(map_tree(
+            c,
+            surface,
+            has_registry,
+            panels,
+            assets,
+        )));
     }
     widget::stack(layers).into()
 }
@@ -2019,5 +2042,164 @@ fn map_tree<'a>(
                 map_container(node, surface, has_registry, is_row(node), panels, assets)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    //! The cursor is the topmost widget's shape. A window over a tile shows
+    //! the window's (default), not the tile's (pointer). The dump renders
+    //! with an unavailable cursor, so the check drives the window's own
+    //! update path (the one the runtime's cursor follows) with an available
+    //! one and reads the interaction back.
+
+    use super::*;
+    use host_shared::waui::ui::widget::Style as WStyle;
+    use iced_core::mouse;
+
+    /// The desktop's occlusion, hand-built: a tile (`pointer`) under a
+    /// window (`default`) that covers its middle, the window's title bar
+    /// (`grab`) and grip (`resize`). No registry entry, no panel: the
+    /// content slot is empty.
+    fn occlusion_tree() -> Tree {
+        let titlebar = Tree::Row(
+            Some(100_200),
+            WAlign::Center,
+            ContainerStyle {
+                h: 36,
+                stretch: WStretch::Main,
+                background: WBackground::Bar,
+                cursor: WCursor::Grab,
+                ..ContainerStyle::default()
+            },
+            vec![Tree::Text(
+                "win".to_string(),
+                WStyle {
+                    color: WColor::Neutral,
+                    size: WSize::Medium,
+                },
+            )],
+        );
+        let content = Tree::Row(
+            Some(10_000),
+            WAlign::Center,
+            ContainerStyle {
+                stretch: WStretch::Both,
+                ..ContainerStyle::default()
+            },
+            Vec::new(),
+        );
+        let grip = Tree::Row(
+            Some(100_500),
+            WAlign::Center,
+            ContainerStyle {
+                positioned: true,
+                x: 183,
+                y: 183,
+                w: 14,
+                h: 14,
+                cursor: WCursor::Resize,
+                ..ContainerStyle::default()
+            },
+            Vec::new(),
+        );
+        let window = Tree::Column(
+            Some(100_000),
+            WAlign::Start,
+            ContainerStyle {
+                positioned: true,
+                x: 150,
+                y: 150,
+                w: 200,
+                h: 200,
+                z: 10,
+                background: WBackground::Panel,
+                ..ContainerStyle::default()
+            },
+            vec![titlebar, content, grip],
+        );
+        let tile = Tree::Column(
+            Some(100),
+            WAlign::Center,
+            ContainerStyle {
+                positioned: true,
+                x: 100,
+                y: 100,
+                w: 300,
+                h: 300,
+                background: WBackground::Panel,
+                cursor: WCursor::Pointer,
+                ..ContainerStyle::default()
+            },
+            vec![Tree::Text(
+                "tile".to_string(),
+                WStyle {
+                    color: WColor::Neutral,
+                    size: WSize::Medium,
+                },
+            )],
+        );
+        Tree::Column(
+            Some(1),
+            WAlign::Start,
+            ContainerStyle {
+                stretch: WStretch::Both,
+                ..ContainerStyle::default()
+            },
+            vec![tile, window],
+        )
+    }
+
+    /// The interaction the canvas reports at `(x, y)`: the window's own
+    /// update path (the one the runtime's cursor follows), with the cursor
+    /// available at the point.
+    fn interaction_at(tree: &Tree, x: u32, y: u32) -> mouse::Interaction {
+        pin_dump_fonts();
+        let mut renderer = create_headless_renderer().expect("no headless renderer");
+        let size = iced::Size::new(960.0, 600.0);
+        let assets = BTreeMap::new();
+        let element = view_tree(tree, true, &[], &assets);
+        let mut ui = iced_runtime::user_interface::UserInterface::build(
+            element,
+            size,
+            iced_runtime::user_interface::Cache::new(),
+            &mut renderer,
+        );
+        let position = iced_core::Point::new(x as f32, y as f32);
+        let event = iced_core::Event::Mouse(mouse::Event::CursorMoved { position });
+        let mut clipboard = iced_core::clipboard::Null;
+        let mut messages = Vec::new();
+        let (state, _) = ui.update(
+            std::slice::from_ref(&event),
+            mouse::Cursor::Available(position),
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+        match state {
+            iced_runtime::user_interface::State::Updated {
+                mouse_interaction, ..
+            } => mouse_interaction,
+            iced_runtime::user_interface::State::Outdated => {
+                panic!("the interface went outdated during update")
+            }
+        }
+    }
+
+    #[test]
+    fn topmost_widget_sets_the_cursor() {
+        let tree = occlusion_tree();
+        // The window's body, over the tile: the window (no token) wins —
+        // the tile's pointer must not leak through the occluding window.
+        assert_eq!(interaction_at(&tree, 250, 250), mouse::Interaction::Idle);
+        // The tile, outside the window: the tile's pointer.
+        assert_eq!(interaction_at(&tree, 120, 120), mouse::Interaction::Pointer);
+        // The window's title bar, over the tile: the bar's grab.
+        assert_eq!(interaction_at(&tree, 250, 160), mouse::Interaction::Grab);
+        // The window's grip, over the tile: the grip's resize.
+        assert_eq!(
+            interaction_at(&tree, 340, 340),
+            mouse::Interaction::ResizingDiagonallyDown
+        );
     }
 }
