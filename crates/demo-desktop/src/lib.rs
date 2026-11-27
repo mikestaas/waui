@@ -463,7 +463,10 @@ fn window(w: &Window) -> Tree {
     // The close marker as a text, not a button: a button node would draw the
     // host's button chrome (fill, border, padding). The container carries the
     // id (the click target) and a size (the hit area); with no chrome tokens
-    // it draws nothing but the glyph.
+    // it draws nothing but the glyph. The pointer cursor is the affordance.
+    // The hosts read that same token as "double-clickable"; a close is a
+    // single click and on_double_click ignores close ids, so the coupling is
+    // inert here.
     bar.push(
         Tree::row(vec![Tree::text(
             "\u{2715}",
@@ -472,7 +475,8 @@ fn window(w: &Window) -> Tree {
         .id(base + OFF_CLOSE)
         .align(Align::Center)
         .width(48)
-        .height(32),
+        .height(32)
+        .cursor(Cursor::Pointer),
     );
     let titlebar = Tree::row(bar)
         .id(base + OFF_TITLEBAR)

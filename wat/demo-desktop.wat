@@ -1090,6 +1090,9 @@
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             ;; The close marker: a container (the id, the hit area) around an
             ;; id-less text. A button node would draw the host's button chrome.
+            ;; The pointer cursor is the affordance; the hosts read that token
+            ;; as "double-clickable" too, but a close is a single click and
+            ;; on_double_click ignores close ids, so the coupling is inert.
             (array.set $flats (local.get $arr) (local.get $pos)
               (struct.new $flat
                 (i32.const 2) (i32.add (local.get $base) (i32.const 400000)) (i32.add (local.get $base) (i32.const 200000))
@@ -1098,7 +1101,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
-                (i32.const 0)
+                (i32.const 1)
                 (ref.null $bytes) (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 2))))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (array.set $flats (local.get $arr) (local.get $pos)
