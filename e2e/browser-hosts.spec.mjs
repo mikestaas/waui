@@ -329,3 +329,89 @@ test('iced host: desktop (rust) opens a window', async ({ page }) => {
   await page.mouse.dblclick(box.x + 464, box.y + 108);
   await expect.poll(countContent).toBeGreaterThan(0);
 });
+
+test('iced host: desktop (rust) drop shadow stays stable while mousing inside a window', async ({
+  page,
+}) => {
+  await page.goto('/iced/index.html?demo=desktop&producer=rust');
+  const canvas = page.locator('canvas');
+  await canvas.waitFor({ timeout: 30_000 });
+  await page.waitForFunction(() => window.entriesReady === true, null, { timeout: 30_000 });
+
+  // A new window opens at (24, 48) sized 300x380. The shadow extends
+  // outside it: offset y=18, blur 50. This region is shadow only.
+  const shadowRegion = { x: 350, y: 300, width: 15, height: 15 };
+  const readShadow = () =>
+    page.evaluate((region) => {
+      const c = document.querySelector('canvas');
+      const s = c.width / window.innerWidth;
+      const tmp = document.createElement('canvas');
+      tmp.width = c.width;
+      tmp.height = c.height;
+      const ctx = tmp.getContext('2d');
+      ctx.drawImage(c, 0, 0);
+      const d = ctx.getImageData(
+        Math.floor(region.x * s),
+        Math.floor(region.y * s),
+        Math.floor(region.width * s),
+        Math.floor(region.height * s),
+      ).data;
+      return Array.from(d);
+    }, shadowRegion);
+
+  // Window content at (30,200)..(70,320), as in the opens-a-window test.
+  const countContent = () =>
+    page.evaluate(() => {
+      const c = document.querySelector('canvas');
+      const s = c.width / window.innerWidth;
+      const tmp = document.createElement('canvas');
+      tmp.width = c.width;
+      tmp.height = c.height;
+      const ctx = tmp.getContext('2d');
+      ctx.drawImage(c, 0, 0);
+      const d = ctx.getImageData(
+        Math.floor(30 * s),
+        Math.floor(200 * s),
+        Math.floor(40 * s),
+        Math.floor(120 * s),
+      ).data;
+      let n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        if (d[i + 3] === 0) continue;
+        if (
+          Math.abs(d[i] - 26) > 15 ||
+          Math.abs(d[i + 1] - 27) > 15 ||
+          Math.abs(d[i + 2] - 38) > 15
+        )
+          n++;
+      }
+      return n;
+    });
+
+  const box = await canvas.boundingBox();
+  await page.mouse.dblclick(box.x + 464, box.y + 108);
+  await expect.poll(countContent).toBeGreaterThan(0);
+
+  // Let the window's first frame settle.
+  await page.waitForTimeout(100);
+  const before = await readShadow();
+
+  // Mouse around inside the open window without dragging it.
+  const moves = [
+    [100, 200],
+    [110, 200],
+    [100, 210],
+    [120, 240],
+    [100, 300],
+    [50, 100],
+    [200, 100],
+    [150, 250],
+    [100, 200],
+  ];
+  for (const [x, y] of moves) {
+    await page.mouse.move(box.x + x, box.y + y);
+  }
+  await page.waitForTimeout(100);
+
+  expect(await readShadow()).toEqual(before);
+});

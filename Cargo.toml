@@ -25,3 +25,8 @@ wasm-bindgen = "0.2"
 js-sys = "0.3"
 web-sys = "0.3"
 web-time = "0.2"
+
+[patch.crates-io]
+# Local fork: damage tracking must include drop shadows, and shadows must
+# be clipped to the layer. (See vendor/iced_tiny_skia.)
+iced_tiny_skia = { path = "vendor/iced_tiny_skia" }
