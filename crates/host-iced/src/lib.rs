@@ -624,20 +624,38 @@ fn diff_panels(state: &mut State) {
     }
 }
 
+/// Load the symbol font into the global font database, once per process.
+///
+/// The bundled Fira Sans lacks the todo's ○, ✓, and ✕, so those glyphs come
+/// from here. Natively the live window instead falls back to a system font;
+/// the browser loads no system fonts, so its live window needs this. The
+/// bytes are bundled, which keeps the render platform-stable.
+fn load_symbol_font() {
+    static LOADED: Once = Once::new();
+    LOADED.call_once(|| {
+        let mut system = iced_graphics::text::font_system()
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        system
+            .raw()
+            .db_mut()
+            .load_font_source(fontdb::Source::Binary(std::sync::Arc::new(
+                include_bytes!("../fonts/waui-symbols.ttf").to_vec(),
+            )));
+    });
+}
+
 /// The dump must render identically on every machine. Iced's font database
 /// holds the system fonts too, and the bundled Fira Sans lacks the todo's
 /// checkbox and delete symbols, so those glyphs would fall back to a system
-/// font that differs per platform. Prune the database to the bundled fonts
-/// and load the symbol font that covers the glyphs Fira lacks.
+/// font that differs per platform. Prune the database to the bundled fonts,
+/// then load the symbol font that covers the glyphs Fira lacks.
 ///
-/// The guard pins it once per process: natively the dump is a one-shot,
-/// and in the browser the live window and the dumps share the global
-/// database, so a re-pin would duplicate the symbol font. On wasm32 the
-/// prune is a no-op (fontdb loads no system fonts there); the window keeps
-/// the system fonts natively.
+/// On wasm32 the prune is a no-op (fontdb loads no system fonts there).
 fn pin_dump_fonts() {
-    static PINNED: Once = Once::new();
-    PINNED.call_once(|| {
+    // Scope the prune so its write lock is dropped before
+    // `load_symbol_font` re-acquires it; an `RwLock` is not reentrant.
+    {
         let mut system = iced_graphics::text::font_system()
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
@@ -652,10 +670,8 @@ fn pin_dump_fonts() {
         for id in drop {
             db.remove_face(id);
         }
-        db.load_font_source(fontdb::Source::Binary(std::sync::Arc::new(
-            include_bytes!("../fonts/waui-symbols.ttf").to_vec(),
-        )));
-    });
+    }
+    load_symbol_font();
 }
 
 /// The headless renderer: the window's own `Renderer` with the surface

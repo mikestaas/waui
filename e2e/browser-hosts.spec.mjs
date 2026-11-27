@@ -157,6 +157,88 @@ for (const demo of demos) {
           Math.abs(p[2] - px.corner[2]) > 15,
       ).length;
       expect(differs, 'no content was drawn on the canvas').toBeGreaterThan(0);
+
+      if (demo === 'todo') {
+        // The delete symbol (✕) is the danger color. The browser loads no
+        // system fonts, so the ✕ only renders if the bundled symbol font
+        // loaded — the live-window case the byte-parity selftest does not
+        // cover. With no symbol font the glyph falls back to Fira Sans's
+        // notdef, a tall narrow box; the real ✕ is square. Aspect ratio
+        // separates the two (both have a filled center). The three delete
+        // buttons sit in the rows, above the footer's red "clear done", so a
+        // square, filled-center component above 0.58·H isolates them.
+        const countX = () =>
+          page.evaluate(() => {
+            const c = document.querySelector('canvas');
+            const W = c.width,
+              H = c.height;
+            const t = document.createElement('canvas');
+            t.width = W;
+            t.height = H;
+            const ctx = t.getContext('2d');
+            ctx.drawImage(c, 0, 0);
+            const d = ctx.getImageData(0, 0, W, H).data;
+            const isRed = (x, y) => {
+              const i = (y * W + x) * 4;
+              return d[i] > 100 && d[i] - d[i + 1] > 55 && d[i] - d[i + 2] > 40;
+            };
+            const hasInk = (x, y) => {
+              for (let dy = -1; dy <= 1; dy++)
+                for (let dx = -1; dx <= 1; dx++) {
+                  const nx = x + dx,
+                    ny = y + dy;
+                  if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+                  if (isRed(nx, ny)) return true;
+                }
+              return false;
+            };
+            const seen = new Uint8Array(W * H);
+            const dxs = [1, -1, 0, 0, 1, -1, 1, -1];
+            const dys = [0, 0, 1, -1, 1, 1, -1, -1];
+            let n = 0;
+            for (let y = 0; y < H; y++)
+              for (let x = 0; x < W; x++) {
+                if (seen[y * W + x] || !isRed(x, y)) continue;
+                const st = [x, y];
+                seen[y * W + x] = 1;
+                let minX = x,
+                  maxX = x,
+                  minY = y,
+                  maxY = y;
+                while (st.length) {
+                  const cy = st.pop(),
+                    cx = st.pop();
+                  if (cx < minX) minX = cx;
+                  if (cx > maxX) maxX = cx;
+                  if (cy < minY) minY = cy;
+                  if (cy > maxY) maxY = cy;
+                  for (let k = 0; k < 8; k++) {
+                    const nx = cx + dxs[k],
+                      ny = cy + dys[k];
+                    if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+                    if (seen[ny * W + nx] || !isRed(nx, ny)) continue;
+                    seen[ny * W + nx] = 1;
+                    st.push(nx, ny);
+                  }
+                }
+                const w = maxX - minX + 1,
+                  h = maxY - minY + 1;
+                if (w < 6 || h < 6) continue;
+                const cx = (minX + maxX) / 2,
+                  cy = (minY + maxY) / 2;
+                const aspect = w / h;
+                if (
+                  cy < 0.58 * H &&
+                  aspect >= 0.5 &&
+                  aspect <= 2 &&
+                  hasInk(Math.round(cx), Math.round(cy))
+                )
+                  n++;
+              }
+            return n;
+          });
+        await expect.poll(countX, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
+      }
     });
   }
 }

@@ -25,8 +25,8 @@ use wasmtime::Engine;
 use host_shared::{pulley_config, EntrySpec};
 
 use crate::{
-    apply_pending, canvas_size, new_state, render_png, subscription, theme, update, view, Injected,
-    State,
+    apply_pending, canvas_size, load_symbol_font, new_state, render_png, subscription, theme,
+    update, view, Injected, State,
 };
 
 // A web page is single-threaded, so a thread-local is a plain global. It
@@ -119,6 +119,11 @@ pub fn run(
     // (the state's arc moves into iced's event loop; this is the clone).
     COMPONENTS.with(|c| *c.borrow_mut() = Some(components));
     STATE.with(|s| *s.borrow_mut() = Some(state));
+
+    // The browser loads no system fonts, so the bundled Fira Sans is the only
+    // text font and lacks the todo's ○, ✓, and ✕. Load the symbol font before
+    // the first frame shapes text; the guard dedupes if a `dump` follows.
+    load_symbol_font();
 
     iced::application(boot, update, view)
         .theme(theme::theme())
