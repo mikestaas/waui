@@ -448,6 +448,9 @@ fn tile(e: &EntryMeta, i: usize) -> Tree {
 fn window(w: &Window) -> Tree {
     let base = w.handle;
     let mut bar = Vec::new();
+    // Left padding for the icon: the contract's padding is uniform and
+    // container-only, so the leaf image takes an id-less, childless spacer.
+    bar.push(Tree::row(Vec::new()).width(8));
     if let Some(icon) = &w.icon {
         bar.push(Tree::image(icon.clone()).width(18).height(18));
     }

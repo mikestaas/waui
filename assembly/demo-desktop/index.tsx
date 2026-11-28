@@ -415,6 +415,9 @@ function window(w: Win): Widget {
   const base = w.handle;
   // The title bar.
   const bar: Widget[] = new Array<Widget>();
+  // Left padding for the icon: the contract's padding is uniform and
+  // container-only, so the leaf image takes an id-less, childless spacer.
+  bar.push(row([]).width(8));
   if (w.icon.length != 0) bar.push(image(w.icon, 18, 18));
   bar.push(text(w.label, COLOR_NEUTRAL, SIZE_MEDIUM)); // id-less: the label
   bar.push(

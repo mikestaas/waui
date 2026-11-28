@@ -72,8 +72,9 @@ function defineDesktopTests(url) {
     await page.locator('#app .waui-cursor-pointer').nth(0).dblclick(); // Counter, Rust
     const w = win(page, 10000);
     await expect(w).toHaveCount(1);
-    // The title bar's label (the entry's label, an id-less text node).
-    await expect(w.locator('[data-id="210000"] div').first()).toHaveText('Counter');
+    // The title bar's label (the entry's label, an id-less text node; the
+    // leading spacer is the first div).
+    await expect(w.locator('[data-id="210000"] div').nth(1)).toHaveText('Counter');
     // The demo runs in place: the counter's readout (id 3) reads "0".
     await expect(w.locator('[data-id="10000"] [data-id="3"]')).toHaveText('0');
     await expect(page.locator('[data-id="2"] [data-id="4"]')).toHaveText('1 window');

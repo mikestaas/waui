@@ -782,8 +782,8 @@
           (loop $lp
             (br_if $done (i32.ge_u (local.get $i) (global.get $win-len)))
             (local.set $w (ref.cast (ref $win) (array.get $wins (local.get $wins) (local.get $i))))
-            ;; The window's eight fixed nodes (the icon, when any, is the ninth).
-            (local.set $total (i32.add (local.get $total) (i32.const 8)))
+            ;; The window's nine fixed nodes (the icon, when any, is the tenth).
+            (local.set $total (i32.add (local.get $total) (i32.const 9)))
             (if (i32.eqz (ref.is_null (struct.get $win $icon (local.get $w))))
               (then (local.set $total (i32.add (local.get $total) (i32.const 1)))))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -1052,6 +1052,20 @@
                 (i32.const 2)
                 (ref.null $bytes) (ref.null $bytes) (i32.const 0)))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
+            ;; Left padding for the icon: the contract's padding is uniform
+            ;; and container-only, so the leaf image takes an id-less,
+            ;; childless spacer.
+            (array.set $flats (local.get $arr) (local.get $pos)
+              (struct.new $flat
+                (i32.const 2) (i32.const 0) (i32.add (local.get $base) (i32.const 200000))
+                (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 1)
+                (i32.const 8) (i32.const 0)
+                (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+                (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+                (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
+                (i32.const 0)
+                (ref.null $bytes) (ref.null $bytes) (i32.const 0)))
+            (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (local.set $has-icon (i32.eqz (ref.is_null (struct.get $win $icon (local.get $w)))))
             (if (local.get $has-icon)
               (then
@@ -1064,7 +1078,7 @@
                     (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                     (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                     (i32.const 0)
-                    (struct.get $win $icon (local.get $w)) (ref.null $bytes) (i32.const 0)))
+                    (struct.get $win $icon (local.get $w)) (ref.null $bytes) (i32.const 1)))
                 (local.set $pos (i32.add (local.get $pos) (i32.const 1)))))
             (array.set $flats (local.get $arr) (local.get $pos)
               (struct.new $flat
@@ -1075,7 +1089,8 @@
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0)
-                (struct.get $win $label (local.get $w)) (ref.null $bytes) (local.get $has-icon)))
+                (struct.get $win $label (local.get $w)) (ref.null $bytes)
+                (i32.add (local.get $has-icon) (i32.const 1))))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (array.set $flats (local.get $arr) (local.get $pos)
               (struct.new $flat
@@ -1086,7 +1101,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0)
-                (ref.null $bytes) (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 1))))
+                (ref.null $bytes) (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 2))))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             ;; The close marker: a container (the id, the hit area) around an
             ;; id-less text. A button node would draw the host's button chrome.
@@ -1102,7 +1117,7 @@
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
                 (i32.const 1)
-                (ref.null $bytes) (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 2))))
+                (ref.null $bytes) (ref.null $bytes) (i32.add (local.get $has-icon) (i32.const 3))))
             (local.set $pos (i32.add (local.get $pos) (i32.const 1)))
             (array.set $flats (local.get $arr) (local.get $pos)
               (struct.new $flat
